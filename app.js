@@ -13,7 +13,7 @@
 
   function roleFromHash() {
     const value = location.hash.replace('#', '').split('/')[0];
-    return validRoles.includes(value) ? value : 'student';
+    return validRoles.includes(value) ? value : null;
   }
 
   function setRole(role, updateHash) {
@@ -74,7 +74,10 @@
     });
   });
 
-  window.addEventListener('hashchange', function () { setRole(roleFromHash(), false); });
+  window.addEventListener('hashchange', function () {
+    const hashRole = roleFromHash();
+    if (hashRole) setRole(hashRole, false);
+  });
 
   form.addEventListener('submit', function (event) {
     event.preventDefault();
@@ -105,6 +108,7 @@
       showToast('静态目录暂未载入，主要入口仍可正常使用');
     });
 
-  const firstRole = location.hash ? roleFromHash() : (localStorage.getItem('er2-last-role') || 'student');
-  setRole(firstRole, !location.hash);
+  const hashRole = roleFromHash();
+  const firstRole = hashRole || localStorage.getItem('er2-last-role') || 'student';
+  setRole(firstRole, !hashRole);
 }());
