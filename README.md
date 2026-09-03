@@ -11,6 +11,7 @@
 
 ## 工作台入口
 
+- GitHub Pages：`https://1zjj.github.io/ER2_Lab_End/`
 - `#student`：学生工作台
 - `#teacher`：教师工作台
 - `#manager`：管理工作台
