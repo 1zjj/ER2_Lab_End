@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#2f6df6">
+  <meta name="description" content="ER² Lab 一页式工作台：学生、教师和管理者的统一入口">
+  <title>ER² Lab 工作台</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-main">
+      <a class="brand" href="#student" data-role-link="student" aria-label="ER² Lab 学生工作台">
+        <span class="brand-mark">ER²</span>
+        <span><strong>ER² Lab</strong><small>统一工作台</small></span>
+      </a>
+
+      <form class="search" id="global-search" role="search">
+        <span class="search-icon" aria-hidden="true">⌕</span>
+        <input id="search-input" type="search" autocomplete="off" placeholder="搜索课程、项目、设备 SOP" aria-label="搜索课程、项目、设备 SOP">
+        <button type="submit">搜索</button>
+      </form>
+
+      <a class="primary-action" href="https://lcnywl4yrecr.feishu.cn/share/base/form/shrcnm3Uar9vsQ6CWkRJNdQNPAd">填写周报</a>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar" aria-label="角色工作台">
+      <p class="sidebar-label">选择工作台</p>
+      <nav class="role-nav">
+        <a href="#student" data-role-link="student" class="role-link active"><span>学</span><div><strong>学生工作台</strong><small>学习、项目、周报</small></div></a>
+        <a href="#teacher" data-role-link="teacher" class="role-link"><span>教</span><div><strong>教师工作台</strong><small>教学、周报、项目</small></div></a>
+        <a href="#manager" data-role-link="manager" class="role-link"><span>管</span><div><strong>管理工作台</strong><small>人员、权限、自动化</small></div></a>
+      </nav>
+      <div class="sidebar-help">
+        <strong>数据仍在飞书</strong>
+        <p>本页只提供清晰入口，不保存周报、人员信息或培训大文件。</p>
+        <a href="https://lcnywl4yrecr.feishu.cn/wiki/EqjMwpl6mi6l1SkeP0CckVkcnbD?from=from_copylink">打开知识库 →</a>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <div class="preview-notice">
+        <span>静态预览版</span>
+        <p>不读取个人数据；真实提交、历史记录、权限内容和大文件由飞书处理。</p>
+      </div>
+
+      <section class="role-panel active" id="student-panel" data-role-panel="student" aria-labelledby="student-title">
+        <div class="welcome-row">
+          <div>
+            <p class="kicker">STUDENT WORKSPACE</p>
+            <h1 id="student-title">学生工作台</h1>
+            <p>从本周任务开始，不需要浏览整个知识库目录。</p>
+          </div>
+          <div class="deadline"><span aria-hidden="true">◷</span>周五 18:00 截止</div>
+        </div>
+
+        <article class="focus-card">
+          <div class="focus-copy">
+            <p class="eyebrow">本周唯一提交</p>
+            <h2>完成本周工作记录</h2>
+            <p>项目进度、学习结果、产出证据、问题和下周计划统一填写，预计5–8分钟。</p>
+            <div class="action-row">
+              <a class="button button-primary" href="https://lcnywl4yrecr.feishu.cn/share/base/form/shrcnm3Uar9vsQ6CWkRJNdQNPAd">立即填写</a>
+              <a class="button button-secondary" href="https://lcnywl4yrecr.feishu.cn/wiki/LIYtwb1ZaiEZinkowkbczYx5nIe?table=tblyyMFzoOeyYPZM&amp;view=vewNK5smEB">查看提交记录</a>
+            </div>
+          </div>
+          <ol class="focus-steps">
+            <li><span>1</span><div><strong>完成Lesson实验</strong><small>保留结果截图和关键日志</small></div></li>
+            <li><span>2</span><div><strong>更新项目证据</strong><small>记录现象、参数和复现步骤</small></div></li>
+            <li><span>3</span><div><strong>提交本周记录</strong><small>填写阻塞和下一步</small></div></li>
+          </ol>
+        </article>
+
+        <div class="section-title"><div><p class="kicker">QUICK ACCESS</p><h2>今天常用</h2></div><span>一次选择，一次进入飞书</span></div>
+        <div class="card-grid student-grid">
+          <a class="feature-card" href="https://lcnywl4yrecr.feishu.cn/wiki/AMikwNK58iWRCbkvoBJcQ7Q3nmc">
+            <span class="card-icon">课</span><p class="eyebrow">学习中心</p><h3>Lesson 01–05</h3><p>课程目标、操作步骤、作业要求、源码版本与常见问题。</p><span class="text-link">进入学习中心 →</span>
+          </a>
+          <a class="feature-card emphasized" href="https://lcnywl4yrecr.feishu.cn/wiki/W6T0wzxQbimstwkIlRLcRLJknpd">
+            <span class="card-icon">项</span><p class="eyebrow">项目协作</p><h3>里程碑与实验记录</h3><p>查看项目要求，更新进度、问题、实验过程与产出证据。</p><span class="text-link">进入项目中心 →</span>
+          </a>
+          <a class="feature-card" href="https://lcnywl4yrecr.feishu.cn/wiki/GyHOwd1VeieaZ9kMkRxcCsQfnoe">
+            <span class="card-icon">资</span><p class="eyebrow">资源与服务</p><h3>设备、SOP与申请</h3><p>查询设备资料、培训要求、文件版本与常用申请入口。</p><span class="text-link">查看资源 →</span>
+          </a>
+          <a class="feature-card" href="https://lcnywl4yrecr.feishu.cn/wiki/XiLQwi80CiSDGMk1jWec1LjOnWd">
+            <span class="card-icon">AI</span><p class="eyebrow">知识搜索</p><h3>问ER² AI</h3><p>使用飞书现有知识搜索与AI能力，回答应保留正式来源。</p><span class="text-link">开始查询 →</span>
+          </a>
+        </div>
+
+        <section class="course-section">
+          <div class="section-title"><div><p class="kicker">LEARNING PATH</p><h2>语义导航基础课</h2></div><a href="https://lcnywl4yrecr.feishu.cn/wiki/AMikwNK58iWRCbkvoBJcQ7Q3nmc">查看完整课程 →</a></div>
+          <div class="lesson-list">
+            <a href="https://lcnywl4yrecr.feishu.cn/wiki/AMikwNK58iWRCbkvoBJcQ7Q3nmc"><span class="lesson-no">01</span><div><strong>工作流与仿真启动</strong><small>节点、话题、参数与运行入口</small></div><span class="lesson-meta">基础 · 60分钟</span></a>
+            <a href="https://lcnywl4yrecr.feishu.cn/wiki/AMikwNK58iWRCbkvoBJcQ7Q3nmc"><span class="lesson-no">02</span><div><strong>ROS数据流与TF</strong><small>rqt_graph、tf_echo与故障定位</small></div><span class="lesson-meta">核心 · 90分钟</span></a>
+            <a href="https://lcnywl4yrecr.feishu.cn/wiki/AMikwNK58iWRCbkvoBJcQ7Q3nmc"><span class="lesson-no">03</span><div><strong>运动学与导航闭环</strong><small>物理关系、规划与控制反馈</small></div><span class="lesson-meta">核心 · 90分钟</span></a>
+            <a href="https://lcnywl4yrecr.feishu.cn/wiki/AMikwNK58iWRCbkvoBJcQ7Q3nmc"><span class="lesson-no">04</span><div><strong>感知与语义地图</strong><small>传感器数据、语义栅格与可视化</small></div><span class="lesson-meta">进阶</span></a>
+            <a href="https://lcnywl4yrecr.feishu.cn/wiki/AMikwNK58iWRCbkvoBJcQ7Q3nmc"><span class="lesson-no">05</span><div><strong>综合Demo与问题排查</strong><small>目标下发、验收与复盘</small></div><span class="lesson-meta">综合</span></a>
+          </div>
+        </section>
+      </section>
+
+      <section class="role-panel" id="teacher-panel" data-role-panel="teacher" aria-labelledby="teacher-title" hidden>
+        <div class="welcome-row">
+          <div><p class="kicker">TEACHER WORKSPACE</p><h1 id="teacher-title">教师工作台</h1><p>从本周提交、共性问题和课程维护开始。</p></div>
+          <a class="button button-secondary" href="https://lcnywl4yrecr.feishu.cn/wiki/LIYtwb1ZaiEZinkowkbczYx5nIe?table=tblyyMFzoOeyYPZM&amp;view=vewNK5smEB">打开周报Base</a>
+        </div>
+
+        <div class="metric-grid">
+          <a href="https://lcnywl4yrecr.feishu.cn/wiki/LIYtwb1ZaiEZinkowkbczYx5nIe?table=tblyyMFzoOeyYPZM&amp;view=vewNK5smEB"><span>周报</span><strong>查看本周提交</strong><small>已交、未交与需关注问题</small></a>
+          <a href="https://lcnywl4yrecr.feishu.cn/wiki/AMikwNK58iWRCbkvoBJcQ7Q3nmc"><span>教学</span><strong>维护Lesson 01–05</strong><small>课程、作业和培训包版本</small></a>
+          <a href="https://lcnywl4yrecr.feishu.cn/wiki/W6T0wzxQbimstwkIlRLcRLJknpd"><span>项目</span><strong>检查里程碑</strong><small>证据、阻塞和下一步</small></a>
+        </div>
+
+        <div class="section-title"><div><p class="kicker">TEACHING FLOW</p><h2>教学与培养</h2></div><span>实际编辑在飞书完成</span></div>
+        <div class="card-grid teacher-grid">
+          <a class="management-card" href="https://lcnywl4yrecr.feishu.cn/wiki/AMikwNK58iWRCbkvoBJcQ7Q3nmc"><span class="card-icon">教</span><div><h3>课程与作业</h3><p>查看课程目录、实验要求、作业证据和版本说明。</p></div><b>→</b></a>
+          <a class="management-card" href="https://lcnywl4yrecr.feishu.cn/wiki/LIYtwb1ZaiEZinkowkbczYx5nIe?table=tblyyMFzoOeyYPZM&amp;view=vewNK5smEB"><span class="card-icon">周</span><div><h3>本周周报</h3><p>查看提交情况、问题、下周计划和教授摘要。</p></div><b>→</b></a>
+          <a class="management-card" href="https://lcnywl4yrecr.feishu.cn/wiki/W6T0wzxQbimstwkIlRLcRLJknpd"><span class="card-icon">研</span><div><h3>项目与研究</h3><p>检查项目阶段、实验记录、风险和候选课题。</p></div><b>→</b></a>
+          <a class="management-card" href="https://lcnywl4yrecr.feishu.cn/wiki/XiLQwi80CiSDGMk1jWec1LjOnWd"><span class="card-icon">知</span><div><h3>知识候选</h3><p>审核学生主动标记的知识候选和正式技术分享。</p></div><b>→</b></a>
+        </div>
+
+        <section class="timeline-card">
+          <div><p class="kicker">WEEKLY AUTOMATION</p><h2>每周自动化节奏</h2></div>
+          <ol>
+            <li><time>周五 11:00</time><strong>提醒未交学生</strong><span>只通知需要提交且本周未交的成员</span></li>
+            <li><time>学生提交后</time><strong>自动标记已提交</strong><span>保持提醒名单准确</span></li>
+            <li><time>周五 18:00</time><strong>发送教授摘要</strong><span>汇总进展、问题、风险和下周计划</span></li>
+          </ol>
+        </section>
+      </section>
+
+      <section class="role-panel" id="manager-panel" data-role-panel="manager" aria-labelledby="manager-title" hidden>
+        <div class="welcome-row">
+          <div><p class="kicker">MANAGEMENT WORKSPACE</p><h1 id="manager-title">管理工作台</h1><p>人员、项目、知识、设备和自动化的统一入口。</p></div>
+          <a class="button button-secondary" href="https://lcnywl4yrecr.feishu.cn/wiki/EqjMwpl6mi6l1SkeP0CckVkcnbD?from=from_copylink">进入飞书后台</a>
+        </div>
+
+        <div class="admin-grid">
+          <a class="admin-card" href="https://lcnywl4yrecr.feishu.cn/wiki/EqjMwpl6mi6l1SkeP0CckVkcnbD?from=from_copylink"><span>01</span><div><h3>人员与权限</h3><p>内部学生、外部协作者、项目负责人、管理层和财务角色。</p></div></a>
+          <a class="admin-card" href="https://lcnywl4yrecr.feishu.cn/wiki/W6T0wzxQbimstwkIlRLcRLJknpd"><span>02</span><div><h3>项目管理</h3><p>项目成员、阶段、里程碑、风险、产出和归档。</p></div></a>
+          <a class="admin-card" href="https://lcnywl4yrecr.feishu.cn/wiki/AMikwNK58iWRCbkvoBJcQ7Q3nmc"><span>03</span><div><h3>课程与知识</h3><p>正式课程、SOP、知识候选、技术分享和历史版本。</p></div></a>
+          <a class="admin-card" href="https://lcnywl4yrecr.feishu.cn/wiki/GyHOwd1VeieaZ9kMkRxcCsQfnoe"><span>04</span><div><h3>设备与服务</h3><p>设备台账、培训资格、借用、报修和申请入口。</p></div></a>
+          <a class="admin-card" href="https://lcnywl4yrecr.feishu.cn/wiki/LIYtwb1ZaiEZinkowkbczYx5nIe?table=tblyyMFzoOeyYPZM&amp;view=vewNK5smEB"><span>05</span><div><h3>周报与统计</h3><p>提交记录、教授摘要、问题趋势和历史归档。</p></div></a>
+          <a class="admin-card" href="#automation-status"><span>06</span><div><h3>自动化后台</h3><p>检查提醒、提交标记、周一重置和教授摘要流程。</p></div></a>
+        </div>
+
+        <section class="automation-table" id="automation-status">
+          <div class="section-title"><div><p class="kicker">AUTOMATION STATUS</p><h2>当前自动化</h2></div><span class="status-ok">4项已启用</span></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>自动化</th><th>触发条件</th><th>对象</th><th>状态</th></tr></thead>
+              <tbody>
+                <tr><td>A01｜未交周报提醒</td><td>周五11:00</td><td>未交学生</td><td><span class="status-dot">已启用</span></td></tr>
+                <tr><td>提交后标记</td><td>周报提交后</td><td>提交记录</td><td><span class="status-dot">已启用</span></td></tr>
+                <tr><td>周一重置</td><td>每周一</td><td>提交状态</td><td><span class="status-dot">已启用</span></td></tr>
+                <tr><td>A02＋AI01｜教授周报</td><td>周五18:00</td><td>教授</td><td><span class="status-dot">已启用</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="table-note">状态来自当前配置说明；实时运行记录请进入飞书自动化后台确认。</p>
+        </section>
+      </section>
+
+      <footer>
+        <span>ER² Lab统一工作台 · GitHub前端预览</span>
+        <a href="https://github.com/1zjj/ER2_Lab_End">查看代码仓库</a>
+      </footer>
+    </main>
+  </div>
+
+  <nav class="mobile-role-nav" aria-label="移动端角色切换">
+    <a href="#student" data-role-link="student" class="active"><span>学</span>学生</a>
+    <a href="#teacher" data-role-link="teacher"><span>教</span>教师</a>
+    <a href="#manager" data-role-link="manager"><span>管</span>管理</a>
+  </nav>
+
+  <dialog class="search-dialog" id="search-dialog">
+    <div class="dialog-head"><div><p class="kicker">SEARCH RESULTS</p><h2>搜索结果</h2></div><button id="close-search" type="button" aria-label="关闭搜索">×</button></div>
+    <p class="search-summary" id="search-summary"></p>
+    <div class="search-results" id="search-results"></div>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="./app.js"></script>
+</body>
+</html>

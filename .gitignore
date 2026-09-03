@@ -1,0 +1,15 @@
+.DS_Store
+.idea/
+.vscode/
+node_modules/
+dist/
+.env
+.env.*
+*.zip
+*.bag
+*.db3
+*.onnx
+*.pth
+*.pt
+*.engine
+*.mp4
