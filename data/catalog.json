@@ -4,83 +4,83 @@
     "subtitle": "项目、学习、证据、问题与下周计划",
     "category": "周报",
     "keywords": ["提交", "本周", "记录", "weekly"],
-    "url": "https://lcnywl4yrecr.feishu.cn/share/base/form/shrcnm3Uar9vsQ6CWkRJNdQNPAd"
+    "url": ""
   },
   {
     "title": "历史周报与教授摘要",
     "subtitle": "查看提交记录和本周汇总",
     "category": "周报",
     "keywords": ["历史", "教授", "摘要", "未交"],
-    "url": "https://lcnywl4yrecr.feishu.cn/wiki/LIYtwb1ZaiEZinkowkbczYx5nIe?table=tblyyMFzoOeyYPZM&view=vewNK5smEB"
+    "url": ""
   },
   {
     "title": "语义导航Lesson 01",
     "subtitle": "工作流、仿真启动、节点与话题",
     "category": "课程",
     "keywords": ["lesson01", "ros", "启动", "node", "topic"],
-    "url": "https://lcnywl4yrecr.feishu.cn/wiki/AMikwNK58iWRCbkvoBJcQ7Q3nmc"
+    "url": ""
   },
   {
     "title": "语义导航Lesson 02",
     "subtitle": "ROS数据流、rqt_graph与TF",
     "category": "课程",
     "keywords": ["lesson02", "ros", "tf", "rqt_graph", "数据流"],
-    "url": "https://lcnywl4yrecr.feishu.cn/wiki/AMikwNK58iWRCbkvoBJcQ7Q3nmc"
+    "url": ""
   },
   {
     "title": "语义导航Lesson 03",
     "subtitle": "物理关系、规划、控制与导航闭环",
     "category": "课程",
     "keywords": ["lesson03", "规划", "控制", "导航", "闭环"],
-    "url": "https://lcnywl4yrecr.feishu.cn/wiki/AMikwNK58iWRCbkvoBJcQ7Q3nmc"
+    "url": ""
   },
   {
     "title": "RealSense D435",
     "subtitle": "相机资料、深度数据与常见问题",
     "category": "设备",
     "keywords": ["d435", "realsense", "深度", "相机", "sdk"],
-    "url": "https://lcnywl4yrecr.feishu.cn/wiki/GyHOwd1VeieaZ9kMkRxcCsQfnoe"
+    "url": ""
   },
   {
     "title": "Livox Mid-360",
     "subtitle": "激光雷达资料、驱动与点云",
     "category": "设备",
     "keywords": ["mid360", "livox", "激光", "点云", "lidar"],
-    "url": "https://lcnywl4yrecr.feishu.cn/wiki/GyHOwd1VeieaZ9kMkRxcCsQfnoe"
+    "url": ""
   },
   {
     "title": "Ranger Mini V3",
     "subtitle": "底盘、运动模式与导航环境",
     "category": "设备",
     "keywords": ["ranger", "底盘", "四轮转向", "navigation"],
-    "url": "https://lcnywl4yrecr.feishu.cn/wiki/GyHOwd1VeieaZ9kMkRxcCsQfnoe"
+    "url": ""
   },
   {
     "title": "P03 PatchNav",
     "subtitle": "项目协作、里程碑和实验记录",
     "category": "项目",
     "keywords": ["patchnav", "p03", "costmap", "语义导航"],
-    "url": "https://lcnywl4yrecr.feishu.cn/wiki/W6T0wzxQbimstwkIlRLcRLJknpd"
+    "url": ""
   },
   {
     "title": "ER²知识搜索与AI",
     "subtitle": "查询正式知识、课程和项目资料",
     "category": "AI",
     "keywords": ["知识", "搜索", "问答", "doubao"],
-    "url": "https://lcnywl4yrecr.feishu.cn/wiki/XiLQwi80CiSDGMk1jWec1LjOnWd"
+    "url": ""
   },
   {
     "title": "设备、培训与服务申请",
     "subtitle": "设备资料、培训要求与常用申请",
     "category": "资源",
     "keywords": ["设备", "培训", "申请", "借用", "报修", "sop"],
-    "url": "https://lcnywl4yrecr.feishu.cn/wiki/GyHOwd1VeieaZ9kMkRxcCsQfnoe"
+    "url": ""
   },
   {
     "title": "ER² Lab飞书知识库",
     "subtitle": "进入完整目录和管理后台",
     "category": "知识库",
     "keywords": ["首页", "飞书", "管理", "全部"],
-    "url": "https://lcnywl4yrecr.feishu.cn/wiki/EqjMwpl6mi6l1SkeP0CckVkcnbD?from=from_copylink"
+    "url": ""
   }
 ]

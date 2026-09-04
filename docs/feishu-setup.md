@@ -60,6 +60,7 @@ SESSION_SECRET 使用至少32字节随机字符串。不要把以上值写入 Gi
 | PILOT_AUTO_PROVISION | 两人试运行期间设为 `true`，仅对飞书应用可用范围内的新增账号自动登记为学生；两人完成首次登录后改为 `false` |
 | MEMBERS_BASE_APP_TOKEN / MEMBERS_TABLE_ID | 人员表的 app token / table id |
 | WEEKLY_BASE_APP_TOKEN / WEEKLY_TABLE_ID | 周报表的 app token / table id |
+| LITERATURE_BASE_APP_TOKEN / LITERATURE_TABLE_ID | 文献阅读表的 app token / table id |
 | PROJECTS_BASE_APP_TOKEN / PROJECTS_TABLE_ID | 项目表的 app token / table id |
 | COURSES_BASE_APP_TOKEN / COURSES_TABLE_ID | 课程进度表的 app token / table id |
 | TASKS_BASE_APP_TOKEN / TASKS_TABLE_ID | 任务表的 app token / table id |
@@ -77,10 +78,9 @@ ER² Lab 当前数据分布在多套 Base 中，因此优先使用每张表对�
 
 ## 5. 验收账号
 
-至少用三个账号测试：
+首轮仅开放朱俊杰、郑斯哲两个账号测试：
 
-1. 学生：只能查看和提交本人记录；
-2. 教师：只能查看负责学生；
-3. 管理者：查看全局汇总。
+1. 郑斯哲：学生角色，只能查看和提交本人周报，可查看共享文献阅读；
+2. 朱俊杰：学生、教师、管理者角色，可切换三个视图并查看共享文献阅读。
 
-还应测试学生直接请求教师或管理接口时返回403、同一周重复提交更新原记录、飞书移动端可正常打开。
+两人完成首次授权后，立即把 `BOOTSTRAP_FIRST_USER` 和 `PILOT_AUTO_PROVISION` 都改为 `false`。还应测试停用成员无法继续写入、学生直接请求教师接口返回403、同一周重复提交更新原记录、文献提交重试不重复建记录，以及飞书移动端可正常打开。
