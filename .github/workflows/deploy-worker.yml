@@ -45,6 +45,21 @@ jobs:
         working-directory: worker
         run: npm test
 
+      - name: Configure Worker runtime secrets
+        working-directory: worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+        run: |
+          if [ -z "$FEISHU_APP_SECRET" ] || [ -z "$SESSION_SECRET" ]; then
+            echo "Runtime secrets are not configured yet; keeping the current Worker secrets."
+            exit 0
+          fi
+          node -e 'process.stdout.write(JSON.stringify({FEISHU_APP_SECRET: process.env.FEISHU_APP_SECRET, SESSION_SECRET: process.env.SESSION_SECRET}))' \
+            | npx wrangler secret bulk
+
       - name: Deploy Worker
         uses: cloudflare/wrangler-action@v3
         with:

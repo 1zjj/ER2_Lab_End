@@ -41,6 +41,17 @@ const multiBaseHealth = await service.fetch(new Request('https://api.example/hea
 });
 assert.equal((await multiBaseHealth.json()).configured, true);
 
+const wikiBaseHealth = await service.fetch(new Request('https://api.example/health'), {
+  ...env,
+  FEISHU_APP_ID: 'cli_test',
+  FEISHU_APP_SECRET: 'secret',
+  SESSION_SECRET: '01234567890123456789012345678901',
+  FEISHU_BASE_WIKI_TOKEN: 'wik_test',
+  MEMBERS_TABLE_ID: 'tbl_members',
+  WEEKLY_TABLE_ID: 'tbl_weekly'
+});
+assert.equal((await wikiBaseHealth.json()).configured, true);
+
 const preflight = await service.fetch(new Request('https://api.example/api/dashboard', {
   method: 'OPTIONS',
   headers: { Origin: 'https://1zjj.github.io' }

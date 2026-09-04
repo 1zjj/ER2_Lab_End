@@ -9,6 +9,11 @@
   },
   "vars": {
     "FRONTEND_URL": "https://1zjj.github.io/ER2_Lab_End/",
-    "FEISHU_REDIRECT_URI": "https://er2-lab-api.zhujunjie418.workers.dev/auth/callback"
+    "FEISHU_REDIRECT_URI": "https://er2-lab-api.zhujunjie418.workers.dev/auth/callback",
+    "FEISHU_APP_ID": "cli_aa10819ad9badbe8",
+    "FEISHU_BASE_WIKI_TOKEN": "POklwP2jtim1PeklX4IcShALnOH",
+    "BOOTSTRAP_FIRST_USER": "true",
+    "MEMBERS_TABLE_ID": "tblOQuocxzeuTD4Z",
+    "WEEKLY_TABLE_ID": "tblDmIOPDnqfSPDL"
   }
 }
