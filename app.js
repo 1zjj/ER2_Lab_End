@@ -28,6 +28,8 @@
     reportSubmit: document.getElementById('report-submit'),
     reportError: document.getElementById('report-error'),
     reportWeekLabel: document.getElementById('report-week-label'),
+    reportHistoryDialog: document.getElementById('report-history-dialog'),
+    reportHistoryBody: document.getElementById('report-history-body'),
     literatureDialog: document.getElementById('literature-dialog'),
     literatureForm: document.getElementById('literature-form'),
     literatureSubmit: document.getElementById('literature-submit'),
@@ -176,7 +178,7 @@
 
   function availableLink(url, label, className) {
     const safe = safeUrl(url);
-    if (safe === '#') return '<span class="' + escapeHtml(className || 'text-link') + ' link-disabled" title="该入口尚未由管理员配置">' + escapeHtml(label) + '</span>';
+    if (safe === '#') return '<button class="' + escapeHtml(className || 'text-link') + ' link-unconfigured" type="button" data-missing-link="' + escapeHtml(label) + '" title="该入口尚未由管理员配置">' + escapeHtml(label) + '</button>';
     return '<a class="' + escapeHtml(className || 'text-link') + '" href="' + safe + '">' + escapeHtml(label) + '</a>';
   }
 
@@ -347,8 +349,22 @@
     return '<span class="tag ' + escapeHtml(tone || '') + '">' + escapeHtml(text) + '</span>';
   }
 
+  function dashboardLink(terms) {
+    const links = state.dashboard && state.dashboard.student && Array.isArray(state.dashboard.student.links)
+      ? state.dashboard.student.links : [];
+    return (links.find(function (item) {
+      return terms.some(function (term) { return String(item.title || '').includes(term); });
+    }) || {}).url || '';
+  }
+
   function wikiUrl() {
-    return config.feishuWikiUrl || (state.catalog.find(function (item) { return item.category === '知识库'; }) || {}).url || '#';
+    return config.feishuWikiUrl || dashboardLink(['知识库', 'ER²首页', 'ER2首页']) ||
+      (state.catalog.find(function (item) { return item.category === '知识库' && safeUrl(item.url) !== '#'; }) || {}).url || '#';
+  }
+
+  function courseUrl() {
+    return dashboardLink(['课程', '学习中心', '培训']) ||
+      (state.catalog.find(function (item) { return item.category === '课程' && safeUrl(item.url) !== '#'; }) || {}).url || wikiUrl();
   }
 
   function footer() {
@@ -397,7 +413,7 @@
       '<section class="hero-card"><div><p class="kicker">本周唯一提交</p><h2>' + (submitted ? '本周工作记录已提交' : '完成本周工作记录') + '</h2>',
       '<p>项目进度、培训学习、产出证据、问题和下一步统一记录，预计5–8分钟。</p><div class="action-row">',
       '<button class="button button-primary" type="button" data-open-report>' + (submitted ? '修改本周记录' : '立即填写') + '</button>',
-      availableLink((data.links[0] || {}).url, '查看历史记录', 'button button-secondary') + '</div></div>',
+      '<button class="button button-secondary" type="button" data-open-report-history>查看历史记录</button></div></div>',
       '<div class="status-panel"><div><span>本周周报</span><strong>' + escapeHtml(data.report.label) + '</strong></div>',
       '<div><span>当前项目</span><strong>' + escapeHtml(data.project.code + ' ' + data.project.title) + '</strong></div>',
       '<div><span>课程进度</span><strong>' + escapeHtml(data.course.completed + ' / ' + data.course.total) + '</strong></div></div></section>',
@@ -414,7 +430,7 @@
       '</div>',
       '<aside class="stack"><section class="panel"><div class="panel-title"><h2>继续学习</h2></div><p class="kicker">' + escapeHtml(data.course.title) + '</p>',
       '<h3>' + escapeHtml(data.course.next) + '</h3><div class="progress-track" role="progressbar" aria-label="课程进度" aria-valuenow="' + Number(data.course.progress || 0) + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + Number(data.course.progress || 0) + '%"></span></div>',
-      availableLink((state.catalog.find(function (item) { return item.category === '课程'; }) || {}).url || wikiUrl(), '进入课程', 'button button-secondary') + '</section>',
+      availableLink(courseUrl(), '进入课程', 'button button-secondary') + '</section>',
       '</aside></div>',
       renderLiteratureSection(), footer()
     ].join('');
@@ -467,6 +483,8 @@
   function bindViewActions() {
     const reportButton = elements.app.querySelector('[data-open-report]');
     if (reportButton) reportButton.addEventListener('click', openReportDialog);
+    const reportHistoryButton = elements.app.querySelector('[data-open-report-history]');
+    if (reportHistoryButton) reportHistoryButton.addEventListener('click', openReportHistory);
     const literatureButton = elements.app.querySelector('[data-open-literature]');
     if (literatureButton) literatureButton.addEventListener('click', openLiteratureDialog);
     elements.app.querySelectorAll('[data-literature-detail]').forEach(function (button) {
@@ -478,6 +496,15 @@
         if (student) showToast(student.name + '：' + student.status + '；' + student.blocker);
       });
     });
+  }
+
+  function openReportHistory() {
+    const history = state.dashboard.student.submissions || [];
+    elements.reportHistoryBody.innerHTML = history.length ? history.map(function (report) {
+      return '<article class="history-record"><div class="history-record-head"><div><strong>' + escapeHtml(report.title || '历史周报') + '</strong><small>' + escapeHtml(report.date || '') + '</small></div>' + tag(report.status || '已提交') + '</div></article>';
+    }).join('') : '<div class="empty">还没有历史周报。</div>';
+    if (typeof elements.reportHistoryDialog.showModal === 'function') elements.reportHistoryDialog.showModal();
+    else elements.reportHistoryDialog.setAttribute('open', '');
   }
 
   function openReportDialog() {
@@ -665,7 +692,12 @@
       if (dialog) dialog.close();
     });
   });
-  [elements.reportDialog, elements.literatureDialog, elements.searchDialog, elements.literatureDetailDialog].forEach(function (dialog) {
+  document.addEventListener('click', function (event) {
+    const button = event.target.closest('[data-missing-link]');
+    if (!button) return;
+    showToast('“' + button.dataset.missingLink + '”尚未配置飞书链接，请管理员在门户链接表中补充');
+  });
+  [elements.reportDialog, elements.reportHistoryDialog, elements.literatureDialog, elements.searchDialog, elements.literatureDetailDialog].forEach(function (dialog) {
     dialog.addEventListener('click', function (event) {
       if (event.target === dialog) dialog.close();
     });
