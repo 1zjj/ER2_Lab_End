@@ -88,11 +88,13 @@ async function authCallback(request, env) {
   const tenantToken = await getTenantToken(env);
   const members = await listRecords(env, tenantToken, 'MEMBERS_TABLE_ID');
   let memberRecord = members.find((record) => String(field(record, '飞书OpenID', 'OpenID', 'open_id')) === String(openId));
-  if (!memberRecord && members.length === 0 && env.BOOTSTRAP_FIRST_USER === 'true') {
+  const bootstrapAdmin = !memberRecord && members.length === 0 && env.BOOTSTRAP_FIRST_USER === 'true';
+  const bootstrapPilotStudent = !memberRecord && env.PILOT_AUTO_PROVISION === 'true';
+  if (bootstrapAdmin || bootstrapPilotStudent) {
     const bootstrapFields = {
       '姓名': user.name || user.en_name || 'ER²管理员',
       '飞书OpenID': openId,
-      '角色': ['学生', '教师', '管理者'],
+      '角色': bootstrapAdmin ? ['学生', '教师', '管理者'] : ['学生'],
       '项目编号': '',
       '课程方向': '',
       '是否启用': true
