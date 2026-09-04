@@ -1,11 +1,14 @@
 const FEISHU_API = 'https://open.feishu.cn/open-apis';
 const FEISHU_AUTHORIZE = 'https://accounts.feishu.cn/open-apis/authen/v1/authorize';
 const wikiTokenCache = new Map();
-const LITERATURE_TABLE_ID = 'tblyHLZpybGVU364';
+const requestIds = new WeakMap();
+let tenantTokenCache = { token: '', expiresAt: 0 };
+const LITERATURE_TABLE_FALLBACK = 'tblyHLZpybGVU364';
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    requestIds.set(request, request.headers.get('X-Request-ID') || crypto.randomUUID());
     if (request.method === 'OPTIONS') return corsResponse(request, env, null, 204);
 
     try {
@@ -13,22 +16,26 @@ export default {
         const authConfigured = Boolean(env.FEISHU_APP_ID && env.FEISHU_APP_SECRET && env.SESSION_SECRET);
         const membersBinding = resolveTableBinding(env, 'MEMBERS_TABLE_ID');
         const weeklyBinding = resolveTableBinding(env, 'WEEKLY_TABLE_ID');
-        const dataConfigured = Boolean(
+        const literatureBinding = resolveTableBinding(env, 'LITERATURE_TABLE_ID');
+        const coreDataConfigured = Boolean(
           (membersBinding.appToken || membersBinding.wikiToken) && membersBinding.tableId &&
           (weeklyBinding.appToken || weeklyBinding.wikiToken) && weeklyBinding.tableId
         );
+        const literatureConfigured = Boolean((literatureBinding.appToken || literatureBinding.wikiToken) && literatureBinding.tableId);
         return json(request, env, {
           ok: true,
           service: 'er2-lab-api',
-          configured: authConfigured && dataConfigured,
+          configured: authConfigured && coreDataConfigured && literatureConfigured,
           authConfigured,
-          dataConfigured
+          dataConfigured: coreDataConfigured,
+          literatureConfigured
         });
       }
       if (url.pathname === '/auth/launch') return await launchAuth(request, env);
       if (url.pathname === '/auth/callback') return await authCallback(request, env);
 
-      const session = await requireSession(request, env);
+      let session = await requireSession(request, env);
+      if (request.method === 'POST') session = await requireActiveMember(env, session);
       if (url.pathname === '/api/me' && request.method === 'GET') return json(request, env, { profile: session });
       if (url.pathname === '/api/dashboard' && request.method === 'GET') return dashboard(request, env, session);
       if (url.pathname === '/api/reports' && request.method === 'POST') return saveReport(request, env, session);
@@ -40,7 +47,7 @@ export default {
       const status = Number(error.status || 500);
       const message = status >= 500 ? '服务暂时不可用，请稍后重试' : error.message;
       if (status >= 500) console.error(error);
-      return json(request, env, { message }, status);
+      return json(request, env, { message, requestId: requestIds.get(request) || '' }, status);
     }
   },
 
@@ -174,7 +181,7 @@ function buildLiterature(session, week, records) {
     noteUrl: field(record, '阅读笔记链接') || '',
     attachmentUrl: field(record, '论文附件链接') || '',
     submittedAt: field(record, '提交时间') || ''
-  })).sort((a, b) => String(b.submittedAt).localeCompare(String(a.submittedAt)));
+  })).sort((a, b) => String(b.submittedAt).localeCompare(String(a.submittedAt))).slice(0, 100);
   const mineCount = records.filter((record) =>
     String(field(record, '提交人OpenID')) === String(session.sub) &&
     String(field(record, '周次')) === week.id
@@ -216,6 +223,21 @@ async function saveLiterature(request, env, session) {
   const year = body.year === '' || body.year == null ? '' : Number(body.year);
   if (year !== '' && (!Number.isInteger(year) || year < 1800 || year > 2200)) throw httpError(400, '发表年份不正确');
   const tenantToken = await getTenantToken(env);
+  const existingRecords = await listRecords(env, tenantToken, 'LITERATURE_TABLE_ID');
+  const duplicate = existingRecords.find((record) =>
+    String(field(record, '提交人OpenID')) === String(session.sub) &&
+    String(field(record, '周次')) === currentWeek.id &&
+    clean(field(record, '论文标题')).toLowerCase() === clean(body.title).toLowerCase() &&
+    clean(field(record, '阅读笔记链接')) === clean(body.noteUrl)
+  );
+  if (duplicate) {
+    return json(request, env, {
+      ok: true,
+      deduplicated: true,
+      recordId: duplicate.record_id,
+      literature: buildLiterature(session, currentWeek, existingRecords)
+    });
+  }
   const fields = {
     '论文标题': clean(body.title),
     '提交人OpenID': session.sub,
@@ -243,7 +265,7 @@ async function saveLiterature(request, env, session) {
   };
   if (year === '') delete fields['发表年份'];
   const created = await createRecord(env, tenantToken, 'LITERATURE_TABLE_ID', fields);
-  const records = await listRecords(env, tenantToken, 'LITERATURE_TABLE_ID');
+  const records = [created.data?.record || { record_id: created.data?.record?.record_id || '', fields }, ...existingRecords];
   return json(request, env, {
     ok: true,
     recordId: created.data?.record?.record_id || '',
@@ -458,6 +480,7 @@ async function runScheduledTask(scheduledTime, env) {
 
 async function getTenantToken(env) {
   requireConfig(env, ['FEISHU_APP_ID', 'FEISHU_APP_SECRET']);
+  if (tenantTokenCache.token && tenantTokenCache.expiresAt > Date.now() + 60_000) return tenantTokenCache.token;
   const result = await feishuRequest('/auth/v3/tenant_access_token/internal', {
     method: 'POST',
     body: { app_id: env.FEISHU_APP_ID, app_secret: env.FEISHU_APP_SECRET },
@@ -465,6 +488,8 @@ async function getTenantToken(env) {
   });
   const token = result.tenant_access_token || result.data?.tenant_access_token;
   if (!token) throw httpError(502, '未能取得飞书应用令牌');
+  const expiresIn = Number(result.expire || result.data?.expire || 7200);
+  tenantTokenCache = { token, expiresAt: Date.now() + Math.max(300, expiresIn) * 1000 };
   return token;
 }
 
@@ -474,7 +499,7 @@ function resolveTableBinding(env, tableBinding) {
   return {
     appToken: env[tokenBinding] || env.FEISHU_BASE_APP_TOKEN || '',
     wikiToken: env[wikiBinding] || env.FEISHU_BASE_WIKI_TOKEN || '',
-    tableId: env[tableBinding] || (tableBinding === 'LITERATURE_TABLE_ID' ? LITERATURE_TABLE_ID : '')
+    tableId: env[tableBinding] || (tableBinding === 'LITERATURE_TABLE_ID' ? LITERATURE_TABLE_FALLBACK : '')
   };
 }
 
@@ -638,6 +663,23 @@ async function requireSession(request, env) {
   return session;
 }
 
+async function requireActiveMember(env, session) {
+  const tenantToken = await getTenantToken(env);
+  const records = await listRecords(env, tenantToken, 'MEMBERS_TABLE_ID');
+  const record = records.find((item) => String(field(item, '飞书OpenID', 'OpenID', 'open_id')) === String(session.sub));
+  if (!record) throw httpError(403, '你的账号已不在ER² Lab人员表中');
+  const member = normalizeMember(record);
+  if (!member.enabled) throw httpError(403, '你的ER² Lab账号已被停用');
+  return {
+    ...session,
+    name: member.name,
+    roles: member.roles,
+    teacherOpenId: member.teacherOpenId,
+    projectCode: member.projectCode,
+    track: member.track
+  };
+}
+
 async function signToken(payload, secret) {
   if (!secret) throw httpError(500, 'SESSION_SECRET未配置');
   const encoded = base64Url(new TextEncoder().encode(JSON.stringify(payload)));
@@ -687,8 +729,10 @@ function corsResponse(request, env, body, status) {
     status,
     headers: {
       'Access-Control-Allow-Origin': origin,
-      'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+      'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Request-ID',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Expose-Headers': 'X-Request-ID',
+      'X-Request-ID': requestIds.get(request) || '',
       'Vary': 'Origin'
     }
   });

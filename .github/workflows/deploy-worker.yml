@@ -39,7 +39,7 @@ jobs:
 
       - name: Install Worker dependencies
         working-directory: worker
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: Run Worker smoke tests
         working-directory: worker

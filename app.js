@@ -22,6 +22,7 @@
     accountName: document.getElementById('account-name'),
     accountRole: document.getElementById('account-role'),
     accountAvatar: document.getElementById('account-avatar'),
+    logoutButton: document.getElementById('logout-button'),
     reportDialog: document.getElementById('report-dialog'),
     reportForm: document.getElementById('report-form'),
     reportSubmit: document.getElementById('report-submit'),
@@ -37,6 +38,10 @@
     searchDialog: document.getElementById('search-dialog'),
     searchSummary: document.getElementById('search-summary'),
     searchResults: document.getElementById('search-results'),
+    literatureDetailDialog: document.getElementById('literature-detail-dialog'),
+    literatureDetailTitle: document.getElementById('literature-detail-title'),
+    literatureDetailMeta: document.getElementById('literature-detail-meta'),
+    literatureDetailBody: document.getElementById('literature-detail-body'),
     toast: document.getElementById('toast')
   };
 
@@ -45,7 +50,13 @@
     activeRole: 'student',
     dashboard: null,
     catalog: [],
+    literatureFilter: { query: '', week: 'all', submitter: 'all', type: 'all' },
     toastTimer: null
+  };
+
+  const draftKeys = {
+    report: 'er2-draft-report',
+    literature: 'er2-draft-literature'
   };
 
   const demoData = {
@@ -149,6 +160,45 @@
     }
   }
 
+  function createRequestId(prefix) {
+    const id = globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function'
+      ? globalThis.crypto.randomUUID()
+      : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+    return (prefix || 'req') + '-' + id;
+  }
+
+  function pendingRequestId(key, prefix) {
+    const existing = sessionStorage.getItem(key);
+    if (existing) return existing;
+    const created = createRequestId(prefix);
+    sessionStorage.setItem(key, created);
+    return created;
+  }
+
+  function availableLink(url, label, className) {
+    const safe = safeUrl(url);
+    if (safe === '#') return '<span class="' + escapeHtml(className || 'text-link') + ' link-disabled" title="该入口尚未由管理员配置">' + escapeHtml(label) + '</span>';
+    return '<a class="' + escapeHtml(className || 'text-link') + '" href="' + safe + '">' + escapeHtml(label) + '</a>';
+  }
+
+  function saveDraft(form, key) {
+    const values = Object.fromEntries(new FormData(form).entries());
+    sessionStorage.setItem(key, JSON.stringify(values));
+  }
+
+  function restoreDraft(form, key) {
+    let values = {};
+    try { values = JSON.parse(sessionStorage.getItem(key) || '{}'); } catch (_) { values = {}; }
+    Object.keys(values).forEach(function (name) {
+      const field = form.elements.namedItem(name);
+      if (field && typeof values[name] === 'string') field.value = values[name];
+    });
+  }
+
+  function clearDraft(key) {
+    sessionStorage.removeItem(key);
+  }
+
   function showToast(message) {
     clearTimeout(state.toastTimer);
     elements.toast.textContent = message;
@@ -231,6 +281,7 @@
     elements.accountName.textContent = profile.name;
     elements.accountRole.textContent = roleMeta[state.activeRole].label + (profile.track ? ' · ' + profile.track : '');
     elements.accountAvatar.textContent = String(profile.name || 'ER').trim().slice(-1).toUpperCase();
+    elements.logoutButton.hidden = DEMO_MODE;
   }
 
   function renderRoleNavigation(roles) {
@@ -266,13 +317,30 @@
 
   function footer() {
     return '<footer><span>ER² Lab统一工作台 · 数据与大文件由飞书承载</span>' +
-      '<a href="' + safeUrl(wikiUrl()) + '">打开ER²知识库</a></footer>';
+      availableLink(wikiUrl(), '打开ER²知识库') + '</footer>';
   }
 
   function renderLiteratureSection() {
     const literature = state.dashboard.literature || { mineCount: 0, minimum: 3, completed: false, items: [] };
-    const items = Array.isArray(literature.items) ? literature.items.slice(0, 20) : [];
+    const allItems = Array.isArray(literature.items) ? literature.items : [];
+    const filter = state.literatureFilter;
+    const weekOptions = Array.from(new Set(allItems.map(function (item) { return item.weekId; }).filter(Boolean)));
+    const submitterOptions = Array.from(new Set(allItems.map(function (item) { return item.submitter; }).filter(Boolean)));
+    const typeOptions = Array.from(new Set(allItems.map(function (item) { return item.type; }).filter(Boolean)));
+    const filterTerm = normalize(filter.query);
+    const items = allItems.filter(function (item) {
+      if (filter.week !== 'all' && item.weekId !== filter.week) return false;
+      if (filter.submitter !== 'all' && item.submitter !== filter.submitter) return false;
+      if (filter.type !== 'all' && item.type !== filter.type) return false;
+      if (!filterTerm) return true;
+      return normalize([item.title, item.authors, item.venue, item.direction, item.contribution, item.submitter].join(' ')).includes(filterTerm);
+    }).slice(0, 50);
     const progress = Math.min(100, Math.round((Number(literature.mineCount || 0) / Math.max(Number(literature.minimum || 3), 1)) * 100));
+    const options = function (values, current) {
+      return values.map(function (value) {
+        return '<option value="' + escapeHtml(value) + '"' + (value === current ? ' selected' : '') + '>' + escapeHtml(value) + '</option>';
+      }).join('');
+    };
     return [
       '<section class="panel literature-panel"><div class="literature-head"><div><p class="kicker">SHARED READING</p><h2>文献阅读</h2>',
       '<p>本周至少 3 篇，不限制上限。学生、教师和管理员提交的内容在课题组内互相可见。</p></div>',
@@ -280,18 +348,19 @@
       '<button class="button button-primary" type="button" data-open-literature>＋ 提交文献阅读</button></div></div>',
       '<div class="progress-track literature-progress" role="progressbar" aria-label="文献阅读周进度" aria-valuenow="' + progress + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + progress + '%"></span></div>',
       '<div class="literature-status">' + (literature.completed ? '<span class="status-ok">已达到本周最低篇数，可继续提交</span>' : '<span class="status-wait">还需 ' + Math.max(0, Number(literature.minimum || 3) - Number(literature.mineCount || 0)) + ' 篇达到本周最低要求</span>') + '</div>',
-      '<div class="panel-title literature-list-title"><h3>课题组最新阅读</h3><span>所有角色共同可见</span></div>',
+      '<div class="panel-title literature-list-title"><h3>课题组最新阅读</h3><span>所有角色共同可见 · 当前显示 ' + items.length + ' 条</span></div>',
+      '<div class="literature-filters"><input type="search" data-literature-filter="query" value="' + escapeHtml(filter.query) + '" placeholder="搜索标题、作者、方向"><select data-literature-filter="week"><option value="all">全部周次</option>' + options(weekOptions, filter.week) + '</select><select data-literature-filter="submitter"><option value="all">全部提交人</option>' + options(submitterOptions, filter.submitter) + '</select><select data-literature-filter="type"><option value="all">全部类型</option>' + options(typeOptions, filter.type) + '</select></div>',
       items.length ? '<div class="literature-list">' + items.map(function (item) {
         const meta = [item.authors, item.venue, item.year].filter(Boolean).join(' · ');
         const links = [
-          item.noteUrl ? '<a class="text-link" href="' + safeUrl(item.noteUrl) + '">阅读笔记</a>' : '',
-          item.paperUrl ? '<a class="text-link" href="' + safeUrl(item.paperUrl) + '">论文网页</a>' : '',
-          item.attachmentUrl ? '<a class="text-link" href="' + safeUrl(item.attachmentUrl) + '">附件</a>' : ''
+          item.noteUrl ? availableLink(item.noteUrl, '阅读笔记') : '',
+          item.paperUrl ? availableLink(item.paperUrl, '论文网页') : '',
+          item.attachmentUrl ? availableLink(item.attachmentUrl, '附件') : ''
         ].filter(Boolean).join('');
         return '<article class="literature-item"><div class="literature-item-main"><div class="literature-by"><span class="student-avatar">' + escapeHtml(String(item.submitter || 'ER').slice(-1)) + '</span><span><strong>' + escapeHtml(item.submitter || 'ER²成员') + '</strong><small>' + escapeHtml(item.role || '成员') + ' · ' + escapeHtml(item.date || item.weekId || '') + '</small></span></div><h3>' + escapeHtml(item.title) + '</h3>' +
           (meta ? '<p class="literature-meta">' + escapeHtml(meta) + '</p>' : '') + '<p class="literature-contribution">' + escapeHtml(item.contribution || '尚未填写一句话贡献') + '</p><div class="literature-tags">' +
-          (item.direction ? tag(item.direction) : '') + (item.type ? tag(item.type, 'green') : '') + '</div></div><div class="literature-links">' + links + '</div></article>';
-      }).join('') + '</div>' : '<div class="empty">本周还没有阅读记录，提交第一篇与大家分享。</div>',
+          (item.direction ? tag(item.direction) : '') + (item.type ? tag(item.type, 'green') : '') + '</div></div><div class="literature-links"><button class="text-button" type="button" data-literature-detail="' + escapeHtml(item.id) + '">查看详情</button>' + links + '</div></article>';
+      }).join('') + '</div>' : '<div class="empty">没有符合当前筛选条件的阅读记录。</div>',
       '</section>'
     ].join('');
   }
@@ -393,6 +462,15 @@
     if (reportButton) reportButton.addEventListener('click', openReportDialog);
     const literatureButton = elements.app.querySelector('[data-open-literature]');
     if (literatureButton) literatureButton.addEventListener('click', openLiteratureDialog);
+    elements.app.querySelectorAll('[data-literature-detail]').forEach(function (button) {
+      button.addEventListener('click', function () { openLiteratureDetail(button.dataset.literatureDetail); });
+    });
+    elements.app.querySelectorAll('[data-literature-filter]').forEach(function (control) {
+      control.addEventListener('change', function () {
+        state.literatureFilter[control.dataset.literatureFilter] = control.value;
+        renderActiveView();
+      });
+    });
     elements.app.querySelectorAll('[data-student]').forEach(function (button) {
       button.addEventListener('click', function () {
         const student = state.dashboard.teacher.students.find(function (item) { return item.id === button.dataset.student; });
@@ -404,6 +482,7 @@
   function openReportDialog() {
     elements.reportWeekLabel.textContent = state.dashboard.week.label;
     elements.reportError.hidden = true;
+    restoreDraft(elements.reportForm, draftKeys.report);
     if (typeof elements.reportDialog.showModal === 'function') elements.reportDialog.showModal();
     else elements.reportDialog.setAttribute('open', '');
   }
@@ -411,14 +490,40 @@
   function openLiteratureDialog() {
     elements.literatureWeekLabel.textContent = state.dashboard.week.label + ' · 已提交 ' + Number((state.dashboard.literature || {}).mineCount || 0) + ' 篇';
     elements.literatureError.hidden = true;
+    restoreDraft(elements.literatureForm, draftKeys.literature);
     if (typeof elements.literatureDialog.showModal === 'function') elements.literatureDialog.showModal();
     else elements.literatureDialog.setAttribute('open', '');
+  }
+
+  function openLiteratureDetail(id) {
+    const items = (state.dashboard.literature || {}).items || [];
+    const item = items.find(function (entry) { return String(entry.id) === String(id); });
+    if (!item) return showToast('这条阅读记录暂时不可用');
+    elements.literatureDetailTitle.textContent = item.title || '文献阅读详情';
+    elements.literatureDetailMeta.textContent = [item.submitter, item.role, item.weekId, item.date].filter(Boolean).join(' · ');
+    const section = function (title, value) {
+      return value ? '<section><h3>' + escapeHtml(title) + '</h3><p>' + escapeHtml(value).replace(/\n/g, '<br>') + '</p></section>' : '';
+    };
+    const links = [
+      item.noteUrl ? availableLink(item.noteUrl, '打开飞书阅读笔记', 'button button-primary') : '',
+      item.paperUrl ? availableLink(item.paperUrl, '打开论文网页', 'button button-secondary') : '',
+      item.attachmentUrl ? availableLink(item.attachmentUrl, '打开论文附件', 'button button-secondary') : ''
+    ].filter(Boolean).join('');
+    elements.literatureDetailBody.innerHTML = '<div class="literature-detail-grid">' +
+      section('作者', item.authors) + section('会议或期刊', [item.venue, item.year].filter(Boolean).join(' · ')) +
+      section('DOI / arXiv', item.doi) + section('研究方向与类型', [item.direction, item.type].filter(Boolean).join(' · ')) +
+      section('一句话贡献', item.contribution) + section('核心问题', item.coreProblem) +
+      section('方法摘要', item.method) + section('个人评价', item.review) + section('与项目关系', item.projectRelation) +
+      '</div><div class="action-row literature-detail-links">' + links + '</div>';
+    if (typeof elements.literatureDetailDialog.showModal === 'function') elements.literatureDetailDialog.showModal();
+    else elements.literatureDetailDialog.setAttribute('open', '');
   }
 
   async function submitReport(event) {
     event.preventDefault();
     if (!elements.reportForm.reportValidity()) return;
     const fields = Object.fromEntries(new FormData(elements.reportForm).entries());
+    fields.requestId = pendingRequestId('er2-request-report', 'weekly');
     elements.reportSubmit.disabled = true;
     elements.reportSubmit.textContent = '正在提交…';
     elements.reportError.hidden = true;
@@ -431,6 +536,7 @@
           headers: {
             'Accept': 'application/json',
             'Content-Type': 'application/json',
+            'X-Request-ID': fields.requestId,
             'Authorization': 'Bearer ' + state.session
           },
           body: JSON.stringify(Object.assign({ weekId: state.dashboard.week.id }, fields))
@@ -439,6 +545,8 @@
       state.dashboard.student.report = { status: 'submitted', label: '已提交' };
       elements.reportDialog.close();
       elements.reportForm.reset();
+      clearDraft(draftKeys.report);
+      sessionStorage.removeItem('er2-request-report');
       renderActiveView();
       showToast('本周工作记录已提交');
     } catch (error) {
@@ -454,6 +562,7 @@
     event.preventDefault();
     if (!elements.literatureForm.reportValidity()) return;
     const fields = Object.fromEntries(new FormData(elements.literatureForm).entries());
+    fields.requestId = pendingRequestId('er2-request-literature', 'literature');
     elements.literatureSubmit.disabled = true;
     elements.literatureSubmit.textContent = '正在提交…';
     elements.literatureError.hidden = true;
@@ -480,6 +589,7 @@
           headers: {
             'Accept': 'application/json',
             'Content-Type': 'application/json',
+            'X-Request-ID': fields.requestId,
             'Authorization': 'Bearer ' + state.session
           },
           body: JSON.stringify(Object.assign({ weekId: state.dashboard.week.id }, fields))
@@ -488,6 +598,8 @@
       }
       elements.literatureDialog.close();
       elements.literatureForm.reset();
+      clearDraft(draftKeys.literature);
+      sessionStorage.removeItem('er2-request-literature');
       renderActiveView();
       showToast('文献阅读已提交，课题组成员现在可以查看');
     } catch (error) {
@@ -525,8 +637,11 @@
     }).slice(0, 12);
     elements.searchSummary.textContent = matches.length ? '找到 ' + matches.length + ' 个入口；正文与大文件仍在飞书。' : '未找到“' + query + '”';
     elements.searchResults.innerHTML = matches.length ? matches.map(function (item) {
-      return '<a class="search-result" href="' + safeUrl(item.url) + '"><span>' + escapeHtml(item.category.slice(0,2)) +
-        '</span><div><strong>' + escapeHtml(item.title) + '</strong><small>' + escapeHtml(item.subtitle) + '</small></div><b>→</b></a>';
+      const safe = safeUrl(item.url);
+      const tagName = safe === '#' ? 'div' : 'a';
+      const href = safe === '#' ? '' : ' href="' + safe + '"';
+      return '<' + tagName + ' class="search-result' + (safe === '#' ? ' unavailable' : '') + '"' + href + '><span>' + escapeHtml(item.category.slice(0,2)) +
+        '</span><div><strong>' + escapeHtml(item.title) + '</strong><small>' + escapeHtml(item.subtitle) + (safe === '#' ? ' · 登录后由飞书工作台提供入口' : '') + '</small></div><b>' + (safe === '#' ? '—' : '→') + '</b></' + tagName + '>';
     }).join('') : '<div class="empty">可以尝试“周报”“ROS”“D435”“项目”或“SOP”</div>';
     if (typeof elements.searchDialog.showModal === 'function') elements.searchDialog.showModal();
     else elements.searchDialog.setAttribute('open', '');
@@ -538,7 +653,7 @@
       if (dialog) dialog.close();
     });
   });
-  [elements.reportDialog, elements.literatureDialog, elements.searchDialog].forEach(function (dialog) {
+  [elements.reportDialog, elements.literatureDialog, elements.searchDialog, elements.literatureDetailDialog].forEach(function (dialog) {
     dialog.addEventListener('click', function (event) {
       if (event.target === dialog) dialog.close();
     });
@@ -546,7 +661,16 @@
   document.getElementById('retry-button').addEventListener('click', function () { loadDashboard(state.activeRole); });
   elements.reportForm.addEventListener('submit', submitReport);
   elements.literatureForm.addEventListener('submit', submitLiterature);
+  elements.reportForm.addEventListener('input', function () { saveDraft(elements.reportForm, draftKeys.report); });
+  elements.literatureForm.addEventListener('input', function () { saveDraft(elements.literatureForm, draftKeys.literature); });
   elements.searchForm.addEventListener('submit', runSearch);
+  elements.logoutButton.addEventListener('click', function () {
+    sessionStorage.removeItem('er2-session');
+    sessionStorage.removeItem('er2-request-report');
+    sessionStorage.removeItem('er2-request-literature');
+    state.session = '';
+    location.href = API_BASE + '/auth/launch?returnTo=' + encodeURIComponent(location.origin + location.pathname);
+  });
 
   fetch('./data/catalog.json')
     .then(function (response) { return response.ok ? response.json() : []; })
