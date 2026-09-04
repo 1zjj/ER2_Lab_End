@@ -35,7 +35,7 @@ export default {
       if (url.pathname === '/auth/callback') return await authCallback(request, env);
 
       let session = await requireSession(request, env);
-      if (request.method === 'POST') session = await requireActiveMember(env, session);
+      if (url.pathname.startsWith('/api/')) session = await requireActiveMember(env, session);
       if (url.pathname === '/api/me' && request.method === 'GET') return json(request, env, { profile: session });
       if (url.pathname === '/api/dashboard' && request.method === 'GET') return dashboard(request, env, session);
       if (url.pathname === '/api/reports' && request.method === 'POST') return saveReport(request, env, session);
@@ -98,8 +98,13 @@ async function authCallback(request, env) {
   const tenantToken = await getTenantToken(env);
   const members = await listRecords(env, tenantToken, 'MEMBERS_TABLE_ID');
   let memberRecord = members.find((record) => String(field(record, '飞书OpenID', 'OpenID', 'open_id')) === String(openId));
-  const bootstrapAdmin = !memberRecord && members.length === 0 && env.BOOTSTRAP_FIRST_USER === 'true';
-  const bootstrapPilotStudent = !memberRecord && env.PILOT_AUTO_PROVISION === 'true';
+  const oauthNames = [clean(user.name), clean(user.en_name)].filter(Boolean);
+  const allowedPilotNames = arrayValue(env.PILOT_ALLOWED_NAMES || '朱俊杰,郑斯哲').map(clean);
+  const bootstrapAdminName = clean(env.BOOTSTRAP_ADMIN_NAME || '朱俊杰');
+  const pilotNameAllowed = !allowedPilotNames.length || allowedPilotNames.some((name) => oauthNames.includes(name));
+  const bootstrapAdmin = !memberRecord && env.BOOTSTRAP_FIRST_USER === 'true' &&
+    (bootstrapAdminName ? oauthNames.includes(bootstrapAdminName) : members.length === 0);
+  const bootstrapPilotStudent = !memberRecord && env.PILOT_AUTO_PROVISION === 'true' && pilotNameAllowed;
   if (bootstrapAdmin || bootstrapPilotStudent) {
     const bootstrapFields = {
       '姓名': user.name || user.en_name || 'ER²管理员',
@@ -161,7 +166,7 @@ async function dashboard(request, env, session) {
 function buildLiterature(session, week, records) {
   const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
   const items = records.map((record) => {
-    const date = field(record, '阅读日期') || '';
+    const rawDate = field(record, '阅读日期') || '';
     const submittedAt = field(record, '提交时间') || '';
     return {
       id: record.record_id,
@@ -169,7 +174,7 @@ function buildLiterature(session, week, records) {
       submitter: field(record, '提交人姓名') || 'ER²成员',
       role: field(record, '提交人角色') || '成员',
       weekId: field(record, '周次') || '',
-      date,
+      date: formatRecordDate(rawDate || submittedAt),
       authors: field(record, '作者') || '',
       venue: field(record, '会议或期刊') || '',
       year: field(record, '发表年份') || '',
@@ -185,7 +190,7 @@ function buildLiterature(session, week, records) {
       noteUrl: field(record, '阅读笔记链接') || '',
       attachmentUrl: field(record, '论文附件链接') || '',
       submittedAt,
-      timestamp: parseRecordTime(submittedAt || date)
+      timestamp: parseRecordTime(submittedAt || rawDate)
     };
   }).filter((item) => item.timestamp >= cutoff)
     .sort((a, b) => b.timestamp - a.timestamp)
@@ -214,6 +219,11 @@ function parseRecordTime(value) {
   }
   const parsed = Date.parse(text);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatRecordDate(value) {
+  const timestamp = parseRecordTime(value);
+  return timestamp ? shanghaiDate(new Date(timestamp)) : clean(value);
 }
 
 async function getLiterature(request, env, session) {
@@ -326,7 +336,14 @@ function buildStudent(session, week, reports, projects, courses, tasks, links) {
   return {
     report: {
       status: currentReport ? 'submitted' : 'pending',
-      label: currentReport ? '已提交' : '未提交'
+      label: currentReport ? '已提交' : '未提交',
+      values: currentReport ? {
+        progress: clean(field(currentReport, '本周完成与结果')),
+        learning: clean(field(currentReport, '学习与方法')),
+        evidence: clean(field(currentReport, '证据链接')),
+        blockers: clean(field(currentReport, '问题与阻塞', '阻塞')),
+        nextPlan: clean(field(currentReport, '下周计划'))
+      } : {}
     },
     course: {
       title: session.track || '培养课程',
