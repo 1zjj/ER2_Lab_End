@@ -152,9 +152,10 @@
   }
 
   function safeUrl(value) {
-    if (!value) return '#';
+    const text = String(value || '').trim();
+    if (!text || text === '#') return '#';
     try {
-      const url = new URL(String(value || ''), location.href);
+      const url = new URL(text, location.href);
       return ['http:', 'https:'].includes(url.protocol) ? url.href : '#';
     } catch (_) {
       return '#';
