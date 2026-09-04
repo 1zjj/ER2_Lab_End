@@ -9,6 +9,6 @@
   },
   "vars": {
     "FRONTEND_URL": "https://1zjj.github.io/ER2_Lab_End/",
-    "FEISHU_REDIRECT_URI": "https://er2-lab-api.YOUR_SUBDOMAIN.workers.dev/auth/callback"
+    "FEISHU_REDIRECT_URI": "https://er2-lab-api.zhujunjie418.workers.dev/auth/callback"
   }
 }
