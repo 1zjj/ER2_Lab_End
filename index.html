@@ -7,7 +7,7 @@
   <meta name="description" content="ER² Lab 学生、教师与管理者的一页式飞书工作台">
   <title>ER² Lab 工作台</title>
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="./styles.css?v=20260904-stable1">
+  <link rel="stylesheet" href="./styles.css?v=20260904-hotfix1">
 </head>
 <body>
   <header class="topbar">
@@ -78,6 +78,17 @@
     </form>
   </dialog>
 
+  <dialog class="modal literature-detail-modal" id="report-history-dialog">
+    <div class="modal-head">
+      <div><p class="kicker">REPORT HISTORY</p><h2>历史周报</h2><p>最近提交记录</p></div>
+      <button class="icon-button" type="button" data-close-dialog="report-history-dialog" aria-label="关闭">×</button>
+    </div>
+    <div class="dialog-scroll" id="report-history-body"></div>
+    <div class="modal-actions">
+      <button class="button button-secondary" type="button" data-close-dialog="report-history-dialog">关闭</button>
+    </div>
+  </dialog>
+
   <dialog class="modal literature-modal" id="literature-dialog">
     <form id="literature-form">
       <div class="modal-head">
@@ -130,7 +141,7 @@
   </dialog>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="./config.js?v=20260904-stable1"></script>
-  <script src="./app.js?v=20260904-stable1"></script>
+  <script src="./config.js?v=20260904-hotfix1"></script>
+  <script src="./app.js?v=20260904-hotfix1"></script>
 </body>
 </html>
