@@ -188,7 +188,12 @@
   function restoreDraft(form, key) {
     let values = {};
     try { values = JSON.parse(sessionStorage.getItem(key) || '{}'); } catch (_) { values = {}; }
-    Object.keys(values).forEach(function (name) {
+    setFormValues(form, values);
+    return Object.keys(values).length > 0;
+  }
+
+  function setFormValues(form, values) {
+    Object.keys(values || {}).forEach(function (name) {
       const field = form.elements.namedItem(name);
       if (field && typeof values[name] === 'string') field.value = values[name];
     });
@@ -247,10 +252,17 @@
       if (DEMO_MODE) {
         await new Promise(function (resolve) { setTimeout(resolve, 260); });
         data = JSON.parse(JSON.stringify(demoData));
-        const saved = JSON.parse(localStorage.getItem('er2-demo-literature') || '[]');
-        if (Array.isArray(saved) && saved.length) {
-          data.literature.items = saved.concat(data.literature.items);
-          data.literature.mineCount += saved.length;
+        const saved = readDemoLiterature();
+        if (saved.length) {
+          const recentCutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+          const recentSaved = saved.filter(function (item) {
+            return recordTimestamp(item.submittedAt || item.date) >= recentCutoff;
+          });
+          const currentWeekSaved = saved.filter(function (item) {
+            return item.weekId === data.week.id && item.submitter === data.profile.name;
+          });
+          data.literature.items = recentSaved.concat(data.literature.items).slice(0, 30);
+          data.literature.mineCount += currentWeekSaved.length;
           data.literature.completed = data.literature.mineCount >= data.literature.minimum;
         }
       } else {
@@ -281,6 +293,31 @@
     elements.accountRole.textContent = roleMeta[state.activeRole].label + (profile.track ? ' · ' + profile.track : '');
     elements.accountAvatar.textContent = String(profile.name || 'ER').trim().slice(-1).toUpperCase();
     elements.logoutButton.hidden = DEMO_MODE;
+  }
+
+  function greeting() {
+    const hour = Number(new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Shanghai', hour: '2-digit', hour12: false
+    }).format(new Date()));
+    if (hour < 6) return '夜深了';
+    if (hour < 12) return '早上好';
+    if (hour < 18) return '下午好';
+    return '晚上好';
+  }
+
+  function recordTimestamp(value) {
+    if (typeof value === 'number') return value < 1e12 ? value * 1000 : value;
+    const parsed = Date.parse(String(value || ''));
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  function readDemoLiterature() {
+    try {
+      const saved = JSON.parse(localStorage.getItem('er2-demo-literature') || '[]');
+      return Array.isArray(saved) ? saved : [];
+    } catch (_) {
+      return [];
+    }
   }
 
   function renderRoleNavigation(roles) {
@@ -354,13 +391,13 @@
     const data = state.dashboard.student;
     const submitted = data.report.status === 'submitted';
     return [
-      '<section class="welcome"><div><p class="kicker">STUDENT WORKSPACE</p><h1>晚上好，' + escapeHtml(profile.name) + '</h1>',
+      '<section class="welcome"><div><p class="kicker">STUDENT WORKSPACE</p><h1>' + greeting() + '，' + escapeHtml(profile.name) + '</h1>',
       '<p>这里只展示与你有关的任务、课程、项目和记录。</p></div>',
       '<div class="deadline">◷ ' + escapeHtml(week.dueLabel) + '</div></section>',
       '<section class="hero-card"><div><p class="kicker">本周唯一提交</p><h2>' + (submitted ? '本周工作记录已提交' : '完成本周工作记录') + '</h2>',
       '<p>项目进度、培训学习、产出证据、问题和下一步统一记录，预计5–8分钟。</p><div class="action-row">',
       '<button class="button button-primary" type="button" data-open-report>' + (submitted ? '修改本周记录' : '立即填写') + '</button>',
-      '<a class="button button-secondary" href="' + safeUrl((data.links[0] || {}).url) + '">查看历史记录</a></div></div>',
+      availableLink((data.links[0] || {}).url, '查看历史记录', 'button button-secondary') + '</div></div>',
       '<div class="status-panel"><div><span>本周周报</span><strong>' + escapeHtml(data.report.label) + '</strong></div>',
       '<div><span>当前项目</span><strong>' + escapeHtml(data.project.code + ' ' + data.project.title) + '</strong></div>',
       '<div><span>课程进度</span><strong>' + escapeHtml(data.course.completed + ' / ' + data.course.total) + '</strong></div></div></section>',
@@ -370,14 +407,14 @@
         return '<li><span class="task-number">' + (index + 1) + '</span><div><strong>' + escapeHtml(item.title) +
           '</strong><small>' + escapeHtml(item.detail) + '</small></div>' + tag(item.type) + '</li>';
       }).join(''), '</ol></section>',
-      '<section class="panel"><div class="panel-title"><h2>我的项目</h2><a href="' + safeUrl(data.project.url) + '">打开项目页</a></div>',
+      '<section class="panel"><div class="panel-title"><h2>我的项目</h2>' + availableLink(data.project.url, '打开项目页') + '</div>',
       '<h3>' + escapeHtml(data.project.code + ' ' + data.project.title) + '</h3><p>' + escapeHtml(data.project.milestone) + '</p>',
       '<div class="progress-track" role="progressbar" aria-label="项目进度" aria-valuenow="' + Number(data.project.progress || 0) + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + Math.max(0, Math.min(100, Number(data.project.progress || 0))) + '%"></span></div>',
       '<p class="project-note"><strong>最近阻塞：</strong>' + escapeHtml(data.project.blocker) + '</p></section>',
       '</div>',
       '<aside class="stack"><section class="panel"><div class="panel-title"><h2>继续学习</h2></div><p class="kicker">' + escapeHtml(data.course.title) + '</p>',
       '<h3>' + escapeHtml(data.course.next) + '</h3><div class="progress-track" role="progressbar" aria-label="课程进度" aria-valuenow="' + Number(data.course.progress || 0) + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + Number(data.course.progress || 0) + '%"></span></div>',
-      '<a class="button button-secondary" href="' + safeUrl((state.catalog.find(function (item) { return item.category === '课程'; }) || {}).url || wikiUrl()) + '">进入课程</a></section>',
+      availableLink((state.catalog.find(function (item) { return item.category === '课程'; }) || {}).url || wikiUrl(), '进入课程', 'button button-secondary') + '</section>',
       '</aside></div>',
       renderLiteratureSection(), footer()
     ].join('');
@@ -446,7 +483,8 @@
   function openReportDialog() {
     elements.reportWeekLabel.textContent = state.dashboard.week.label;
     elements.reportError.hidden = true;
-    restoreDraft(elements.reportForm, draftKeys.report);
+    const hasDraft = restoreDraft(elements.reportForm, draftKeys.report);
+    if (!hasDraft) setFormValues(elements.reportForm, (state.dashboard.student.report || {}).values || {});
     if (typeof elements.reportDialog.showModal === 'function') elements.reportDialog.showModal();
     else elements.reportDialog.setAttribute('open', '');
   }
@@ -506,7 +544,17 @@
           body: JSON.stringify(Object.assign({ weekId: state.dashboard.week.id }, fields))
         });
       }
-      state.dashboard.student.report = { status: 'submitted', label: '已提交' };
+      state.dashboard.student.report = {
+        status: 'submitted',
+        label: '已提交',
+        values: {
+          progress: fields.progress || '',
+          learning: fields.learning || '',
+          evidence: fields.evidence || '',
+          blockers: fields.blockers || '',
+          nextPlan: fields.nextPlan || ''
+        }
+      };
       elements.reportDialog.close();
       elements.reportForm.reset();
       clearDraft(draftKeys.report);
@@ -533,7 +581,7 @@
     try {
       if (DEMO_MODE) {
         await new Promise(function (resolve) { setTimeout(resolve, 420); });
-        const saved = JSON.parse(localStorage.getItem('er2-demo-literature') || '[]');
+        const saved = readDemoLiterature();
         const item = Object.assign({}, fields, {
           id: 'demo-' + Date.now(),
           submitter: state.dashboard.profile.name,

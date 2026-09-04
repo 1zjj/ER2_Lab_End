@@ -86,16 +86,29 @@ const signature = Buffer.from(await crypto.subtle.sign('HMAC', key, new TextEnco
 const session = encoded + '.' + signature;
 const originalFetch = globalThis.fetch;
 let postedLiterature = null;
+let postedMember = null;
 let memberEnabled = true;
+let weeklyItems = [];
+let oauthUser = { open_id: 'ou_unknown', name: '陌生用户' };
 const literatureItems = [
-  { record_id: 'rec_recent', fields: { '论文标题': '近7天论文', '提交人OpenID': 'ou_teacher', '提交人姓名': '测试教师', '周次': 'recent', '提交时间': new Date(Date.now() - 2 * 86400000).toISOString() } },
+  { record_id: 'rec_recent', fields: { '论文标题': '近7天论文', '提交人OpenID': 'ou_teacher', '提交人姓名': '测试教师', '周次': 'recent', '阅读日期': Date.now() - 2 * 86400000, '提交时间': new Date(Date.now() - 2 * 86400000).toISOString() } },
   { record_id: 'rec_old', fields: { '论文标题': '历史论文', '提交人OpenID': 'ou_teacher', '提交人姓名': '测试教师', '周次': 'old', '提交时间': new Date(Date.now() - 10 * 86400000).toISOString() } }
 ];
 globalThis.fetch = async (url, options = {}) => {
   if (String(url).endsWith('/auth/v3/tenant_access_token/internal')) {
     return Response.json({ code: 0, tenant_access_token: 'tenant-token' });
   }
-  if (String(url).includes('/records') && options.method === 'POST') {
+  if (String(url).endsWith('/authen/v2/oauth/token')) {
+    return Response.json({ code: 0, access_token: 'user-token' });
+  }
+  if (String(url).endsWith('/authen/v1/user_info')) {
+    return Response.json({ code: 0, data: oauthUser });
+  }
+  if (String(url).includes('/tables/tbl_members/records') && options.method === 'POST') {
+    postedMember = JSON.parse(options.body).fields;
+    return Response.json({ code: 0, data: { record: { record_id: 'rec_new_member', fields: postedMember } } });
+  }
+  if (String(url).includes('/tables/tbl_literature/records') && options.method === 'POST') {
     postedLiterature = JSON.parse(options.body).fields;
     return Response.json({ code: 0, data: { record: { record_id: 'rec_new', fields: postedLiterature } } });
   }
@@ -107,6 +120,9 @@ globalThis.fetch = async (url, options = {}) => {
   if (String(url).includes('/tables/tbl_literature/records')) {
     return Response.json({ code: 0, data: { items: literatureItems } });
   }
+  if (String(url).includes('/tables/tbl_weekly/records')) {
+    return Response.json({ code: 0, data: { items: weeklyItems } });
+  }
   if (String(url).includes('/records')) return Response.json({ code: 0, data: { items: [] } });
   throw new Error('unexpected fetch ' + url);
 };
@@ -117,9 +133,35 @@ const literatureEnv = {
   SESSION_SECRET: secret,
   MEMBERS_BASE_APP_TOKEN: 'bas_members',
   MEMBERS_TABLE_ID: 'tbl_members',
+  WEEKLY_BASE_APP_TOKEN: 'bas_weekly',
+  WEEKLY_TABLE_ID: 'tbl_weekly',
   LITERATURE_BASE_APP_TOKEN: 'bas_literature',
   LITERATURE_TABLE_ID: 'tbl_literature'
 };
+const oauthStatePayload = Buffer.from(JSON.stringify({
+  purpose: 'oauth',
+  returnTo: env.FRONTEND_URL,
+  exp: Math.floor(Date.now() / 1000) + 600
+})).toString('base64url');
+const oauthStateSignature = Buffer.from(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(oauthStatePayload))).toString('base64url');
+const oauthState = oauthStatePayload + '.' + oauthStateSignature;
+const pilotEnv = {
+  ...literatureEnv,
+  FEISHU_REDIRECT_URI: 'https://api.example/auth/callback',
+  PILOT_AUTO_PROVISION: 'true',
+  PILOT_ALLOWED_NAMES: '朱俊杰,郑斯哲',
+  BOOTSTRAP_FIRST_USER: 'true',
+  BOOTSTRAP_ADMIN_NAME: '朱俊杰'
+};
+const blockedPilot = await service.fetch(new Request('https://api.example/auth/callback?code=test&state=' + encodeURIComponent(oauthState)), pilotEnv);
+assert.equal(blockedPilot.status, 403);
+assert.equal(postedMember, null);
+oauthUser = { open_id: 'ou_zheng', name: '郑斯哲' };
+const allowedPilot = await service.fetch(new Request('https://api.example/auth/callback?code=test&state=' + encodeURIComponent(oauthState)), pilotEnv);
+assert.equal(allowedPilot.status, 302);
+assert.deepEqual(postedMember['角色'], ['学生']);
+assert.equal(postedMember['飞书OpenID'], 'ou_zheng');
+
 const literatureGet = await service.fetch(new Request('https://api.example/api/literature', {
   headers: { Authorization: 'Bearer ' + session }
 }), literatureEnv);
@@ -127,6 +169,34 @@ assert.equal(literatureGet.status, 200);
 const literatureGetBody = await literatureGet.json();
 assert.equal(literatureGetBody.literature.minimum, 3);
 assert.deepEqual(literatureGetBody.literature.items.map((item) => item.title), ['近7天论文']);
+assert.match(literatureGetBody.literature.items[0].date, /^\d{4}-\d{2}-\d{2}$/);
+
+const initialDashboard = await service.fetch(new Request('https://api.example/api/dashboard', {
+  headers: { Authorization: 'Bearer ' + session }
+}), literatureEnv);
+const initialDashboardBody = await initialDashboard.json();
+weeklyItems = [{ record_id: 'rec_report', fields: {
+  '飞书OpenID': 'ou_teacher',
+  '周次': initialDashboardBody.week.id,
+  '本周完成与结果': '完成测试',
+  '学习与方法': '回归测试',
+  '证据链接': 'https://example.com/evidence',
+  '问题与阻塞': '暂无',
+  '下周计划': '继续验证'
+} }];
+const submittedDashboard = await service.fetch(new Request('https://api.example/api/dashboard', {
+  headers: { Authorization: 'Bearer ' + session }
+}), literatureEnv);
+assert.equal(submittedDashboard.status, 200);
+const submittedDashboardBody = await submittedDashboard.json();
+assert.equal(submittedDashboardBody.student.report.status, 'submitted');
+assert.deepEqual(submittedDashboardBody.student.report.values, {
+  progress: '完成测试',
+  learning: '回归测试',
+  evidence: 'https://example.com/evidence',
+  blockers: '暂无',
+  nextPlan: '继续验证'
+});
 
 const literaturePost = await service.fetch(new Request('https://api.example/api/literature', {
   method: 'POST',
@@ -150,6 +220,11 @@ const disabledPost = await service.fetch(new Request('https://api.example/api/li
 }), literatureEnv);
 assert.equal(disabledPost.status, 403);
 assert.equal((await disabledPost.json()).message, '你的ER² Lab账号已被停用');
+const disabledGet = await service.fetch(new Request('https://api.example/api/literature', {
+  headers: { Authorization: 'Bearer ' + session }
+}), literatureEnv);
+assert.equal(disabledGet.status, 403);
+assert.equal((await disabledGet.json()).message, '你的ER² Lab账号已被停用');
 globalThis.fetch = originalFetch;
 
 console.log('worker smoke tests passed');
