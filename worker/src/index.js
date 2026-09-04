@@ -1,5 +1,6 @@
 const FEISHU_API = 'https://open.feishu.cn/open-apis';
 const FEISHU_AUTHORIZE = 'https://accounts.feishu.cn/open-apis/authen/v1/authorize';
+const wikiTokenCache = new Map();
 
 export default {
   async fetch(request, env) {
@@ -11,7 +12,10 @@ export default {
         const authConfigured = Boolean(env.FEISHU_APP_ID && env.FEISHU_APP_SECRET && env.SESSION_SECRET);
         const membersBinding = resolveTableBinding(env, 'MEMBERS_TABLE_ID');
         const weeklyBinding = resolveTableBinding(env, 'WEEKLY_TABLE_ID');
-        const dataConfigured = Boolean(membersBinding.appToken && membersBinding.tableId && weeklyBinding.appToken && weeklyBinding.tableId);
+        const dataConfigured = Boolean(
+          (membersBinding.appToken || membersBinding.wikiToken) && membersBinding.tableId &&
+          (weeklyBinding.appToken || weeklyBinding.wikiToken) && weeklyBinding.tableId
+        );
         return json(request, env, {
           ok: true,
           service: 'er2-lab-api',
@@ -83,7 +87,19 @@ async function authCallback(request, env) {
 
   const tenantToken = await getTenantToken(env);
   const members = await listRecords(env, tenantToken, 'MEMBERS_TABLE_ID');
-  const memberRecord = members.find((record) => String(field(record, '飞书OpenID', 'OpenID', 'open_id')) === String(openId));
+  let memberRecord = members.find((record) => String(field(record, '飞书OpenID', 'OpenID', 'open_id')) === String(openId));
+  if (!memberRecord && members.length === 0 && env.BOOTSTRAP_FIRST_USER === 'true') {
+    const bootstrapFields = {
+      '姓名': user.name || user.en_name || 'ER²管理员',
+      '飞书OpenID': openId,
+      '角色': ['学生', '教师', '管理者'],
+      '项目编号': '',
+      '课程方向': '',
+      '是否启用': true
+    };
+    const created = await createRecord(env, tenantToken, 'MEMBERS_TABLE_ID', bootstrapFields);
+    memberRecord = created.data?.record || { fields: bootstrapFields };
+  }
   if (!memberRecord || field(memberRecord, '是否启用', '启用') === false) {
     throw httpError(403, '你的账号尚未加入ER² Lab人员表，请联系管理员');
   }
@@ -337,15 +353,30 @@ async function getTenantToken(env) {
 
 function resolveTableBinding(env, tableBinding) {
   const tokenBinding = String(tableBinding).replace(/_TABLE_ID$/, '_BASE_APP_TOKEN');
+  const wikiBinding = String(tableBinding).replace(/_TABLE_ID$/, '_BASE_WIKI_TOKEN');
   return {
     appToken: env[tokenBinding] || env.FEISHU_BASE_APP_TOKEN || '',
+    wikiToken: env[wikiBinding] || env.FEISHU_BASE_WIKI_TOKEN || '',
     tableId: env[tableBinding] || ''
   };
 }
 
+async function resolveBitableAppToken(binding, token) {
+  if (binding.appToken) return binding.appToken;
+  if (!binding.wikiToken) return '';
+  if (wikiTokenCache.has(binding.wikiToken)) return wikiTokenCache.get(binding.wikiToken);
+  const result = await feishuRequest('/wiki/v2/spaces/get_node?token=' + encodeURIComponent(binding.wikiToken), { bearer: token });
+  const appToken = result.data?.node?.obj_token || '';
+  if (!appToken) throw httpError(502, '未能解析飞书知识库中的多维表格标识');
+  wikiTokenCache.set(binding.wikiToken, appToken);
+  return appToken;
+}
+
 async function listRecords(env, token, tableBinding) {
-  const { appToken, tableId } = resolveTableBinding(env, tableBinding);
-  if (!appToken || !tableId) return [];
+  const binding = resolveTableBinding(env, tableBinding);
+  if ((!binding.appToken && !binding.wikiToken) || !binding.tableId) return [];
+  const appToken = await resolveBitableAppToken(binding, token);
+  const tableId = binding.tableId;
   let pageToken = '';
   const records = [];
   do {
@@ -358,7 +389,9 @@ async function listRecords(env, token, tableBinding) {
 }
 
 async function createRecord(env, token, tableBinding, fields) {
-  const { appToken, tableId } = resolveTableBinding(env, tableBinding);
+  const binding = resolveTableBinding(env, tableBinding);
+  const appToken = await resolveBitableAppToken(binding, token);
+  const tableId = binding.tableId;
   if (!appToken || !tableId) throw httpError(500, '目标数据表尚未配置：' + tableBinding);
   return feishuRequest('/bitable/v1/apps/' + appToken + '/tables/' + tableId + '/records', {
     method: 'POST',
@@ -368,7 +401,9 @@ async function createRecord(env, token, tableBinding, fields) {
 }
 
 async function updateRecord(env, token, tableBinding, recordId, fields) {
-  const { appToken, tableId } = resolveTableBinding(env, tableBinding);
+  const binding = resolveTableBinding(env, tableBinding);
+  const appToken = await resolveBitableAppToken(binding, token);
+  const tableId = binding.tableId;
   if (!appToken || !tableId) throw httpError(500, '目标数据表尚未配置：' + tableBinding);
   return feishuRequest('/bitable/v1/apps/' + appToken + '/tables/' + tableId + '/records/' + recordId, {
     method: 'PUT',
