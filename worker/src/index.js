@@ -8,10 +8,16 @@ export default {
 
     try {
       if (url.pathname === '/health') {
+        const authConfigured = Boolean(env.FEISHU_APP_ID && env.FEISHU_APP_SECRET && env.SESSION_SECRET);
+        const membersBinding = resolveTableBinding(env, 'MEMBERS_TABLE_ID');
+        const weeklyBinding = resolveTableBinding(env, 'WEEKLY_TABLE_ID');
+        const dataConfigured = Boolean(membersBinding.appToken && membersBinding.tableId && weeklyBinding.appToken && weeklyBinding.tableId);
         return json(request, env, {
           ok: true,
           service: 'er2-lab-api',
-          configured: Boolean(env.FEISHU_APP_ID && env.FEISHU_APP_SECRET && env.SESSION_SECRET)
+          configured: authConfigured && dataConfigured,
+          authConfigured,
+          dataConfigured
         });
       }
       if (url.pathname === '/auth/launch') return launchAuth(request, env);
@@ -76,7 +82,7 @@ async function authCallback(request, env) {
   if (!openId) throw httpError(401, '未能识别飞书用户');
 
   const tenantToken = await getTenantToken(env);
-  const members = await listRecords(env, tenantToken, env.MEMBERS_TABLE_ID);
+  const members = await listRecords(env, tenantToken, 'MEMBERS_TABLE_ID');
   const memberRecord = members.find((record) => String(field(record, '飞书OpenID', 'OpenID', 'open_id')) === String(openId));
   if (!memberRecord || field(memberRecord, '是否启用', '启用') === false) {
     throw httpError(403, '你的账号尚未加入ER² Lab人员表，请联系管理员');
@@ -102,12 +108,12 @@ async function dashboard(request, env, session) {
   if (!role) throw httpError(403, '账号没有可用角色');
   const tenantToken = await getTenantToken(env);
   const [memberRecords, reportRecords, projectRecords, courseRecords, taskRecords, linkRecords] = await Promise.all([
-    listRecords(env, tenantToken, env.MEMBERS_TABLE_ID),
-    listRecords(env, tenantToken, env.WEEKLY_TABLE_ID),
-    listRecords(env, tenantToken, env.PROJECTS_TABLE_ID),
-    listRecords(env, tenantToken, env.COURSES_TABLE_ID),
-    listRecords(env, tenantToken, env.TASKS_TABLE_ID),
-    listRecords(env, tenantToken, env.LINKS_TABLE_ID)
+    listRecords(env, tenantToken, 'MEMBERS_TABLE_ID'),
+    listRecords(env, tenantToken, 'WEEKLY_TABLE_ID'),
+    listRecords(env, tenantToken, 'PROJECTS_TABLE_ID'),
+    listRecords(env, tenantToken, 'COURSES_TABLE_ID'),
+    listRecords(env, tenantToken, 'TASKS_TABLE_ID'),
+    listRecords(env, tenantToken, 'LINKS_TABLE_ID')
   ]);
   const currentWeek = weekInfo(new Date());
   const members = memberRecords.map((record) => normalizeMember(record));
@@ -232,7 +238,7 @@ async function saveReport(request, env, session) {
   const currentWeek = weekInfo(new Date());
   if (body.weekId && body.weekId !== currentWeek.id) throw httpError(400, '只能提交当前周记录');
   const tenantToken = await getTenantToken(env);
-  const records = await listRecords(env, tenantToken, env.WEEKLY_TABLE_ID);
+  const records = await listRecords(env, tenantToken, 'WEEKLY_TABLE_ID');
   const existing = records.find((record) =>
     String(field(record, '飞书OpenID', '人员OpenID', 'OpenID')) === String(session.sub) &&
     String(field(record, '周次', 'WeekID')) === currentWeek.id
@@ -252,8 +258,8 @@ async function saveReport(request, env, session) {
     '提交状态': '已提交',
     '提交时间': new Date().toISOString()
   };
-  if (existing) await updateRecord(env, tenantToken, env.WEEKLY_TABLE_ID, existing.record_id, fields);
-  else await createRecord(env, tenantToken, env.WEEKLY_TABLE_ID, fields);
+  if (existing) await updateRecord(env, tenantToken, 'WEEKLY_TABLE_ID', existing.record_id, fields);
+  else await createRecord(env, tenantToken, 'WEEKLY_TABLE_ID', fields);
   return json(request, env, { ok: true, weekId: currentWeek.id, updated: Boolean(existing) });
 }
 
@@ -263,18 +269,18 @@ async function saveTeacherReview(request, env, session) {
   validateText(body.recordId, '记录ID', 1, 100);
   validateText(body.comment, '教师反馈', 1, 3000);
   const tenantToken = await getTenantToken(env);
-  const reports = await listRecords(env, tenantToken, env.WEEKLY_TABLE_ID);
+  const reports = await listRecords(env, tenantToken, 'WEEKLY_TABLE_ID');
   const targetReport = reports.find((record) => record.record_id === body.recordId);
   if (!targetReport) throw httpError(404, '周报记录不存在');
   if (!session.roles.includes('manager')) {
     const targetOpenId = String(field(targetReport, '飞书OpenID', '人员OpenID', 'OpenID'));
-    const members = await listRecords(env, tenantToken, env.MEMBERS_TABLE_ID);
+    const members = await listRecords(env, tenantToken, 'MEMBERS_TABLE_ID');
     const targetMember = members.map((record) => normalizeMember(record)).find((member) => String(member.openId) === targetOpenId);
     if (!targetMember || String(targetMember.teacherOpenId) !== String(session.sub)) {
       throw httpError(403, '只能反馈自己负责学生的周报');
     }
   }
-  await updateRecord(env, tenantToken, env.WEEKLY_TABLE_ID, body.recordId, {
+  await updateRecord(env, tenantToken, 'WEEKLY_TABLE_ID', body.recordId, {
     '教师反馈': clean(body.comment),
     '审核状态': '已反馈',
     '反馈教师OpenID': session.sub,
@@ -288,8 +294,8 @@ async function runScheduledTask(scheduledTime, env) {
   const localHour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Shanghai', hour: '2-digit', hour12: false }).format(new Date(scheduledTime)));
   const tenantToken = await getTenantToken(env);
   const [memberRecords, reports] = await Promise.all([
-    listRecords(env, tenantToken, env.MEMBERS_TABLE_ID),
-    listRecords(env, tenantToken, env.WEEKLY_TABLE_ID)
+    listRecords(env, tenantToken, 'MEMBERS_TABLE_ID'),
+    listRecords(env, tenantToken, 'WEEKLY_TABLE_ID')
   ]);
   const members = memberRecords.map((record) => normalizeMember(record)).filter((member) => member.enabled && member.roles.includes('student'));
   const week = weekInfo(new Date(scheduledTime));
@@ -329,31 +335,42 @@ async function getTenantToken(env) {
   return token;
 }
 
-async function listRecords(env, token, tableId) {
-  if (!env.FEISHU_BASE_APP_TOKEN || !tableId) return [];
+function resolveTableBinding(env, tableBinding) {
+  const tokenBinding = String(tableBinding).replace(/_TABLE_ID$/, '_BASE_APP_TOKEN');
+  return {
+    appToken: env[tokenBinding] || env.FEISHU_BASE_APP_TOKEN || '',
+    tableId: env[tableBinding] || ''
+  };
+}
+
+async function listRecords(env, token, tableBinding) {
+  const { appToken, tableId } = resolveTableBinding(env, tableBinding);
+  if (!appToken || !tableId) return [];
   let pageToken = '';
   const records = [];
   do {
     const suffix = pageToken ? '&page_token=' + encodeURIComponent(pageToken) : '';
-    const result = await feishuRequest('/bitable/v1/apps/' + env.FEISHU_BASE_APP_TOKEN + '/tables/' + tableId + '/records?page_size=500' + suffix, { bearer: token });
+    const result = await feishuRequest('/bitable/v1/apps/' + appToken + '/tables/' + tableId + '/records?page_size=500' + suffix, { bearer: token });
     records.push(...(result.data?.items || []));
     pageToken = result.data?.has_more ? result.data?.page_token : '';
   } while (pageToken);
   return records;
 }
 
-async function createRecord(env, token, tableId, fields) {
-  requireConfig(env, ['FEISHU_BASE_APP_TOKEN']);
-  if (!tableId) throw httpError(500, '目标数据表尚未配置');
-  return feishuRequest('/bitable/v1/apps/' + env.FEISHU_BASE_APP_TOKEN + '/tables/' + tableId + '/records', {
+async function createRecord(env, token, tableBinding, fields) {
+  const { appToken, tableId } = resolveTableBinding(env, tableBinding);
+  if (!appToken || !tableId) throw httpError(500, '目标数据表尚未配置：' + tableBinding);
+  return feishuRequest('/bitable/v1/apps/' + appToken + '/tables/' + tableId + '/records', {
     method: 'POST',
     bearer: token,
     body: { fields }
   });
 }
 
-async function updateRecord(env, token, tableId, recordId, fields) {
-  return feishuRequest('/bitable/v1/apps/' + env.FEISHU_BASE_APP_TOKEN + '/tables/' + tableId + '/records/' + recordId, {
+async function updateRecord(env, token, tableBinding, recordId, fields) {
+  const { appToken, tableId } = resolveTableBinding(env, tableBinding);
+  if (!appToken || !tableId) throw httpError(500, '目标数据表尚未配置：' + tableBinding);
+  return feishuRequest('/bitable/v1/apps/' + appToken + '/tables/' + tableId + '/records/' + recordId, {
     method: 'PUT',
     bearer: token,
     body: { fields }
@@ -371,7 +388,7 @@ async function sendText(env, token, openId, text) {
 
 async function writeAutomationLog(env, token, name, result, detail) {
   if (!env.AUTOMATION_LOGS_TABLE_ID) return;
-  await createRecord(env, token, env.AUTOMATION_LOGS_TABLE_ID, {
+  await createRecord(env, token, 'AUTOMATION_LOGS_TABLE_ID', {
     '任务名称': name,
     '执行时间': new Date().toISOString(),
     '执行结果': result,
