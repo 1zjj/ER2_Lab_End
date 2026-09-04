@@ -10,8 +10,36 @@ assert.equal(health.status, 200);
 assert.deepEqual(await health.json(), {
   ok: true,
   service: 'er2-lab-api',
-  configured: false
+  configured: false,
+  authConfigured: false,
+  dataConfigured: false
 });
+
+const authOnlyHealth = await service.fetch(new Request('https://api.example/health'), {
+  ...env,
+  FEISHU_APP_ID: 'cli_test',
+  FEISHU_APP_SECRET: 'secret',
+  SESSION_SECRET: '01234567890123456789012345678901'
+});
+assert.deepEqual(await authOnlyHealth.json(), {
+  ok: true,
+  service: 'er2-lab-api',
+  configured: false,
+  authConfigured: true,
+  dataConfigured: false
+});
+
+const multiBaseHealth = await service.fetch(new Request('https://api.example/health'), {
+  ...env,
+  FEISHU_APP_ID: 'cli_test',
+  FEISHU_APP_SECRET: 'secret',
+  SESSION_SECRET: '01234567890123456789012345678901',
+  MEMBERS_BASE_APP_TOKEN: 'bas_members',
+  MEMBERS_TABLE_ID: 'tbl_members',
+  WEEKLY_BASE_APP_TOKEN: 'bas_weekly',
+  WEEKLY_TABLE_ID: 'tbl_weekly'
+});
+assert.equal((await multiBaseHealth.json()).configured, true);
 
 const preflight = await service.fetch(new Request('https://api.example/api/dashboard', {
   method: 'OPTIONS',
