@@ -62,4 +62,8 @@ assert.equal(preflight.headers.get('access-control-allow-origin'), 'https://1zjj
 const unauthorized = await service.fetch(new Request('https://api.example/api/dashboard'), env);
 assert.equal(unauthorized.status, 401);
 
+const invalidCallback = await service.fetch(new Request('https://api.example/auth/callback'), env);
+assert.equal(invalidCallback.status, 400);
+assert.deepEqual(await invalidCallback.json(), { message: '飞书授权参数不完整' });
+
 console.log('worker smoke tests passed');

@@ -24,8 +24,8 @@ export default {
           dataConfigured
         });
       }
-      if (url.pathname === '/auth/launch') return launchAuth(request, env);
-      if (url.pathname === '/auth/callback') return authCallback(request, env);
+      if (url.pathname === '/auth/launch') return await launchAuth(request, env);
+      if (url.pathname === '/auth/callback') return await authCallback(request, env);
 
       const session = await requireSession(request, env);
       if (url.pathname === '/api/me' && request.method === 'GET') return json(request, env, { profile: session });
