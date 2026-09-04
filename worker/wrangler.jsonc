@@ -13,6 +13,7 @@
     "FEISHU_APP_ID": "cli_aa10819ad9badbe8",
     "FEISHU_BASE_WIKI_TOKEN": "POklwP2jtim1PeklX4IcShALnOH",
     "BOOTSTRAP_FIRST_USER": "true",
+    "PILOT_AUTO_PROVISION": "true",
     "MEMBERS_TABLE_ID": "tblOQuocxzeuTD4Z",
     "WEEKLY_TABLE_ID": "tblDmIOPDnqfSPDL"
   }
