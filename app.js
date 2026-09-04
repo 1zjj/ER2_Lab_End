@@ -50,7 +50,6 @@
     activeRole: 'student',
     dashboard: null,
     catalog: [],
-    literatureFilter: { query: '', week: 'all', submitter: 'all', type: 'all' },
     toastTimer: null
   };
 
@@ -322,25 +321,8 @@
 
   function renderLiteratureSection() {
     const literature = state.dashboard.literature || { mineCount: 0, minimum: 3, completed: false, items: [] };
-    const allItems = Array.isArray(literature.items) ? literature.items : [];
-    const filter = state.literatureFilter;
-    const weekOptions = Array.from(new Set(allItems.map(function (item) { return item.weekId; }).filter(Boolean)));
-    const submitterOptions = Array.from(new Set(allItems.map(function (item) { return item.submitter; }).filter(Boolean)));
-    const typeOptions = Array.from(new Set(allItems.map(function (item) { return item.type; }).filter(Boolean)));
-    const filterTerm = normalize(filter.query);
-    const items = allItems.filter(function (item) {
-      if (filter.week !== 'all' && item.weekId !== filter.week) return false;
-      if (filter.submitter !== 'all' && item.submitter !== filter.submitter) return false;
-      if (filter.type !== 'all' && item.type !== filter.type) return false;
-      if (!filterTerm) return true;
-      return normalize([item.title, item.authors, item.venue, item.direction, item.contribution, item.submitter].join(' ')).includes(filterTerm);
-    }).slice(0, 50);
+    const items = Array.isArray(literature.items) ? literature.items : [];
     const progress = Math.min(100, Math.round((Number(literature.mineCount || 0) / Math.max(Number(literature.minimum || 3), 1)) * 100));
-    const options = function (values, current) {
-      return values.map(function (value) {
-        return '<option value="' + escapeHtml(value) + '"' + (value === current ? ' selected' : '') + '>' + escapeHtml(value) + '</option>';
-      }).join('');
-    };
     return [
       '<section class="panel literature-panel"><div class="literature-head"><div><p class="kicker">SHARED READING</p><h2>文献阅读</h2>',
       '<p>本周至少 3 篇，不限制上限。学生、教师和管理员提交的内容在课题组内互相可见。</p></div>',
@@ -348,19 +330,13 @@
       '<button class="button button-primary" type="button" data-open-literature>＋ 提交文献阅读</button></div></div>',
       '<div class="progress-track literature-progress" role="progressbar" aria-label="文献阅读周进度" aria-valuenow="' + progress + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + progress + '%"></span></div>',
       '<div class="literature-status">' + (literature.completed ? '<span class="status-ok">已达到本周最低篇数，可继续提交</span>' : '<span class="status-wait">还需 ' + Math.max(0, Number(literature.minimum || 3) - Number(literature.mineCount || 0)) + ' 篇达到本周最低要求</span>') + '</div>',
-      '<div class="panel-title literature-list-title"><h3>课题组最新阅读</h3><span>所有角色共同可见 · 当前显示 ' + items.length + ' 条</span></div>',
-      '<div class="literature-filters"><input type="search" data-literature-filter="query" value="' + escapeHtml(filter.query) + '" placeholder="搜索标题、作者、方向"><select data-literature-filter="week"><option value="all">全部周次</option>' + options(weekOptions, filter.week) + '</select><select data-literature-filter="submitter"><option value="all">全部提交人</option>' + options(submitterOptions, filter.submitter) + '</select><select data-literature-filter="type"><option value="all">全部类型</option>' + options(typeOptions, filter.type) + '</select></div>',
+      '<div class="panel-title literature-list-title"><h3>最近7天阅读</h3><span>课题组共同可见 · ' + items.length + ' 条</span></div>',
       items.length ? '<div class="literature-list">' + items.map(function (item) {
         const meta = [item.authors, item.venue, item.year].filter(Boolean).join(' · ');
-        const links = [
-          item.noteUrl ? availableLink(item.noteUrl, '阅读笔记') : '',
-          item.paperUrl ? availableLink(item.paperUrl, '论文网页') : '',
-          item.attachmentUrl ? availableLink(item.attachmentUrl, '附件') : ''
-        ].filter(Boolean).join('');
-        return '<article class="literature-item"><div class="literature-item-main"><div class="literature-by"><span class="student-avatar">' + escapeHtml(String(item.submitter || 'ER').slice(-1)) + '</span><span><strong>' + escapeHtml(item.submitter || 'ER²成员') + '</strong><small>' + escapeHtml(item.role || '成员') + ' · ' + escapeHtml(item.date || item.weekId || '') + '</small></span></div><h3>' + escapeHtml(item.title) + '</h3>' +
+        return '<button class="literature-item" type="button" data-literature-detail="' + escapeHtml(item.id) + '"><div class="literature-item-main"><div class="literature-by"><span class="student-avatar">' + escapeHtml(String(item.submitter || 'ER').slice(-1)) + '</span><span><strong>' + escapeHtml(item.submitter || 'ER²成员') + '</strong><small>' + escapeHtml(item.role || '成员') + ' · ' + escapeHtml(item.date || item.weekId || '') + '</small></span></div><h3>' + escapeHtml(item.title) + '</h3>' +
           (meta ? '<p class="literature-meta">' + escapeHtml(meta) + '</p>' : '') + '<p class="literature-contribution">' + escapeHtml(item.contribution || '尚未填写一句话贡献') + '</p><div class="literature-tags">' +
-          (item.direction ? tag(item.direction) : '') + (item.type ? tag(item.type, 'green') : '') + '</div></div><div class="literature-links"><button class="text-button" type="button" data-literature-detail="' + escapeHtml(item.id) + '">查看详情</button>' + links + '</div></article>';
-      }).join('') + '</div>' : '<div class="empty">没有符合当前筛选条件的阅读记录。</div>',
+          (item.direction ? tag(item.direction) : '') + (item.type ? tag(item.type, 'green') : '') + '</div></div><span class="literature-open">查看详情 ›</span></button>';
+      }).join('') + '</div>' : '<div class="empty">最近7天还没有阅读记录。</div>',
       '</section>'
     ].join('');
   }
@@ -398,17 +374,11 @@
       '<h3>' + escapeHtml(data.project.code + ' ' + data.project.title) + '</h3><p>' + escapeHtml(data.project.milestone) + '</p>',
       '<div class="progress-track" role="progressbar" aria-label="项目进度" aria-valuenow="' + Number(data.project.progress || 0) + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + Math.max(0, Math.min(100, Number(data.project.progress || 0))) + '%"></span></div>',
       '<p class="project-note"><strong>最近阻塞：</strong>' + escapeHtml(data.project.blocker) + '</p></section>',
-      '<section class="panel"><div class="panel-title"><h2>最近提交证据</h2><span>仅本人记录</span></div><ul class="submission-list">',
-      data.submissions.map(function (item) {
-        return '<li><div><strong>' + escapeHtml(item.title) + '</strong><time>' + escapeHtml(item.date) + '</time></div>' +
-          tag(item.status, item.status === '已验收' ? 'green' : 'orange') + '</li>';
-      }).join(''), '</ul></section></div>',
+      '</div>',
       '<aside class="stack"><section class="panel"><div class="panel-title"><h2>继续学习</h2></div><p class="kicker">' + escapeHtml(data.course.title) + '</p>',
       '<h3>' + escapeHtml(data.course.next) + '</h3><div class="progress-track" role="progressbar" aria-label="课程进度" aria-valuenow="' + Number(data.course.progress || 0) + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + Number(data.course.progress || 0) + '%"></span></div>',
       '<a class="button button-secondary" href="' + safeUrl((state.catalog.find(function (item) { return item.category === '课程'; }) || {}).url || wikiUrl()) + '">进入课程</a></section>',
-      '<section class="panel"><div class="panel-title"><h2>我的快捷入口</h2></div><ul class="link-list">',
-      data.links.map(function (item) { return '<li><a href="' + safeUrl(item.url) + '"><span>' + escapeHtml(item.title) + '</span><span>›</span></a></li>'; }).join(''),
-      '</ul></section><section class="panel"><div class="panel-title"><h2>权限说明</h2></div><p class="project-note">你只能读取自己的门户数据；教师和管理者按职责查看汇总。</p></section></aside></div>',
+      '</aside></div>',
       renderLiteratureSection(), footer()
     ].join('');
   }
@@ -464,12 +434,6 @@
     if (literatureButton) literatureButton.addEventListener('click', openLiteratureDialog);
     elements.app.querySelectorAll('[data-literature-detail]').forEach(function (button) {
       button.addEventListener('click', function () { openLiteratureDetail(button.dataset.literatureDetail); });
-    });
-    elements.app.querySelectorAll('[data-literature-filter]').forEach(function (control) {
-      control.addEventListener('change', function () {
-        state.literatureFilter[control.dataset.literatureFilter] = control.value;
-        renderActiveView();
-      });
     });
     elements.app.querySelectorAll('[data-student]').forEach(function (button) {
       button.addEventListener('click', function () {

@@ -159,29 +159,38 @@ async function dashboard(request, env, session) {
 }
 
 function buildLiterature(session, week, records) {
-  const items = records.map((record) => ({
-    id: record.record_id,
-    title: field(record, '论文标题') || '未命名文献',
-    submitter: field(record, '提交人姓名') || 'ER²成员',
-    role: field(record, '提交人角色') || '成员',
-    weekId: field(record, '周次') || '',
-    date: field(record, '阅读日期') || '',
-    authors: field(record, '作者') || '',
-    venue: field(record, '会议或期刊') || '',
-    year: field(record, '发表年份') || '',
-    doi: field(record, 'DOI或arXiv') || '',
-    paperUrl: field(record, '论文链接') || '',
-    direction: field(record, '研究方向') || '',
-    type: field(record, '阅读类型') || '',
-    contribution: field(record, '一句话贡献') || '',
-    coreProblem: field(record, '核心问题') || '',
-    method: field(record, '方法摘要') || '',
-    review: field(record, '个人评价') || '',
-    projectRelation: field(record, '与项目关系') || '',
-    noteUrl: field(record, '阅读笔记链接') || '',
-    attachmentUrl: field(record, '论文附件链接') || '',
-    submittedAt: field(record, '提交时间') || ''
-  })).sort((a, b) => String(b.submittedAt).localeCompare(String(a.submittedAt))).slice(0, 100);
+  const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const items = records.map((record) => {
+    const date = field(record, '阅读日期') || '';
+    const submittedAt = field(record, '提交时间') || '';
+    return {
+      id: record.record_id,
+      title: field(record, '论文标题') || '未命名文献',
+      submitter: field(record, '提交人姓名') || 'ER²成员',
+      role: field(record, '提交人角色') || '成员',
+      weekId: field(record, '周次') || '',
+      date,
+      authors: field(record, '作者') || '',
+      venue: field(record, '会议或期刊') || '',
+      year: field(record, '发表年份') || '',
+      doi: field(record, 'DOI或arXiv') || '',
+      paperUrl: field(record, '论文链接') || '',
+      direction: field(record, '研究方向') || '',
+      type: field(record, '阅读类型') || '',
+      contribution: field(record, '一句话贡献') || '',
+      coreProblem: field(record, '核心问题') || '',
+      method: field(record, '方法摘要') || '',
+      review: field(record, '个人评价') || '',
+      projectRelation: field(record, '与项目关系') || '',
+      noteUrl: field(record, '阅读笔记链接') || '',
+      attachmentUrl: field(record, '论文附件链接') || '',
+      submittedAt,
+      timestamp: parseRecordTime(submittedAt || date)
+    };
+  }).filter((item) => item.timestamp >= cutoff)
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, 30)
+    .map(({ timestamp, ...item }) => item);
   const mineCount = records.filter((record) =>
     String(field(record, '提交人OpenID')) === String(session.sub) &&
     String(field(record, '周次')) === week.id
@@ -193,6 +202,18 @@ function buildLiterature(session, week, records) {
     completed: mineCount >= 3,
     items
   };
+}
+
+function parseRecordTime(value) {
+  if (typeof value === 'number') return value < 1e12 ? value * 1000 : value;
+  const text = clean(value);
+  if (!text) return 0;
+  if (/^\d+$/.test(text)) {
+    const numeric = Number(text);
+    return numeric < 1e12 ? numeric * 1000 : numeric;
+  }
+  const parsed = Date.parse(text);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 async function getLiterature(request, env, session) {

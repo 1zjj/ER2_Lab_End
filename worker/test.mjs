@@ -87,6 +87,10 @@ const session = encoded + '.' + signature;
 const originalFetch = globalThis.fetch;
 let postedLiterature = null;
 let memberEnabled = true;
+const literatureItems = [
+  { record_id: 'rec_recent', fields: { '论文标题': '近7天论文', '提交人OpenID': 'ou_teacher', '提交人姓名': '测试教师', '周次': 'recent', '提交时间': new Date(Date.now() - 2 * 86400000).toISOString() } },
+  { record_id: 'rec_old', fields: { '论文标题': '历史论文', '提交人OpenID': 'ou_teacher', '提交人姓名': '测试教师', '周次': 'old', '提交时间': new Date(Date.now() - 10 * 86400000).toISOString() } }
+];
 globalThis.fetch = async (url, options = {}) => {
   if (String(url).endsWith('/auth/v3/tenant_access_token/internal')) {
     return Response.json({ code: 0, tenant_access_token: 'tenant-token' });
@@ -99,6 +103,9 @@ globalThis.fetch = async (url, options = {}) => {
     return Response.json({ code: 0, data: { items: [{ record_id: 'rec_member', fields: {
       '姓名': '测试教师', '飞书OpenID': 'ou_teacher', '角色': ['教师'], '是否启用': memberEnabled
     } }] } });
+  }
+  if (String(url).includes('/tables/tbl_literature/records')) {
+    return Response.json({ code: 0, data: { items: literatureItems } });
   }
   if (String(url).includes('/records')) return Response.json({ code: 0, data: { items: [] } });
   throw new Error('unexpected fetch ' + url);
@@ -117,7 +124,9 @@ const literatureGet = await service.fetch(new Request('https://api.example/api/l
   headers: { Authorization: 'Bearer ' + session }
 }), literatureEnv);
 assert.equal(literatureGet.status, 200);
-assert.equal((await literatureGet.json()).literature.minimum, 3);
+const literatureGetBody = await literatureGet.json();
+assert.equal(literatureGetBody.literature.minimum, 3);
+assert.deepEqual(literatureGetBody.literature.items.map((item) => item.title), ['近7天论文']);
 
 const literaturePost = await service.fetch(new Request('https://api.example/api/literature', {
   method: 'POST',
