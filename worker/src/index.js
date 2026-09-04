@@ -1,6 +1,7 @@
 const FEISHU_API = 'https://open.feishu.cn/open-apis';
 const FEISHU_AUTHORIZE = 'https://accounts.feishu.cn/open-apis/authen/v1/authorize';
 const wikiTokenCache = new Map();
+const LITERATURE_TABLE_ID = 'tblyHLZpybGVU364';
 
 export default {
   async fetch(request, env) {
@@ -473,7 +474,7 @@ function resolveTableBinding(env, tableBinding) {
   return {
     appToken: env[tokenBinding] || env.FEISHU_BASE_APP_TOKEN || '',
     wikiToken: env[wikiBinding] || env.FEISHU_BASE_WIKI_TOKEN || '',
-    tableId: env[tableBinding] || ''
+    tableId: env[tableBinding] || (tableBinding === 'LITERATURE_TABLE_ID' ? LITERATURE_TABLE_ID : '')
   };
 }
 
