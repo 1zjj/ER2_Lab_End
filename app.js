@@ -27,6 +27,11 @@
     reportSubmit: document.getElementById('report-submit'),
     reportError: document.getElementById('report-error'),
     reportWeekLabel: document.getElementById('report-week-label'),
+    literatureDialog: document.getElementById('literature-dialog'),
+    literatureForm: document.getElementById('literature-form'),
+    literatureSubmit: document.getElementById('literature-submit'),
+    literatureError: document.getElementById('literature-error'),
+    literatureWeekLabel: document.getElementById('literature-week-label'),
     searchForm: document.getElementById('global-search'),
     searchInput: document.getElementById('search-input'),
     searchDialog: document.getElementById('search-dialog'),
@@ -100,6 +105,16 @@
         { name: '未交周报提醒', trigger: '周五 11:00', target: '未交学生', status: '待接入' },
         { name: '提交状态更新', trigger: '学生提交后', target: '周报记录', status: '页面已支持' },
         { name: '教授周报摘要', trigger: '周五 18:00', target: '教授', status: '待接入' }
+      ]
+    },
+    literature: {
+      weekId: '2026-W36',
+      mineCount: 2,
+      minimum: 3,
+      completed: false,
+      items: [
+        { id: 'demo-1', title: 'Learning Transferable Visual Models From Natural Language Supervision', submitter: '郑斯哲', role: '学生', weekId: '2026-W36', date: '2026-09-03', authors: 'Radford et al.', venue: 'ICML', year: '2021', direction: '视觉语言', type: '精读', contribution: '通过大规模图文对比学习获得可迁移的零样本视觉识别能力。', noteUrl: '', paperUrl: 'https://arxiv.org/abs/2103.00020', attachmentUrl: '', submittedAt: '2026-09-03T12:30:00.000Z' },
+        { id: 'demo-2', title: 'Diffusion Policy: Visuomotor Policy Learning via Action Diffusion', submitter: '朱俊杰', role: '教师 / 管理员', weekId: '2026-W36', date: '2026-09-02', authors: 'Chi et al.', venue: 'RSS', year: '2023', direction: '具身智能', type: '复现', contribution: '把动作序列建模为条件扩散过程，提高多模态机器人操作策略的表达能力。', noteUrl: '', paperUrl: 'https://arxiv.org/abs/2303.04137', attachmentUrl: '', submittedAt: '2026-09-02T09:10:00.000Z' }
       ]
     }
   };
@@ -183,6 +198,12 @@
       if (DEMO_MODE) {
         await new Promise(function (resolve) { setTimeout(resolve, 260); });
         data = JSON.parse(JSON.stringify(demoData));
+        const saved = JSON.parse(localStorage.getItem('er2-demo-literature') || '[]');
+        if (Array.isArray(saved) && saved.length) {
+          data.literature.items = saved.concat(data.literature.items);
+          data.literature.mineCount += saved.length;
+          data.literature.completed = data.literature.mineCount >= data.literature.minimum;
+        }
       } else {
         if (!state.session) {
           location.href = API_BASE + '/auth/launch?returnTo=' + encodeURIComponent(location.href);
@@ -248,6 +269,33 @@
       '<a href="' + safeUrl(wikiUrl()) + '">打开ER²知识库</a></footer>';
   }
 
+  function renderLiteratureSection() {
+    const literature = state.dashboard.literature || { mineCount: 0, minimum: 3, completed: false, items: [] };
+    const items = Array.isArray(literature.items) ? literature.items.slice(0, 20) : [];
+    const progress = Math.min(100, Math.round((Number(literature.mineCount || 0) / Math.max(Number(literature.minimum || 3), 1)) * 100));
+    return [
+      '<section class="panel literature-panel"><div class="literature-head"><div><p class="kicker">SHARED READING</p><h2>文献阅读</h2>',
+      '<p>本周至少 3 篇，不限制上限。学生、教师和管理员提交的内容在课题组内互相可见。</p></div>',
+      '<div class="literature-actions"><div class="literature-count"><strong>' + Number(literature.mineCount || 0) + ' / ' + Number(literature.minimum || 3) + '</strong><span>我的本周提交</span></div>',
+      '<button class="button button-primary" type="button" data-open-literature>＋ 提交文献阅读</button></div></div>',
+      '<div class="progress-track literature-progress" role="progressbar" aria-label="文献阅读周进度" aria-valuenow="' + progress + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + progress + '%"></span></div>',
+      '<div class="literature-status">' + (literature.completed ? '<span class="status-ok">已达到本周最低篇数，可继续提交</span>' : '<span class="status-wait">还需 ' + Math.max(0, Number(literature.minimum || 3) - Number(literature.mineCount || 0)) + ' 篇达到本周最低要求</span>') + '</div>',
+      '<div class="panel-title literature-list-title"><h3>课题组最新阅读</h3><span>所有角色共同可见</span></div>',
+      items.length ? '<div class="literature-list">' + items.map(function (item) {
+        const meta = [item.authors, item.venue, item.year].filter(Boolean).join(' · ');
+        const links = [
+          item.noteUrl ? '<a class="text-link" href="' + safeUrl(item.noteUrl) + '">阅读笔记</a>' : '',
+          item.paperUrl ? '<a class="text-link" href="' + safeUrl(item.paperUrl) + '">论文网页</a>' : '',
+          item.attachmentUrl ? '<a class="text-link" href="' + safeUrl(item.attachmentUrl) + '">附件</a>' : ''
+        ].filter(Boolean).join('');
+        return '<article class="literature-item"><div class="literature-item-main"><div class="literature-by"><span class="student-avatar">' + escapeHtml(String(item.submitter || 'ER').slice(-1)) + '</span><span><strong>' + escapeHtml(item.submitter || 'ER²成员') + '</strong><small>' + escapeHtml(item.role || '成员') + ' · ' + escapeHtml(item.date || item.weekId || '') + '</small></span></div><h3>' + escapeHtml(item.title) + '</h3>' +
+          (meta ? '<p class="literature-meta">' + escapeHtml(meta) + '</p>' : '') + '<p class="literature-contribution">' + escapeHtml(item.contribution || '尚未填写一句话贡献') + '</p><div class="literature-tags">' +
+          (item.direction ? tag(item.direction) : '') + (item.type ? tag(item.type, 'green') : '') + '</div></div><div class="literature-links">' + links + '</div></article>';
+      }).join('') + '</div>' : '<div class="empty">本周还没有阅读记录，提交第一篇与大家分享。</div>',
+      '</section>'
+    ].join('');
+  }
+
   function renderActiveView() {
     if (state.activeRole === 'teacher') elements.app.innerHTML = renderTeacher();
     else if (state.activeRole === 'manager') elements.app.innerHTML = renderManager();
@@ -292,7 +340,7 @@
       '<section class="panel"><div class="panel-title"><h2>我的快捷入口</h2></div><ul class="link-list">',
       data.links.map(function (item) { return '<li><a href="' + safeUrl(item.url) + '"><span>' + escapeHtml(item.title) + '</span><span>›</span></a></li>'; }).join(''),
       '</ul></section><section class="panel"><div class="panel-title"><h2>权限说明</h2></div><p class="project-note">你只能读取自己的门户数据；教师和管理者按职责查看汇总。</p></section></aside></div>',
-      footer()
+      renderLiteratureSection(), footer()
     ].join('');
   }
 
@@ -316,7 +364,7 @@
       '<li><a href="' + safeUrl(wikiUrl()) + '"><span>课程与培训维护</span><span>›</span></a></li>',
       '<li><a href="' + safeUrl(wikiUrl()) + '"><span>项目里程碑</span><span>›</span></a></li>',
       '<li><a href="' + safeUrl(wikiUrl()) + '"><span>周报原始记录</span><span>›</span></a></li>',
-      '</ul></section></aside></div>', footer()
+      '</ul></section></aside></div>', renderLiteratureSection(), footer()
     ].join('');
   }
 
@@ -336,13 +384,15 @@
       '<div class="metric-grid" style="margin-top:22px"><a class="metric-card" href="' + safeUrl(wikiUrl()) + '"><span>人员与权限</span><strong>角色配置</strong><small>维护学生、教师、管理者和负责关系</small></a>',
       '<a class="metric-card" href="' + safeUrl(wikiUrl()) + '"><span>课程与知识</span><strong>内容维护</strong><small>课程、SOP、资料版本和大文件</small></a>',
       '<a class="metric-card" href="' + safeUrl(wikiUrl()) + '"><span>项目与周报</span><strong>原始数据</strong><small>项目成员、里程碑和历史记录</small></a></div>',
-      footer()
+      renderLiteratureSection(), footer()
     ].join('');
   }
 
   function bindViewActions() {
     const reportButton = elements.app.querySelector('[data-open-report]');
     if (reportButton) reportButton.addEventListener('click', openReportDialog);
+    const literatureButton = elements.app.querySelector('[data-open-literature]');
+    if (literatureButton) literatureButton.addEventListener('click', openLiteratureDialog);
     elements.app.querySelectorAll('[data-student]').forEach(function (button) {
       button.addEventListener('click', function () {
         const student = state.dashboard.teacher.students.find(function (item) { return item.id === button.dataset.student; });
@@ -356,6 +406,13 @@
     elements.reportError.hidden = true;
     if (typeof elements.reportDialog.showModal === 'function') elements.reportDialog.showModal();
     else elements.reportDialog.setAttribute('open', '');
+  }
+
+  function openLiteratureDialog() {
+    elements.literatureWeekLabel.textContent = state.dashboard.week.label + ' · 已提交 ' + Number((state.dashboard.literature || {}).mineCount || 0) + ' 篇';
+    elements.literatureError.hidden = true;
+    if (typeof elements.literatureDialog.showModal === 'function') elements.literatureDialog.showModal();
+    else elements.literatureDialog.setAttribute('open', '');
   }
 
   async function submitReport(event) {
@@ -390,6 +447,55 @@
     } finally {
       elements.reportSubmit.disabled = false;
       elements.reportSubmit.textContent = '提交本周记录';
+    }
+  }
+
+  async function submitLiterature(event) {
+    event.preventDefault();
+    if (!elements.literatureForm.reportValidity()) return;
+    const fields = Object.fromEntries(new FormData(elements.literatureForm).entries());
+    elements.literatureSubmit.disabled = true;
+    elements.literatureSubmit.textContent = '正在提交…';
+    elements.literatureError.hidden = true;
+    try {
+      if (DEMO_MODE) {
+        await new Promise(function (resolve) { setTimeout(resolve, 420); });
+        const saved = JSON.parse(localStorage.getItem('er2-demo-literature') || '[]');
+        const item = Object.assign({}, fields, {
+          id: 'demo-' + Date.now(),
+          submitter: state.dashboard.profile.name,
+          role: roleMeta[state.activeRole].label,
+          weekId: state.dashboard.week.id,
+          date: new Date().toLocaleDateString('en-CA'),
+          submittedAt: new Date().toISOString()
+        });
+        saved.unshift(item);
+        localStorage.setItem('er2-demo-literature', JSON.stringify(saved.slice(0, 50)));
+        state.dashboard.literature.items.unshift(item);
+        state.dashboard.literature.mineCount += 1;
+        state.dashboard.literature.completed = state.dashboard.literature.mineCount >= state.dashboard.literature.minimum;
+      } else {
+        const result = await request('/api/literature', {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + state.session
+          },
+          body: JSON.stringify(Object.assign({ weekId: state.dashboard.week.id }, fields))
+        });
+        state.dashboard.literature = result.literature;
+      }
+      elements.literatureDialog.close();
+      elements.literatureForm.reset();
+      renderActiveView();
+      showToast('文献阅读已提交，课题组成员现在可以查看');
+    } catch (error) {
+      elements.literatureError.textContent = error.message || '提交失败，请稍后重试';
+      elements.literatureError.hidden = false;
+    } finally {
+      elements.literatureSubmit.disabled = false;
+      elements.literatureSubmit.textContent = '提交阅读记录';
     }
   }
 
@@ -432,13 +538,14 @@
       if (dialog) dialog.close();
     });
   });
-  [elements.reportDialog, elements.searchDialog].forEach(function (dialog) {
+  [elements.reportDialog, elements.literatureDialog, elements.searchDialog].forEach(function (dialog) {
     dialog.addEventListener('click', function (event) {
       if (event.target === dialog) dialog.close();
     });
   });
   document.getElementById('retry-button').addEventListener('click', function () { loadDashboard(state.activeRole); });
   elements.reportForm.addEventListener('submit', submitReport);
+  elements.literatureForm.addEventListener('submit', submitLiterature);
   elements.searchForm.addEventListener('submit', runSearch);
 
   fetch('./data/catalog.json')
