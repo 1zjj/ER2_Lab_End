@@ -57,6 +57,7 @@ SESSION_SECRET 使用至少32字节随机字符串。不要把以上值写入 Gi
 | FEISHU_BASE_APP_TOKEN | 所有表位于同一 Base 时使用的兼容 app token，可选 |
 | FEISHU_BASE_WIKI_TOKEN | 多维表格 URL 以 `/wiki/` 开头时使用的知识库节点 token；Worker 会解析实际 app token |
 | BOOTSTRAP_FIRST_USER | 首次空表登录时自动登记唯一测试账号；完成首个账号验收后改为 `false` |
+| PILOT_AUTO_PROVISION | 两人试运行期间设为 `true`，仅对飞书应用可用范围内的新增账号自动登记为学生；两人完成首次登录后改为 `false` |
 | MEMBERS_BASE_APP_TOKEN / MEMBERS_TABLE_ID | 人员表的 app token / table id |
 | WEEKLY_BASE_APP_TOKEN / WEEKLY_TABLE_ID | 周报表的 app token / table id |
 | PROJECTS_BASE_APP_TOKEN / PROJECTS_TABLE_ID | 项目表的 app token / table id |
