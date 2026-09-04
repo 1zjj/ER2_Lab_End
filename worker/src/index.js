@@ -1,6 +1,7 @@
 const FEISHU_API = 'https://open.feishu.cn/open-apis';
 const FEISHU_AUTHORIZE = 'https://accounts.feishu.cn/open-apis/authen/v1/authorize';
 const wikiTokenCache = new Map();
+const LITERATURE_TABLE_ID = 'tblyHLZpybGVU364';
 
 export default {
   async fetch(request, env) {
@@ -31,6 +32,8 @@ export default {
       if (url.pathname === '/api/me' && request.method === 'GET') return json(request, env, { profile: session });
       if (url.pathname === '/api/dashboard' && request.method === 'GET') return dashboard(request, env, session);
       if (url.pathname === '/api/reports' && request.method === 'POST') return saveReport(request, env, session);
+      if (url.pathname === '/api/literature' && request.method === 'GET') return getLiterature(request, env, session);
+      if (url.pathname === '/api/literature' && request.method === 'POST') return saveLiterature(request, env, session);
       if (url.pathname === '/api/teacher/review' && request.method === 'POST') return saveTeacherReview(request, env, session);
       return json(request, env, { message: '接口不存在' }, 404);
     } catch (error) {
@@ -125,13 +128,14 @@ async function dashboard(request, env, session) {
   const role = session.roles.includes(requestedRole) ? requestedRole : session.roles[0];
   if (!role) throw httpError(403, '账号没有可用角色');
   const tenantToken = await getTenantToken(env);
-  const [memberRecords, reportRecords, projectRecords, courseRecords, taskRecords, linkRecords] = await Promise.all([
+  const [memberRecords, reportRecords, projectRecords, courseRecords, taskRecords, linkRecords, literatureRecords] = await Promise.all([
     listRecords(env, tenantToken, 'MEMBERS_TABLE_ID'),
     listRecords(env, tenantToken, 'WEEKLY_TABLE_ID'),
     listRecords(env, tenantToken, 'PROJECTS_TABLE_ID'),
     listRecords(env, tenantToken, 'COURSES_TABLE_ID'),
     listRecords(env, tenantToken, 'TASKS_TABLE_ID'),
-    listRecords(env, tenantToken, 'LINKS_TABLE_ID')
+    listRecords(env, tenantToken, 'LINKS_TABLE_ID'),
+    listRecords(env, tenantToken, 'LITERATURE_TABLE_ID')
   ]);
   const currentWeek = weekInfo(new Date());
   const members = memberRecords.map((record) => normalizeMember(record));
@@ -143,7 +147,118 @@ async function dashboard(request, env, session) {
   const student = buildStudent(session, currentWeek, reportRecords, projectRecords, courseRecords, taskRecords, linkRecords);
   const teacher = buildTeacher(session, currentWeek, members, reportRecords);
   const manager = buildManager(members, projectRecords, courseRecords, env);
-  return json(request, env, { profile, week: currentWeek, student, teacher, manager });
+  const literature = buildLiterature(session, currentWeek, literatureRecords);
+  return json(request, env, { profile, week: currentWeek, student, teacher, manager, literature });
+}
+
+function buildLiterature(session, week, records) {
+  const items = records.map((record) => ({
+    id: record.record_id,
+    title: field(record, '论文标题') || '未命名文献',
+    submitter: field(record, '提交人姓名') || 'ER²成员',
+    role: field(record, '提交人角色') || '成员',
+    weekId: field(record, '周次') || '',
+    date: field(record, '阅读日期') || '',
+    authors: field(record, '作者') || '',
+    venue: field(record, '会议或期刊') || '',
+    year: field(record, '发表年份') || '',
+    doi: field(record, 'DOI或arXiv') || '',
+    paperUrl: field(record, '论文链接') || '',
+    direction: field(record, '研究方向') || '',
+    type: field(record, '阅读类型') || '',
+    contribution: field(record, '一句话贡献') || '',
+    coreProblem: field(record, '核心问题') || '',
+    method: field(record, '方法摘要') || '',
+    review: field(record, '个人评价') || '',
+    projectRelation: field(record, '与项目关系') || '',
+    noteUrl: field(record, '阅读笔记链接') || '',
+    attachmentUrl: field(record, '论文附件链接') || '',
+    submittedAt: field(record, '提交时间') || ''
+  })).sort((a, b) => String(b.submittedAt).localeCompare(String(a.submittedAt)));
+  const mineCount = records.filter((record) =>
+    String(field(record, '提交人OpenID')) === String(session.sub) &&
+    String(field(record, '周次')) === week.id
+  ).length;
+  return {
+    weekId: week.id,
+    mineCount,
+    minimum: 3,
+    completed: mineCount >= 3,
+    items
+  };
+}
+
+async function getLiterature(request, env, session) {
+  const tenantToken = await getTenantToken(env);
+  const records = await listRecords(env, tenantToken, 'LITERATURE_TABLE_ID');
+  return json(request, env, { literature: buildLiterature(session, weekInfo(new Date()), records) });
+}
+
+async function saveLiterature(request, env, session) {
+  const body = await request.json();
+  validateText(body.title, '论文标题', 1, 500);
+  validateText(body.contribution, '一句话贡献', 1, 1200);
+  validateText(body.authors, '作者', 0, 1000);
+  validateText(body.venue, '会议或期刊', 0, 500);
+  validateText(body.doi, 'DOI或arXiv', 0, 300);
+  validateText(body.direction, '研究方向', 0, 300);
+  validateText(body.type, '阅读类型', 0, 100);
+  validateText(body.coreProblem, '核心问题', 0, 3000);
+  validateText(body.method, '方法摘要', 0, 5000);
+  validateText(body.review, '个人评价', 0, 3000);
+  validateText(body.projectRelation, '与项目关系', 0, 3000);
+  validateHttps(body.noteUrl, '阅读笔记链接', true);
+  validateHttps(body.paperUrl, '论文链接', false);
+  validateHttps(body.attachmentUrl, '论文附件链接', false);
+
+  const currentWeek = weekInfo(new Date());
+  if (body.weekId && body.weekId !== currentWeek.id) throw httpError(400, '只能提交当前周阅读记录');
+  const year = body.year === '' || body.year == null ? '' : Number(body.year);
+  if (year !== '' && (!Number.isInteger(year) || year < 1800 || year > 2200)) throw httpError(400, '发表年份不正确');
+  const tenantToken = await getTenantToken(env);
+  const fields = {
+    '论文标题': clean(body.title),
+    '提交人OpenID': session.sub,
+    '提交人姓名': session.name,
+    '提交人角色': session.roles.map(roleLabel).join(' / '),
+    '周次': currentWeek.id,
+    '周序号': currentWeek.number,
+    '阅读日期': clean(body.readDate) || shanghaiDate(new Date()),
+    '作者': clean(body.authors),
+    '会议或期刊': clean(body.venue),
+    '发表年份': year,
+    'DOI或arXiv': clean(body.doi),
+    '论文链接': clean(body.paperUrl),
+    '研究方向': clean(body.direction),
+    '阅读类型': clean(body.type),
+    '一句话贡献': clean(body.contribution),
+    '核心问题': clean(body.coreProblem),
+    '方法摘要': clean(body.method),
+    '个人评价': clean(body.review),
+    '与项目关系': clean(body.projectRelation),
+    '阅读笔记链接': clean(body.noteUrl),
+    '论文附件链接': clean(body.attachmentUrl),
+    '提交状态': '已提交',
+    '提交时间': new Date().toISOString()
+  };
+  if (year === '') delete fields['发表年份'];
+  const created = await createRecord(env, tenantToken, 'LITERATURE_TABLE_ID', fields);
+  const records = await listRecords(env, tenantToken, 'LITERATURE_TABLE_ID');
+  return json(request, env, {
+    ok: true,
+    recordId: created.data?.record?.record_id || '',
+    literature: buildLiterature(session, currentWeek, records)
+  }, 201);
+}
+
+function roleLabel(role) {
+  return ({ student: '学生', teacher: '教师', manager: '管理员' })[role] || '成员';
+}
+
+function shanghaiDate(date) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(date);
 }
 
 function buildStudent(session, week, reports, projects, courses, tasks, links) {
@@ -359,7 +474,7 @@ function resolveTableBinding(env, tableBinding) {
   return {
     appToken: env[tokenBinding] || env.FEISHU_BASE_APP_TOKEN || '',
     wikiToken: env[wikiBinding] || env.FEISHU_BASE_WIKI_TOKEN || '',
-    tableId: env[tableBinding] || ''
+    tableId: env[tableBinding] || (tableBinding === 'LITERATURE_TABLE_ID' ? LITERATURE_TABLE_ID : '')
   };
 }
 
@@ -596,6 +711,12 @@ function validateText(value, label, min, max) {
   const length = String(value || '').trim().length;
   if (length < min) throw httpError(400, '请填写' + label);
   if (length > max) throw httpError(400, label + '不能超过' + max + '字');
+}
+
+function validateHttps(value, label, required) {
+  const text = clean(value);
+  if (!text && required) throw httpError(400, '请填写' + label);
+  if (text && !/^https:\/\//i.test(text)) throw httpError(400, label + '必须使用HTTPS地址');
 }
 
 function clean(value) {

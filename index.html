@@ -77,6 +77,38 @@
     </form>
   </dialog>
 
+  <dialog class="modal literature-modal" id="literature-dialog">
+    <form id="literature-form">
+      <div class="modal-head">
+        <div><p class="kicker">LITERATURE READING</p><h2>提交文献阅读</h2><p id="literature-week-label"></p></div>
+        <button class="icon-button" type="button" data-close-dialog="literature-dialog" aria-label="关闭">×</button>
+      </div>
+      <div class="form-body literature-form-grid">
+        <label class="field-wide">论文标题 *<input name="title" required maxlength="500" placeholder="请输入论文完整标题"></label>
+        <label>作者<input name="authors" maxlength="1000" placeholder="例如：A. Author, B. Author"></label>
+        <label>会议或期刊<input name="venue" maxlength="500" placeholder="例如：ICRA 2026"></label>
+        <label>发表年份<input name="year" type="number" min="1800" max="2200" placeholder="2026"></label>
+        <label>阅读类型<select name="type"><option value="精读">精读</option><option value="泛读">泛读</option><option value="复现">复现</option><option value="综述">综述</option></select></label>
+        <label>研究方向<input name="direction" maxlength="300" placeholder="语义导航 / 规划控制 / 具身智能…"></label>
+        <label>DOI 或 arXiv<input name="doi" maxlength="300" placeholder="10.xxxx/… 或 arXiv:xxxx.xxxxx"></label>
+        <label class="field-wide">论文网页链接<input name="paperUrl" type="url" placeholder="https://..."></label>
+        <label class="field-wide">一句话贡献 *<textarea name="contribution" required maxlength="1200" rows="2" placeholder="这篇论文解决了什么问题，最重要的贡献是什么？"></textarea></label>
+        <label class="field-wide">核心问题<textarea name="coreProblem" maxlength="3000" rows="3" placeholder="研究问题、假设和适用边界"></textarea></label>
+        <label class="field-wide">方法摘要<textarea name="method" maxlength="5000" rows="4" placeholder="关键方法、模型、数据和实验设置"></textarea></label>
+        <label>个人评价<textarea name="review" maxlength="3000" rows="3" placeholder="优点、不足和可信度"></textarea></label>
+        <label>与项目关系<textarea name="projectRelation" maxlength="3000" rows="3" placeholder="能用于哪个项目或实验？"></textarea></label>
+        <label class="field-wide">飞书阅读笔记链接 *<input name="noteUrl" type="url" required placeholder="https://...（表格、公式和图片写在飞书文档内）"></label>
+        <label class="field-wide">论文附件或飞书云盘链接<input name="attachmentUrl" type="url" placeholder="https://...（PDF/大文件先上传飞书）"></label>
+        <p class="form-hint field-wide">一周至少提交 3 篇，但不限制上限；所有已登录的学生、教师和管理员都可以提交并互相查看。</p>
+        <p class="form-error field-wide" id="literature-error" role="alert" hidden></p>
+      </div>
+      <div class="modal-actions">
+        <button class="button button-secondary" type="button" data-close-dialog="literature-dialog">取消</button>
+        <button class="button button-primary" id="literature-submit" type="submit">提交阅读记录</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog class="modal search-modal" id="search-dialog">
     <div class="modal-head">
       <div><p class="kicker">SEARCH</p><h2>搜索结果</h2><p id="search-summary"></p></div>
