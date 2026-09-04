@@ -53,15 +53,17 @@ SESSION_SECRET 使用至少32字节随机字符串。不要把以上值写入 Gi
 |---|---|
 | FRONTEND_URL | https://1zjj.github.io/ER2_Lab_End/ |
 | FEISHU_REDIRECT_URI | Worker 的 /auth/callback 完整地址 |
-| FEISHU_BASE_APP_TOKEN | 多维表格 app token |
-| MEMBERS_TABLE_ID | 人员表 table id |
-| WEEKLY_TABLE_ID | 周报表 table id |
-| PROJECTS_TABLE_ID | 项目表 table id |
-| COURSES_TABLE_ID | 课程进度表 table id |
-| TASKS_TABLE_ID | 任务表 table id |
-| LINKS_TABLE_ID | 门户链接表 table id |
-| AUTOMATION_LOGS_TABLE_ID | 自动化日志表 table id，可选 |
+| FEISHU_BASE_APP_TOKEN | 所有表位于同一 Base 时使用的兼容 app token，可选 |
+| MEMBERS_BASE_APP_TOKEN / MEMBERS_TABLE_ID | 人员表的 app token / table id |
+| WEEKLY_BASE_APP_TOKEN / WEEKLY_TABLE_ID | 周报表的 app token / table id |
+| PROJECTS_BASE_APP_TOKEN / PROJECTS_TABLE_ID | 项目表的 app token / table id |
+| COURSES_BASE_APP_TOKEN / COURSES_TABLE_ID | 课程进度表的 app token / table id |
+| TASKS_BASE_APP_TOKEN / TASKS_TABLE_ID | 任务表的 app token / table id |
+| LINKS_BASE_APP_TOKEN / LINKS_TABLE_ID | 门户链接表的 app token / table id，可选 |
+| AUTOMATION_LOGS_BASE_APP_TOKEN / AUTOMATION_LOGS_TABLE_ID | 自动化日志表的 app token / table id，可选 |
 | PROFESSOR_OPEN_ID | 接收周五摘要的教授 open_id，可选 |
+
+ER² Lab 当前数据分布在多套 Base 中，因此优先使用每张表对应的 `*_BASE_APP_TOKEN`。仅当全部表都在同一套 Base 中时，才使用兼容变量 `FEISHU_BASE_APP_TOKEN`。
 
 ## 4. 启用真实数据
 
