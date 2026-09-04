@@ -307,7 +307,7 @@ th { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .04
 .icon-button { width: 38px; height: 38px; flex: 0 0 38px; border: 0; background: var(--page); border-radius: 10px; cursor: pointer; font-size: 24px; }
 .form-body { padding: 20px 25px; display: grid; gap: 17px; overflow-y: auto; max-height: calc(100vh - 240px); }
 .form-body label { display: grid; gap: 7px; color: #424a58; font-size: 13px; font-weight: 650; }
-.form-body textarea, .form-body input {
+.form-body textarea, .form-body input, .form-body select {
   width: 100%;
   padding: 12px 13px;
   color: var(--ink);
@@ -318,7 +318,38 @@ th { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .04
   resize: vertical;
   font-weight: 400;
 }
-.form-body textarea:focus, .form-body input:focus { border-color: #8eb0ff; box-shadow: 0 0 0 3px rgba(47,109,246,.1); }
+.form-body textarea:focus, .form-body input:focus, .form-body select:focus { border-color: #8eb0ff; box-shadow: 0 0 0 3px rgba(47,109,246,.1); }
+.form-body select { min-height: 44px; }
+.literature-modal { width: min(880px, calc(100vw - 28px)); }
+.literature-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.field-wide { grid-column: 1 / -1; }
+.form-hint { margin: 0; padding: 11px 13px; color: #5a6680; background: var(--blue-soft); border-radius: 9px; font-size: 12px; line-height: 1.55; }
+
+.literature-panel { margin-top: 22px; }
+.literature-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 26px; }
+.literature-head h2 { margin-bottom: 8px; font-size: 25px; }
+.literature-head p:not(.kicker) { max-width: 700px; margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.literature-actions { display: flex; align-items: center; gap: 14px; }
+.literature-count { min-width: 112px; display: flex; flex-direction: column; align-items: flex-end; }
+.literature-count strong { font-size: 24px; letter-spacing: -.03em; }
+.literature-count span { color: var(--muted); font-size: 11px; }
+.literature-progress { margin: 22px 0 10px; }
+.literature-status { margin-bottom: 26px; font-size: 12px; }
+.literature-list-title { margin-top: 0; padding-top: 22px; border-top: 1px solid var(--line); }
+.literature-list-title h3 { margin: 0; font-size: 17px; }
+.literature-list-title span { color: var(--muted); font-size: 12px; }
+.literature-list { display: grid; gap: 12px; }
+.literature-item { padding: 18px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 20px; background: #fbfcfe; border: 1px solid var(--line); border-radius: 14px; }
+.literature-by { margin-bottom: 14px; display: flex; align-items: center; gap: 9px; }
+.literature-by > span:last-child { display: flex; flex-direction: column; gap: 2px; }
+.literature-by strong { font-size: 12px; }
+.literature-by small { color: var(--muted); font-size: 10px; }
+.literature-item h3 { margin-bottom: 6px; font-size: 16px; line-height: 1.45; }
+.literature-meta { margin-bottom: 10px; color: var(--muted); font-size: 11px; }
+.literature-contribution { margin-bottom: 12px; color: #495466; font-size: 13px; line-height: 1.65; }
+.literature-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.literature-links { min-width: 80px; display: flex; flex-direction: column; align-items: flex-end; justify-content: center; gap: 10px; }
+.text-link { color: var(--blue); font-size: 12px; font-weight: 700; white-space: nowrap; }
 .form-error { margin: 0; padding: 10px 12px; color: var(--red); background: var(--red-soft); border-radius: 8px; font-size: 12px; }
 .modal-actions { padding: 15px 25px 20px; display: flex; justify-content: flex-end; gap: 9px; border-top: 1px solid var(--line); }
 .search-results { padding: 15px 18px 22px; display: grid; gap: 8px; }
@@ -391,6 +422,12 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
   .student-list li { grid-template-columns: 34px 1fr auto; padding: 11px 0; }
   .student-list .tag { display: none; }
   .modal-actions .button { flex: 1; }
+  .literature-form-grid { grid-template-columns: 1fr; }
+  .literature-head, .literature-actions { align-items: stretch; flex-direction: column; }
+  .literature-actions { gap: 10px; }
+  .literature-count { align-items: flex-start; }
+  .literature-item { grid-template-columns: 1fr; }
+  .literature-links { align-items: flex-start; flex-direction: row; flex-wrap: wrap; justify-content: flex-start; }
   .mobile-nav {
     position: fixed;
     left: 0;
