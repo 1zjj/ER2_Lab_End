@@ -8,6 +8,9 @@ let tenantTokenCache = { token: '', expiresAt: 0 };
 const LITERATURE_TABLE_FALLBACK = 'tblyHLZpybGVU364';
 const TRACK_A_ID = 'track-a';
 const TRACK_A_TITLE = 'Track A｜感知与语义导航';
+const ONBOARDING_TRACK = '入组准备';
+const ONBOARDING_LESSON = 'ONBOARDING';
+const ONBOARDING_STEPS = ['feishu-access', 'lab-rules', 'environment', 'track-a', 'test-submit'];
 const TRACK_A_LESSONS = [
   { id: '01', title: '仿真与系统结构', prompt: '仿真系统由哪些模块组成？课程环境如何启动？' },
   { id: '02', title: 'ROS 数据流', prompt: 'ROS 节点、Topic 和消息如何构成数据流？' },
@@ -68,6 +71,7 @@ export default {
       if (url.pathname === '/api/teacher/review' && request.method === 'POST') return await saveTeacherReview(request, env, session);
       if (url.pathname === '/api/courses/submit' && request.method === 'POST') return await saveCourseSubmission(request, env, session);
       if (url.pathname === '/api/courses/confirm' && request.method === 'POST') return await confirmCourseSubmission(request, env, session);
+      if (url.pathname === '/api/onboarding' && request.method === 'POST') return await saveOnboarding(request, env, session);
       return json(request, env, { message: '接口不存在' }, 404);
     } catch (error) {
       const status = Number(error.status || 500);
@@ -509,6 +513,42 @@ function buildCatalog(session, links) {
     })).filter((item) => item.url);
 }
 
+function onboardingRecordFor(session, records) {
+  return records.find((record) =>
+    String(field(record, '飞书OpenID', '人员OpenID', 'OpenID')) === String(session.sub) &&
+    (clean(field(record, 'Lesson', '课程编号', '课程序号')).toUpperCase() === ONBOARDING_LESSON ||
+      clean(field(record, 'Track')) === ONBOARDING_TRACK)
+  );
+}
+
+function onboardingStepsFrom(record) {
+  if (!record) return [];
+  const raw = field(record, '其他', '入组完成项');
+  let values = [];
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      values = Array.isArray(parsed) ? parsed : [];
+    } catch (_) {
+      values = raw.split(/[|,，、]/);
+    }
+  } else {
+    values = arrayValue(raw);
+  }
+  return [...new Set(values.map(clean).filter((value) => ONBOARDING_STEPS.includes(value)))];
+}
+
+function buildOnboarding(session, records) {
+  const completedSteps = onboardingStepsFrom(onboardingRecordFor(session, records));
+  return {
+    version: 1,
+    completedSteps,
+    completedCount: completedSteps.length,
+    total: ONBOARDING_STEPS.length,
+    completed: completedSteps.length === ONBOARDING_STEPS.length
+  };
+}
+
 function buildStudent(session, week, reports, projects, courses, tasks, links) {
   const mine = (record) => String(field(record, '飞书OpenID', '人员OpenID', 'OpenID')) === String(session.sub);
   const currentReport = reports.find((record) => mine(record) && String(field(record, '周次', 'WeekID')) === week.id);
@@ -527,6 +567,7 @@ function buildStudent(session, week, reports, projects, courses, tasks, links) {
   const rawProgress = Number(field(project, '进度', '完成度')) || 0;
   const projectProgress = rawProgress > 0 && rawProgress <= 1 ? Math.round(rawProgress * 100) : Math.round(rawProgress);
   return {
+    onboarding: buildOnboarding(session, courses),
     report: {
       status: currentReport ? 'submitted' : 'pending',
       label: currentReport ? '已提交' : '未提交',
@@ -603,6 +644,42 @@ function buildManager(members, projects, courses, env) {
       { name: '教授周报摘要', trigger: '周五 18:00', target: '教授', status: env.PROFESSOR_OPEN_ID ? '已配置' : '待配置' }
     ]
   };
+}
+
+async function saveOnboarding(request, env, session) {
+  if (!session.roles.includes('student')) throw httpError(403, '只有学生账号可以更新本人的入组进度');
+  const body = await readJson(request);
+  if (!Array.isArray(body.completedSteps)) throw httpError(400, '入组完成项格式无效');
+  const completedSteps = [...new Set(body.completedSteps.map(clean))];
+  if (completedSteps.some((value) => !ONBOARDING_STEPS.includes(value))) throw httpError(400, '包含未知的入组完成项');
+
+  const tenantToken = await getTenantToken(env);
+  const records = await listRecords(env, tenantToken, 'COURSES_TABLE_ID');
+  const existing = onboardingRecordFor(session, records);
+  const completed = completedSteps.length === ONBOARDING_STEPS.length;
+  const fields = {
+    '请求ID': requestBusinessId(request, body, 'onboarding'),
+    '飞书OpenID': session.sub,
+    '姓名': session.name,
+    'Track': ONBOARDING_TRACK,
+    '课程名称': '新生入组准备',
+    'Lesson': ONBOARDING_LESSON,
+    '其他': JSON.stringify(completedSteps),
+    '状态': completed ? '已完成' : '进行中',
+    '提交时间': new Date().toISOString()
+  };
+  if (existing) await updateRecord(env, tenantToken, 'COURSES_TABLE_ID', existing.record_id, fields);
+  else await createRecord(env, tenantToken, 'COURSES_TABLE_ID', fields);
+  return json(request, env, {
+    ok: true,
+    onboarding: {
+      version: 1,
+      completedSteps,
+      completedCount: completedSteps.length,
+      total: ONBOARDING_STEPS.length,
+      completed
+    }
+  });
 }
 
 async function saveCourseSubmission(request, env, session) {

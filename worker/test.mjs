@@ -355,6 +355,34 @@ const nameFallbackCannotView = await service.fetch(new Request('https://api.exam
 }), noCourseIdentityEnv);
 assert.equal((await nameFallbackCannotView.json()).teacher.courseReview.visible, false);
 
+const onboardingInitial = await service.fetch(new Request('https://api.example/api/dashboard?role=student', {
+  headers: { Authorization: 'Bearer ' + studentSession }
+}), literatureEnv);
+assert.deepEqual((await onboardingInitial.json()).student.onboarding, {
+  version: 1, completedSteps: [], completedCount: 0, total: 5, completed: false
+});
+const onboardingPartial = await service.fetch(new Request('https://api.example/api/onboarding', {
+  method: 'POST',
+  headers: { Authorization: 'Bearer ' + studentSession, 'Content-Type': 'application/json', 'X-Request-ID': 'onboarding-partial' },
+  body: JSON.stringify({ completedSteps: ['feishu-access', 'lab-rules', 'environment', 'track-a'] })
+}), literatureEnv);
+assert.equal(onboardingPartial.status, 200);
+assert.equal((await onboardingPartial.json()).onboarding.completed, false);
+const onboardingRecord = courseItems.find((item) => item.fields.Lesson === 'ONBOARDING');
+assert.ok(onboardingRecord);
+assert.equal(onboardingRecord.fields.Track, '入组准备');
+const onboardingComplete = await service.fetch(new Request('https://api.example/api/onboarding', {
+  method: 'POST',
+  headers: { Authorization: 'Bearer ' + studentSession, 'Content-Type': 'application/json', 'X-Request-ID': 'onboarding-complete' },
+  body: JSON.stringify({ completedSteps: ['feishu-access', 'lab-rules', 'environment', 'track-a', 'test-submit'] })
+}), literatureEnv);
+assert.equal(onboardingComplete.status, 200);
+assert.equal((await onboardingComplete.json()).onboarding.completed, true);
+const onboardingDashboard = await service.fetch(new Request('https://api.example/api/dashboard?role=student', {
+  headers: { Authorization: 'Bearer ' + studentSession }
+}), literatureEnv);
+assert.equal((await onboardingDashboard.json()).student.onboarding.completedCount, 5);
+
 const courseSubmission = await service.fetch(new Request('https://api.example/api/courses/submit', {
   method: 'POST',
   headers: { Authorization: 'Bearer ' + studentSession, 'Content-Type': 'application/json', 'X-Request-ID': 'course-01-request' },
@@ -389,20 +417,23 @@ assert.equal(otherStudentBody.student.course.lessons[0].status, 'confirmed');
 assert.equal(otherStudentBody.student.course.lessons[0].coreLearning, '其他学生的私有内容');
 assert.equal(otherStudentBody.teacher.courseReview.visible, false);
 
+const studentLessonOne = courseItems.find((item) => item.fields['飞书OpenID'] === 'ou_student' && item.fields.Lesson === '01');
+assert.ok(studentLessonOne);
+
 const professorCannotConfirm = await service.fetch(new Request('https://api.example/api/courses/confirm', {
   method: 'POST',
   headers: { Authorization: 'Bearer ' + professorSession, 'Content-Type': 'application/json' },
-  body: JSON.stringify({ recordId: courseItems[0].record_id, action: 'confirm', comment: '' })
+  body: JSON.stringify({ recordId: studentLessonOne.record_id, action: 'confirm', comment: '' })
 }), literatureEnv);
 assert.equal(professorCannotConfirm.status, 403);
 
 const firstConfirmation = await service.fetch(new Request('https://api.example/api/courses/confirm', {
   method: 'POST',
   headers: { Authorization: 'Bearer ' + reviewerSession, 'Content-Type': 'application/json' },
-  body: JSON.stringify({ recordId: courseItems[0].record_id, action: 'confirm', comment: '' })
+  body: JSON.stringify({ recordId: studentLessonOne.record_id, action: 'confirm', comment: '' })
 }), literatureEnv);
 assert.equal(firstConfirmation.status, 200);
-assert.equal(courseItems[0].fields['状态'], '朱俊杰已确认');
+assert.equal(studentLessonOne.fields['状态'], '朱俊杰已确认');
 
 for (let lesson = 2; lesson <= 9; lesson += 1) {
   courseItems.push({ record_id: 'rec_course_' + lesson, fields: {

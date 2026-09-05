@@ -9,6 +9,13 @@
     teacher: { label: '教师汇总页', short: '教' },
     manager: { label: '管理配置', short: '管' }
   };
+  const onboardingSteps = [
+    { id: 'feishu-access', icon: '⌁', title: '确认飞书权限', detail: '确认可以打开工作台、学习中心和周报入口' },
+    { id: 'lab-rules', icon: '◇', title: '阅读实验室基本规则', detail: '了解安全、保密、设备和文件命名规范' },
+    { id: 'environment', icon: '▣', title: '完成基础环境准备', detail: '确认 Ubuntu、ROS 与课程代码包能够正常运行' },
+    { id: 'track-a', icon: '⌘', title: '确认当前学习方向', detail: '当前开放：Track A｜感知与语义导航' },
+    { id: 'test-submit', icon: '➤', title: '完成一次测试提交', detail: '确认本周记录能够正常保存' }
+  ];
 
   const elements = {
     app: document.getElementById('app-root'),
@@ -72,6 +79,13 @@
     courseReviewError: document.getElementById('course-review-error'),
     courseConfirmButton: document.getElementById('course-confirm-button'),
     courseSupplementButton: document.getElementById('course-supplement-button'),
+    onboardingDialog: document.getElementById('onboarding-dialog'),
+    onboardingChecklist: document.getElementById('onboarding-checklist'),
+    onboardingProgressLabel: document.getElementById('onboarding-progress-label'),
+    onboardingProgressHint: document.getElementById('onboarding-progress-hint'),
+    onboardingProgressTrack: document.getElementById('onboarding-progress-track'),
+    onboardingCourseEntry: document.getElementById('onboarding-course-entry'),
+    onboardingSaveStatus: document.getElementById('onboarding-save-status'),
     toast: document.getElementById('toast')
   };
 
@@ -81,6 +95,7 @@
     activeStudentId: '',
     activeLessonId: '',
     activeCourseRecordId: '',
+    onboardingSaving: false,
     dashboard: null,
     catalog: [],
     toastTimer: null
@@ -106,6 +121,7 @@
       dueLabel: '周五 18:00 截止'
     },
     student: {
+      onboarding: { version: 1, completedSteps: [], completedCount: 0, total: 5, completed: false },
       report: { status: 'pending', label: '未提交' },
       course: {
         id: 'track-a', title: 'Track A｜感知与语义导航', progress: 20, completed: 2, submitted: 3, total: 10,
@@ -440,6 +456,106 @@
       availableLink(wikiUrl(), '打开ER²知识库') + '</footer>';
   }
 
+  function onboardingData() {
+    const stored = state.dashboard && state.dashboard.student && state.dashboard.student.onboarding;
+    const completedSteps = Array.isArray(stored && stored.completedSteps) ? stored.completedSteps : [];
+    return {
+      version: 1,
+      completedSteps,
+      completedCount: completedSteps.length,
+      total: onboardingSteps.length,
+      completed: completedSteps.length === onboardingSteps.length
+    };
+  }
+
+  function renderOnboardingEntry() {
+    const onboarding = onboardingData();
+    if (onboarding.completed) {
+      return '<section class="onboarding-shortcut" aria-label="入组资料与规则"><div class="onboarding-shortcut-copy"><span aria-hidden="true">✓</span><div><strong>入组资料与规则</strong><small>入组准备已完成，需要时可随时查看</small></div></div><button class="button button-ghost" type="button" data-open-onboarding>查看</button></section>';
+    }
+    const remaining = onboarding.total - onboarding.completedCount;
+    const progress = Math.round((onboarding.completedCount / onboarding.total) * 100);
+    return '<section class="onboarding-banner"><div class="onboarding-icon" aria-hidden="true">✦</div><div><h2>新生入组 · 还剩 ' + remaining + ' 项</h2><p>先完成必要的权限、规则、环境与测试确认；全部完成后自动缩小为“入组资料与规则”入口。</p><div class="onboarding-banner-progress"><div class="progress-track" role="progressbar" aria-label="入组进度" aria-valuemin="0" aria-valuemax="5" aria-valuenow="' + onboarding.completedCount + '"><span style="width:' + progress + '%"></span></div><strong>' + onboarding.completedCount + ' / ' + onboarding.total + '</strong></div></div><button class="button button-primary" type="button" data-open-onboarding>继续入组</button></section>';
+  }
+
+  function renderOnboardingDialog() {
+    const onboarding = onboardingData();
+    const completed = new Set(onboarding.completedSteps);
+    const remaining = onboarding.total - onboarding.completedCount;
+    const progress = Math.round((onboarding.completedCount / onboarding.total) * 100);
+    elements.onboardingProgressLabel.textContent = onboarding.completedCount + ' / ' + onboarding.total + ' 已完成';
+    elements.onboardingProgressHint.textContent = onboarding.completed ? '入组准备已全部完成' : '还需完成 ' + remaining + ' 项';
+    elements.onboardingProgressTrack.setAttribute('aria-valuenow', String(onboarding.completedCount));
+    elements.onboardingProgressTrack.querySelector('span').style.width = progress + '%';
+    elements.onboardingChecklist.innerHTML = onboardingSteps.map(function (step) {
+      const done = completed.has(step.id);
+      return '<article class="onboarding-check-item ' + (done ? 'completed' : '') + '"><span class="onboarding-step-icon" aria-hidden="true">' + escapeHtml(done ? '✓' : step.icon) + '</span><div><strong>' + escapeHtml(step.title) + '</strong><small>' + escapeHtml(step.detail) + '</small></div><button class="button button-secondary onboarding-step-action" type="button" data-complete-onboarding="' + escapeHtml(step.id) + '"' + (done || state.onboardingSaving ? ' disabled' : '') + '>' + (done ? '已完成' : '标记完成') + '</button></article>';
+    }).join('');
+    elements.onboardingCourseEntry.innerHTML = onboarding.completed
+      ? availableLink(courseUrl(), '进入学习中心', 'button button-primary')
+      : '<button class="button button-secondary" type="button" disabled>完成 5 项后进入学习中心</button>';
+    elements.onboardingChecklist.querySelectorAll('[data-complete-onboarding]').forEach(function (button) {
+      button.addEventListener('click', function () { saveOnboardingStep(button.dataset.completeOnboarding); });
+    });
+  }
+
+  function openOnboardingDialog() {
+    elements.onboardingSaveStatus.textContent = '每项完成后自动保存';
+    elements.onboardingSaveStatus.className = '';
+    renderOnboardingDialog();
+    showDialog(elements.onboardingDialog);
+  }
+
+  async function saveOnboardingStep(stepId) {
+    if (state.onboardingSaving || !onboardingSteps.some(function (step) { return step.id === stepId; })) return;
+    const current = onboardingData();
+    if (current.completedSteps.includes(stepId)) return;
+    const completedSteps = current.completedSteps.concat(stepId);
+    state.onboardingSaving = true;
+    elements.onboardingSaveStatus.textContent = '正在保存…';
+    elements.onboardingSaveStatus.className = 'saving';
+    renderOnboardingDialog();
+    try {
+      let next = {
+        version: 1,
+        completedSteps,
+        completedCount: completedSteps.length,
+        total: onboardingSteps.length,
+        completed: completedSteps.length === onboardingSteps.length
+      };
+      if (!DEMO_MODE) {
+        const result = await request('/api/onboarding', {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'X-Request-ID': createRequestId('onboarding'),
+            'Authorization': 'Bearer ' + state.session
+          },
+          body: JSON.stringify({ completedSteps })
+        });
+        next = result.onboarding;
+      }
+      state.dashboard.student.onboarding = next;
+      elements.onboardingSaveStatus.textContent = '已自动保存';
+      elements.onboardingSaveStatus.className = 'saved';
+      if (next.completed) {
+        closeDialog(elements.onboardingDialog);
+        renderActiveView();
+        showToast('入组准备已完成，入口已自动收起');
+      } else {
+        renderOnboardingDialog();
+      }
+    } catch (error) {
+      elements.onboardingSaveStatus.textContent = error.message || '保存失败，请重试';
+      elements.onboardingSaveStatus.className = '';
+      renderOnboardingDialog();
+    } finally {
+      state.onboardingSaving = false;
+      if (elements.onboardingDialog.open && !onboardingData().completed) renderOnboardingDialog();
+    }
+  }
+
   function renderLiteratureSection() {
     const literature = state.dashboard.literature || { mineCount: 0, minimum: 3, completed: false, items: [] };
     const items = Array.isArray(literature.items) ? literature.items : [];
@@ -518,6 +634,7 @@
       '<section class="welcome"><div><p class="kicker">STUDENT WORKSPACE</p><h1>' + greeting() + '，' + escapeHtml(profile.name) + '</h1>',
       '<p>这里只展示与你有关的任务、课程、项目和记录。</p></div>',
       '<div class="deadline">◷ ' + escapeHtml(week.dueLabel) + '</div></section>',
+      renderOnboardingEntry(),
       '<section class="hero-card"><div><p class="kicker">本周唯一提交</p><h2>' + (submitted ? '本周工作记录已提交' : '完成本周工作记录') + '</h2>',
       '<p>项目进度、培训学习、产出证据、问题和下一步统一记录，预计5–8分钟。</p><div class="action-row">',
       '<button class="button button-primary" type="button" data-open-report>' + (submitted ? '修改本周记录' : '立即填写') + '</button>',
@@ -590,6 +707,9 @@
   }
 
   function bindViewActions() {
+    elements.app.querySelectorAll('[data-open-onboarding]').forEach(function (button) {
+      button.addEventListener('click', openOnboardingDialog);
+    });
     const reportButton = elements.app.querySelector('[data-open-report]');
     if (reportButton) reportButton.addEventListener('click', openReportDialog);
     const reportHistoryButton = elements.app.querySelector('[data-open-report-history]');
@@ -1042,7 +1162,7 @@
     if (!button) return;
     showToast('“' + button.dataset.missingLink + '”尚未配置飞书链接，请管理员在门户链接表中补充');
   });
-  [elements.reportDialog, elements.reportHistoryDialog, elements.literatureDialog, elements.searchDialog, elements.literatureDetailDialog, elements.studentDetailDialog, elements.courseDialog, elements.courseReviewDialog].filter(Boolean).forEach(function (dialog) {
+  [elements.reportDialog, elements.reportHistoryDialog, elements.literatureDialog, elements.searchDialog, elements.literatureDetailDialog, elements.studentDetailDialog, elements.courseDialog, elements.courseReviewDialog, elements.onboardingDialog].filter(Boolean).forEach(function (dialog) {
     dialog.addEventListener('click', function (event) {
       if (event.target === dialog) closeDialog(dialog);
     });
