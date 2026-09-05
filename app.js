@@ -44,12 +44,43 @@
     literatureDetailTitle: document.getElementById('literature-detail-title'),
     literatureDetailMeta: document.getElementById('literature-detail-meta'),
     literatureDetailBody: document.getElementById('literature-detail-body'),
+    studentDetailDialog: document.getElementById('student-detail-dialog'),
+    studentDetailTitle: document.getElementById('student-detail-title'),
+    studentDetailMeta: document.getElementById('student-detail-meta'),
+    studentDetailBody: document.getElementById('student-detail-body'),
+    feedbackForm: document.getElementById('teacher-feedback-form'),
+    feedbackRecordId: document.getElementById('feedback-record-id'),
+    feedbackComment: document.getElementById('feedback-comment'),
+    feedbackSubmit: document.getElementById('feedback-submit'),
+    feedbackError: document.getElementById('feedback-error'),
+    courseDialog: document.getElementById('course-dialog'),
+    courseDialogTitle: document.getElementById('course-dialog-title'),
+    courseDialogPrompt: document.getElementById('course-dialog-prompt'),
+    courseForm: document.getElementById('course-form'),
+    courseLessonId: document.getElementById('course-lesson-id'),
+    courseSummaryField: document.getElementById('course-summary-field'),
+    courseConfirmationNote: document.getElementById('course-confirmation-note'),
+    courseSubmit: document.getElementById('course-submit'),
+    courseError: document.getElementById('course-error'),
+    courseReviewDialog: document.getElementById('course-review-dialog'),
+    courseReviewTitle: document.getElementById('course-review-title'),
+    courseReviewMeta: document.getElementById('course-review-meta'),
+    courseReviewBody: document.getElementById('course-review-body'),
+    courseConfirmForm: document.getElementById('course-confirm-form'),
+    courseReviewRecordId: document.getElementById('course-review-record-id'),
+    courseReviewComment: document.getElementById('course-review-comment'),
+    courseReviewError: document.getElementById('course-review-error'),
+    courseConfirmButton: document.getElementById('course-confirm-button'),
+    courseSupplementButton: document.getElementById('course-supplement-button'),
     toast: document.getElementById('toast')
   };
 
   const state = {
     session: readSession(),
     activeRole: 'student',
+    activeStudentId: '',
+    activeLessonId: '',
+    activeCourseRecordId: '',
     dashboard: null,
     catalog: [],
     toastTimer: null
@@ -57,7 +88,10 @@
 
   const draftKeys = {
     report: 'er2-draft-report',
-    literature: 'er2-draft-literature'
+    literature: 'er2-draft-literature',
+    feedbackRequest: 'er2-request-feedback',
+    courseRequest: 'er2-request-course',
+    courseReviewRequest: 'er2-request-course-review'
   };
 
   const demoData = {
@@ -73,7 +107,27 @@
     },
     student: {
       report: { status: 'pending', label: '未提交' },
-      course: { title: '语义导航 Demo', progress: 40, completed: 2, total: 5, next: 'Lesson 03 · 运动学与闭环' },
+      course: {
+        id: 'track-a', title: 'Track A｜感知与语义导航', progress: 20, completed: 2, submitted: 3, total: 10,
+        next: 'Lesson 03 · 机器人本体与 TF',
+        lessons: [
+          { lessonId: '01', lessonTitle: '仿真与系统结构', prompt: '仿真系统由哪些模块组成？课程环境如何启动？', status: 'confirmed', statusLabel: '朱俊杰已确认', coreLearning: '理解课程仿真环境与主要模块。', problems: '无', courseSummary: '', other: '', canEdit: false },
+          { lessonId: '02', lessonTitle: 'ROS 数据流', prompt: 'ROS 节点、Topic 和消息如何构成数据流？', status: 'confirmed', statusLabel: '朱俊杰已确认', coreLearning: '理解 ROS 数据流和 rqt_graph。', problems: '无', courseSummary: '', other: '', canEdit: false },
+          { lessonId: '03', lessonTitle: '机器人本体与 TF', prompt: '机器人本体、URDF/Xacro 与 TF 分别有什么作用？', status: 'supplement', statusLabel: '需要补充', coreLearning: '理解 URDF 和 TF 的基本关系。', problems: 'base_link 到传感器坐标关系仍需梳理。', courseSummary: '', other: '', confirmationComment: '请补充 map、base_footprint 与 base_link 的关系。', canEdit: true },
+          { lessonId: '04', lessonTitle: '传感器原始数据', prompt: '传感器原始数据如何产生并进入 ROS？', status: 'pending', statusLabel: '未开始', coreLearning: '', problems: '', courseSummary: '', other: '', canEdit: true },
+          { lessonId: '05', lessonTitle: 'FAST-LIO2', prompt: 'FAST-LIO2 使用哪些输入，产生什么输出？', status: 'pending', statusLabel: '未开始', coreLearning: '', problems: '', courseSummary: '', other: '', canEdit: true },
+          { lessonId: '06', lessonTitle: '地图与 Costmap', prompt: '地图、障碍物和 Costmap 之间是什么关系？', status: 'pending', statusLabel: '未开始', coreLearning: '', problems: '', courseSummary: '', other: '', canEdit: true },
+          { lessonId: '07', lessonTitle: '全局规划', prompt: '全局规划如何生成可行路径？', status: 'pending', statusLabel: '未开始', coreLearning: '', problems: '', courseSummary: '', other: '', canEdit: true },
+          { lessonId: '08', lessonTitle: '局部规划与控制', prompt: '局部规划与控制如何完成跟踪和避障？', status: 'pending', statusLabel: '未开始', coreLearning: '', problems: '', courseSummary: '', other: '', canEdit: true },
+          { lessonId: '09', lessonTitle: '语义导航', prompt: '语义信息如何参与地图构建和导航决策？', status: 'pending', statusLabel: '未开始', coreLearning: '', problems: '', courseSummary: '', other: '', canEdit: true },
+          { lessonId: '10', lessonTitle: '综合实验与课程总结', prompt: '如何将感知、定位、建图、规划和控制组成完整闭环？', status: 'pending', statusLabel: '未开始', coreLearning: '', problems: '', courseSummary: '', other: '', canEdit: true }
+        ],
+        otherTracks: [
+          { title: 'Track 0｜通用、安全与设备', status: '待规划' },
+          { title: 'Track B｜操作与装配', status: '待建设' },
+          { title: 'Track C｜规划与多智能体', status: '待建设' }
+        ]
+      },
       project: {
         code: 'P03',
         title: 'PatchNav',
@@ -93,9 +147,8 @@
         { title: '借用与报修', url: '' },
         { title: 'ER²知识库', url: config.feishuWikiUrl }
       ],
-      submissions: [
-        { title: 'Lesson 02｜rqt_graph 与 TF 截图', date: '2026-08-28', status: '已验收' },
-        { title: 'P03｜costmap 跳变复现记录', date: '2026-09-02', status: '待审核' }
+      history: [
+        { recordId: 'demo-report-1', weekId: '2026-W35', submittedAt: '2026-08-28', status: '已反馈', feedback: '证据完整，下周补充参数对照。', values: { progress: '完成 Lesson 02 与 TF 检查。', learning: '掌握 rqt_graph 排查方法。', evidence: 'https://example.com/evidence', blockers: 'costmap 局部跳变。', nextPlan: '完成参数对照实验。' } }
       ]
     },
     teacher: {
@@ -109,7 +162,8 @@
         '两名学生需要统一 ROS/TF 证据提交格式',
         'P03 的动态障碍 costmap 稳定性需要安排复现实验',
         'Lesson 03 建议增加真机安全检查清单'
-      ]
+      ],
+      courseReview: { visible: true, canConfirm: true, viewerLabel: '朱俊杰确认页', pending: 1, submissions: [] }
     },
     manager: {
       stats: { members: 4, projects: 3, courses: 5 },
@@ -276,6 +330,7 @@
         data = await request('/api/dashboard' + (role ? '?role=' + encodeURIComponent(role) : ''));
       }
       state.dashboard = data;
+      if (Array.isArray(data.catalog) && data.catalog.length) state.catalog = mergeCatalog(state.catalog, data.catalog);
       const roles = Array.isArray(data.profile.roles) ? data.profile.roles.filter(function (item) { return roleMeta[item]; }) : ['student'];
       state.activeRole = roles.includes(role) ? role : (roles.includes(state.activeRole) ? state.activeRole : roles[0]);
       renderAccount();
@@ -323,6 +378,18 @@
     }
   }
 
+  function mergeCatalog(baseItems, liveItems) {
+    const merged = new Map();
+    (baseItems || []).forEach(function (item) { merged.set(normalize(item.title), item); });
+    (liveItems || []).forEach(function (item) {
+      const key = normalize(item.title);
+      const previous = merged.get(key) || {};
+      merged.set(key, Object.assign({}, previous, item, {
+        keywords: Array.from(new Set([].concat(previous.keywords || [], item.keywords || [])))
+      }));
+    });
+    return Array.from(merged.values());
+  }
   function renderRoleNavigation(roles) {
     const html = roles.map(function (role) {
       const meta = roleMeta[role];
@@ -395,6 +462,46 @@
     ].join('');
   }
 
+  function courseTone(status) {
+    return ({ confirmed: 'green', supplement: 'red', submitted: 'orange', learning: 'blue', pending: '' })[status] || '';
+  }
+
+  function renderCoursePanel() {
+    const course = state.dashboard.student.course || { lessons: [], otherTracks: [], completed: 0, total: 10, progress: 0 };
+    const lessons = Array.isArray(course.lessons) ? course.lessons : [];
+    const otherTracks = Array.isArray(course.otherTracks) ? course.otherTracks : [];
+    return [
+      '<section class="panel course-panel"><div class="course-panel-head"><div><p class="kicker">TRACK A TRAINING</p><h2>' + escapeHtml(course.title || 'Track A｜感知与语义导航') + '</h2>',
+      '<p>Lesson 01–10 每课提交一份文字学习记录，由朱俊杰确认。</p></div><div class="course-count"><strong>' + Number(course.completed || 0) + ' / ' + Number(course.total || 10) + '</strong><span>已确认课程</span></div></div>',
+      '<div class="progress-track course-progress" role="progressbar" aria-label="Track A课程进度" aria-valuenow="' + Number(course.progress || 0) + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + Number(course.progress || 0) + '%"></span></div>',
+      '<div class="course-list">',
+      lessons.map(function (lesson) {
+        const action = lesson.status === 'confirmed' ? '查看记录' : (lesson.recordId ? '查看 / 修改' : '提交记录');
+        return '<article class="course-lesson"><span class="course-number">' + escapeHtml(lesson.lessonId) + '</span><div class="course-lesson-main"><div><strong>Lesson ' + escapeHtml(lesson.lessonId) + '｜' + escapeHtml(lesson.lessonTitle) + '</strong>' + tag(lesson.statusLabel, courseTone(lesson.status)) + '</div><small>' + escapeHtml(lesson.prompt || '') + '</small>' +
+          (lesson.confirmationComment ? '<p class="course-comment"><strong>朱俊杰说明：</strong>' + escapeHtml(lesson.confirmationComment) + '</p>' : '') + '</div><button class="button button-secondary course-action" type="button" data-course-lesson="' + escapeHtml(lesson.lessonId) + '">' + action + '</button></article>';
+      }).join(''),
+      '</div>',
+      otherTracks.length ? '<details class="other-tracks"><summary>其他学习方向</summary>' + otherTracks.map(function (track) {
+        return '<div><span>' + escapeHtml(track.title) + '</span>' + tag(track.status) + '</div>';
+      }).join('') + '</details>' : '',
+      '</section>'
+    ].join('');
+  }
+
+  function renderCourseReviewPanel() {
+    const review = state.dashboard.teacher && state.dashboard.teacher.courseReview;
+    if (!review || !review.visible) return '';
+    const submissions = Array.isArray(review.submissions) ? review.submissions : [];
+    return [
+      '<section class="panel course-review-panel"><div class="panel-title"><div><p class="kicker">COURSE CONFIRMATION</p><h2>Track A 学习记录</h2></div><span>' + escapeHtml(review.viewerLabel || '') + ' · 待确认 ' + Number(review.pending || 0) + '</span></div>',
+      '<p class="course-review-note">提交内容仅学生本人、朱俊杰和陈铮一教授可见。' + (review.canConfirm ? '请对基本完成情况进行确认，不进行评分。' : '当前为只读查看。') + '</p>',
+      submissions.length ? '<div class="course-review-list">' + submissions.map(function (item) {
+        return '<button type="button" class="course-review-item" data-course-review="' + escapeHtml(item.recordId) + '"><span class="student-avatar">' + escapeHtml(String(item.studentName || 'ER').slice(-1)) + '</span><span><strong>' + escapeHtml(item.studentName) + ' · Lesson ' + escapeHtml(item.lessonId) + '</strong><small>' + escapeHtml(item.lessonTitle) + ' · ' + escapeHtml(item.submittedAt || '未记录时间') + '</small></span>' + tag(item.statusLabel, courseTone(item.status)) + '<b>查看 ›</b></button>';
+      }).join('') + '</div>' : '<div class="empty">当前还没有课程提交记录。</div>',
+      '</section>'
+    ].join('');
+  }
+
   function renderActiveView() {
     if (state.activeRole === 'teacher') elements.app.innerHTML = renderTeacher();
     else if (state.activeRole === 'manager') elements.app.innerHTML = renderManager();
@@ -433,7 +540,7 @@
       '<h3>' + escapeHtml(data.course.next) + '</h3><div class="progress-track" role="progressbar" aria-label="课程进度" aria-valuenow="' + Number(data.course.progress || 0) + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + Number(data.course.progress || 0) + '%"></span></div>',
       availableLink(courseUrl(), '进入课程', 'button button-secondary') + '</section>',
       '</aside></div>',
-      renderLiteratureSection(), footer()
+      renderCoursePanel(), renderLiteratureSection(), footer()
     ].join('');
   }
 
@@ -451,13 +558,14 @@
         return '<li><span class="student-avatar">' + escapeHtml(student.name.slice(-1)) + '</span><div><strong>' + escapeHtml(student.name) +
           '</strong><small>' + escapeHtml(student.project + ' · ' + student.blocker) + '</small></div>' + tag(student.status, student.tone) +
           '<button type="button" data-student="' + escapeHtml(student.id) + '">查看详情</button></li>';
-      }).join(''), '</ul></section></div><aside class="stack"><section class="panel"><div class="panel-title"><h2>本周共性问题</h2></div><ol class="task-list">',
+      }).join(''), data.students.length ? '' : '<li class="empty">当前没有分配给你的学生。</li>', '</ul></section></div><aside class="stack"><section class="panel"><div class="panel-title"><h2>本周共性问题</h2></div><ol class="task-list">',
       data.commonIssues.map(function (issue, index) { return '<li><span class="task-number">' + (index + 1) + '</span><div><strong>' + escapeHtml(issue) + '</strong></div></li>'; }).join(''),
+      data.commonIssues.length ? '' : '<li class="empty">本周暂无共性阻塞。</li>',
       '</ol></section><section class="panel"><div class="panel-title"><h2>教师快捷入口</h2></div><ul class="link-list">',
       '<li><a href="' + safeUrl(wikiUrl()) + '"><span>课程与培训维护</span><span>›</span></a></li>',
       '<li><a href="' + safeUrl(wikiUrl()) + '"><span>项目里程碑</span><span>›</span></a></li>',
       '<li><a href="' + safeUrl(wikiUrl()) + '"><span>周报原始记录</span><span>›</span></a></li>',
-      '</ul></section></aside></div>', renderLiteratureSection(), footer()
+      '</ul></section></aside></div>', renderCourseReviewPanel(), renderLiteratureSection(), footer()
     ].join('');
   }
 
@@ -477,7 +585,7 @@
       '<div class="metric-grid" style="margin-top:22px"><a class="metric-card" href="' + safeUrl(wikiUrl()) + '"><span>人员与权限</span><strong>角色配置</strong><small>维护学生、教师、管理者和负责关系</small></a>',
       '<a class="metric-card" href="' + safeUrl(wikiUrl()) + '"><span>课程与知识</span><strong>内容维护</strong><small>课程、SOP、资料版本和大文件</small></a>',
       '<a class="metric-card" href="' + safeUrl(wikiUrl()) + '"><span>项目与周报</span><strong>原始数据</strong><small>项目成员、里程碑和历史记录</small></a></div>',
-      renderLiteratureSection(), footer()
+      renderCourseReviewPanel(), renderLiteratureSection(), footer()
     ].join('');
   }
 
@@ -492,20 +600,31 @@
       button.addEventListener('click', function () { openLiteratureDetail(button.dataset.literatureDetail); });
     });
     elements.app.querySelectorAll('[data-student]').forEach(function (button) {
-      button.addEventListener('click', function () {
-        const student = state.dashboard.teacher.students.find(function (item) { return item.id === button.dataset.student; });
-        if (student) showToast(student.name + '：' + student.status + '；' + student.blocker);
-      });
+      button.addEventListener('click', function () { openStudentDetail(button.dataset.student); });
+    });
+    elements.app.querySelectorAll('[data-course-lesson]').forEach(function (button) {
+      button.addEventListener('click', function () { openCourseDialog(button.dataset.courseLesson); });
+    });
+    elements.app.querySelectorAll('[data-course-review]').forEach(function (button) {
+      button.addEventListener('click', function () { openCourseReview(button.dataset.courseReview); });
     });
   }
 
-  function openReportHistory() {
-    const history = state.dashboard.student.submissions || [];
-    elements.reportHistoryBody.innerHTML = history.length ? history.map(function (report) {
-      return '<article class="history-record"><div class="history-record-head"><div><strong>' + escapeHtml(report.title || '历史周报') + '</strong><small>' + escapeHtml(report.date || '') + '</small></div>' + tag(report.status || '已提交') + '</div></article>';
-    }).join('') : '<div class="empty">还没有历史周报。</div>';
-    if (typeof elements.reportHistoryDialog.showModal === 'function') elements.reportHistoryDialog.showModal();
-    else elements.reportHistoryDialog.setAttribute('open', '');
+  function showDialog(dialog) {
+    if (!dialog) return;
+    if (typeof dialog.showModal === 'function') dialog.showModal();
+    else dialog.setAttribute('open', '');
+  }
+
+  function closeDialog(dialog) {
+    if (!dialog) return;
+    if (typeof dialog.close === 'function') dialog.close();
+    else dialog.removeAttribute('open');
+  }
+
+  function detailSection(title, value, wide) {
+    if (!value) return '';
+    return '<section' + (wide ? ' class="detail-wide"' : '') + '><h3>' + escapeHtml(title) + '</h3><p>' + escapeHtml(value).replace(/\n/g, '<br>') + '</p></section>';
   }
 
   function openReportDialog() {
@@ -513,16 +632,27 @@
     elements.reportError.hidden = true;
     const hasDraft = restoreDraft(elements.reportForm, draftKeys.report);
     if (!hasDraft) setFormValues(elements.reportForm, (state.dashboard.student.report || {}).values || {});
-    if (typeof elements.reportDialog.showModal === 'function') elements.reportDialog.showModal();
-    else elements.reportDialog.setAttribute('open', '');
+    showDialog(elements.reportDialog);
+  }
+
+  function openReportHistory() {
+    const history = state.dashboard.student.history || state.dashboard.student.submissions || [];
+    elements.reportHistoryBody.innerHTML = history.length ? history.map(function (report) {
+      const values = report.values || {};
+      const evidence = values.evidence ? '<div class="history-link">' + availableLink(values.evidence, '打开证据链接', 'button button-secondary') + '</div>' : '';
+      return '<article class="history-record"><div class="history-record-head"><div><strong>' + escapeHtml(report.title || report.weekId || (report.weekNumber ? ('第' + report.weekNumber + '周') : '历史周报')) + '</strong><small>' + escapeHtml(report.submittedAt || report.date || '') + '</small></div>' + tag(report.status || '已提交', report.feedback ? 'green' : '') + '</div><div class="literature-detail-grid">' +
+        detailSection('本周完成与结果', values.progress, true) + detailSection('学习与方法', values.learning, true) +
+        detailSection('问题与阻塞', values.blockers, true) + detailSection('下周计划', values.nextPlan, true) +
+        detailSection('教师反馈', report.feedback, true) + '</div>' + evidence + '</article>';
+    }).join('') : '<div class="empty">还没有历史周报。</div>';
+    showDialog(elements.reportHistoryDialog);
   }
 
   function openLiteratureDialog() {
     elements.literatureWeekLabel.textContent = state.dashboard.week.label + ' · 已提交 ' + Number((state.dashboard.literature || {}).mineCount || 0) + ' 篇';
     elements.literatureError.hidden = true;
     restoreDraft(elements.literatureForm, draftKeys.literature);
-    if (typeof elements.literatureDialog.showModal === 'function') elements.literatureDialog.showModal();
-    else elements.literatureDialog.setAttribute('open', '');
+    showDialog(elements.literatureDialog);
   }
 
   function openLiteratureDetail(id) {
@@ -531,22 +661,97 @@
     if (!item) return showToast('这条阅读记录暂时不可用');
     elements.literatureDetailTitle.textContent = item.title || '文献阅读详情';
     elements.literatureDetailMeta.textContent = [item.submitter, item.role, item.weekId, item.date].filter(Boolean).join(' · ');
-    const section = function (title, value) {
-      return value ? '<section><h3>' + escapeHtml(title) + '</h3><p>' + escapeHtml(value).replace(/\n/g, '<br>') + '</p></section>' : '';
-    };
     const links = [
       item.noteUrl ? availableLink(item.noteUrl, '打开飞书阅读笔记', 'button button-primary') : '',
       item.paperUrl ? availableLink(item.paperUrl, '打开论文网页', 'button button-secondary') : '',
       item.attachmentUrl ? availableLink(item.attachmentUrl, '打开论文附件', 'button button-secondary') : ''
     ].filter(Boolean).join('');
     elements.literatureDetailBody.innerHTML = '<div class="literature-detail-grid">' +
-      section('作者', item.authors) + section('会议或期刊', [item.venue, item.year].filter(Boolean).join(' · ')) +
-      section('DOI / arXiv', item.doi) + section('研究方向与类型', [item.direction, item.type].filter(Boolean).join(' · ')) +
-      section('一句话贡献', item.contribution) + section('核心问题', item.coreProblem) +
-      section('方法摘要', item.method) + section('个人评价', item.review) + section('与项目关系', item.projectRelation) +
+      detailSection('作者', item.authors) + detailSection('会议或期刊', [item.venue, item.year].filter(Boolean).join(' · ')) +
+      detailSection('DOI / arXiv', item.doi) + detailSection('研究方向与类型', [item.direction, item.type].filter(Boolean).join(' · ')) +
+      detailSection('一句话贡献', item.contribution, true) + detailSection('核心问题', item.coreProblem, true) +
+      detailSection('方法摘要', item.method, true) + detailSection('个人评价', item.review, true) + detailSection('与项目关系', item.projectRelation, true) +
       '</div><div class="action-row literature-detail-links">' + links + '</div>';
-    if (typeof elements.literatureDetailDialog.showModal === 'function') elements.literatureDetailDialog.showModal();
-    else elements.literatureDetailDialog.setAttribute('open', '');
+    showDialog(elements.literatureDetailDialog);
+  }
+
+  function courseDraftKey(lessonId) {
+    return 'er2-draft-course-' + lessonId;
+  }
+
+  function openCourseDialog(lessonId) {
+    const course = state.dashboard.student.course || {};
+    const lesson = (course.lessons || []).find(function (item) { return String(item.lessonId) === String(lessonId); });
+    if (!lesson) return showToast('课程记录暂时不可用');
+    state.activeLessonId = lesson.lessonId;
+    elements.courseForm.reset();
+    elements.courseLessonId.value = lesson.lessonId;
+    elements.courseDialogTitle.textContent = 'Lesson ' + lesson.lessonId + '｜' + lesson.lessonTitle;
+    elements.courseDialogPrompt.textContent = lesson.prompt || '';
+    elements.courseSummaryField.hidden = lesson.lessonId !== '10';
+    const summaryInput = elements.courseForm.elements.namedItem('courseSummary');
+    summaryInput.required = lesson.lessonId === '10';
+    const savedDraft = lesson.canEdit && restoreDraft(elements.courseForm, courseDraftKey(lesson.lessonId));
+    if (!savedDraft) setFormValues(elements.courseForm, lesson);
+    const readOnly = lesson.canEdit === false;
+    Array.from(elements.courseForm.querySelectorAll('textarea')).forEach(function (field) { field.readOnly = readOnly; });
+    elements.courseSubmit.hidden = readOnly;
+    elements.courseSubmit.disabled = false;
+    elements.courseSubmit.textContent = lesson.recordId ? '更新本课记录' : '正式提交';
+    elements.courseConfirmationNote.hidden = !lesson.confirmationComment;
+    elements.courseConfirmationNote.textContent = lesson.confirmationComment ? '朱俊杰说明：' + lesson.confirmationComment : '';
+    elements.courseError.hidden = true;
+    showDialog(elements.courseDialog);
+  }
+
+  function openCourseReview(recordId) {
+    const review = state.dashboard.teacher && state.dashboard.teacher.courseReview;
+    const item = review && (review.submissions || []).find(function (entry) { return String(entry.recordId) === String(recordId); });
+    if (!item) return showToast('课程提交记录暂时不可用');
+    state.activeCourseRecordId = item.recordId;
+    elements.courseReviewTitle.textContent = item.studentName + ' · Lesson ' + item.lessonId;
+    elements.courseReviewMeta.textContent = item.lessonTitle + ' · ' + item.statusLabel + (item.submittedAt ? ' · ' + item.submittedAt : '');
+    elements.courseReviewBody.innerHTML = '<div class="literature-detail-grid">' +
+      detailSection('核心收获', item.coreLearning, true) + detailSection('问题与处理', item.problems, true) +
+      detailSection('课程总结', item.courseSummary, true) + detailSection('其他', item.other, true) +
+      detailSection('已有确认说明', item.confirmationComment, true) + '</div>';
+    const canAct = Boolean(review.canConfirm && item.status !== 'confirmed');
+    elements.courseConfirmForm.hidden = !canAct;
+    elements.courseReviewRecordId.value = item.recordId;
+    elements.courseReviewComment.value = item.confirmationComment || '';
+    elements.courseReviewError.hidden = true;
+    showDialog(elements.courseReviewDialog);
+  }
+
+  function openStudentDetail(id) {
+    const student = (state.dashboard.teacher.students || []).find(function (item) { return String(item.id) === String(id); });
+    if (!student) return showToast('学生信息暂时不可用');
+    state.activeStudentId = student.id;
+    elements.studentDetailTitle.textContent = student.name;
+    elements.studentDetailMeta.textContent = [student.track, student.project, student.status].filter(Boolean).join(' · ');
+    const report = student.currentReport;
+    if (report) {
+      const values = report.values || {};
+      const evidence = values.evidence ? '<div class="history-link">' + availableLink(values.evidence, '打开证据链接', 'button button-secondary') + '</div>' : '';
+      const previous = (student.history || []).filter(function (item) { return item.recordId !== report.recordId; }).slice(0, 3);
+      const previousHtml = previous.length ? '<div class="student-history"><h3>最近历史记录</h3>' + previous.map(function (item) {
+        return '<div><span><strong>' + escapeHtml(item.weekId || '历史周报') + '</strong><small>' + escapeHtml(item.submittedAt || '') + '</small></span>' + tag(item.feedback ? '已反馈' : '已提交', item.feedback ? 'green' : '') + '</div>';
+      }).join('') + '</div>' : '';
+      elements.studentDetailBody.innerHTML = '<div class="student-report-summary"><span>本周周报</span><strong>' + escapeHtml(report.weekId || '') + ' · ' + escapeHtml(report.submittedAt || '') + '</strong></div><div class="literature-detail-grid">' +
+        detailSection('本周完成与结果', values.progress, true) + detailSection('学习与方法', values.learning, true) +
+        detailSection('问题与阻塞', values.blockers, true) + detailSection('下周计划', values.nextPlan, true) +
+        detailSection('已有教师反馈', report.feedback, true) + '</div>' + evidence + previousHtml;
+      elements.feedbackForm.hidden = false;
+      elements.feedbackRecordId.value = report.recordId || '';
+      elements.feedbackComment.value = report.feedback || '';
+    } else {
+      elements.studentDetailBody.innerHTML = '<div class="empty">该学生本周尚未提交周报。</div>';
+      elements.feedbackForm.hidden = true;
+      elements.feedbackRecordId.value = '';
+      elements.feedbackComment.value = '';
+    }
+    elements.feedbackError.hidden = true;
+    showDialog(elements.studentDetailDialog);
   }
 
   async function submitReport(event) {
@@ -575,6 +780,7 @@
       state.dashboard.student.report = {
         status: 'submitted',
         label: '已提交',
+        submittedAt: new Date().toISOString(),
         values: {
           progress: fields.progress || '',
           learning: fields.learning || '',
@@ -583,7 +789,19 @@
           nextPlan: fields.nextPlan || ''
         }
       };
-      elements.reportDialog.close();
+      const historyEntry = {
+        recordId: '',
+        weekId: state.dashboard.week.id,
+        submittedAt: new Date().toLocaleDateString('en-CA'),
+        status: '已提交',
+        feedback: '',
+        values: state.dashboard.student.report.values
+      };
+      const previousHistory = state.dashboard.student.history || [];
+      state.dashboard.student.history = [historyEntry].concat(previousHistory.filter(function (item) {
+        return item.weekId !== state.dashboard.week.id;
+      })).slice(0, 12);
+      closeDialog(elements.reportDialog);
       elements.reportForm.reset();
       clearDraft(draftKeys.report);
       sessionStorage.removeItem('er2-request-report');
@@ -636,7 +854,7 @@
         });
         state.dashboard.literature = result.literature;
       }
-      elements.literatureDialog.close();
+      closeDialog(elements.literatureDialog);
       elements.literatureForm.reset();
       clearDraft(draftKeys.literature);
       sessionStorage.removeItem('er2-request-literature');
@@ -648,6 +866,133 @@
     } finally {
       elements.literatureSubmit.disabled = false;
       elements.literatureSubmit.textContent = '提交阅读记录';
+    }
+  }
+
+  async function submitCourse(event) {
+    event.preventDefault();
+    if (!elements.courseForm.reportValidity()) return;
+    const fields = Object.fromEntries(new FormData(elements.courseForm).entries());
+    const requestKey = draftKeys.courseRequest + '-' + fields.lessonId;
+    fields.requestId = pendingRequestId(requestKey, 'course-' + fields.lessonId);
+    elements.courseSubmit.disabled = true;
+    elements.courseSubmit.textContent = '正在提交…';
+    elements.courseError.hidden = true;
+    try {
+      if (DEMO_MODE) {
+        await new Promise(function (resolve) { setTimeout(resolve, 350); });
+        const lesson = (state.dashboard.student.course.lessons || []).find(function (item) { return item.lessonId === fields.lessonId; });
+        if (lesson) Object.assign(lesson, fields, { recordId: lesson.recordId || 'demo-course-' + fields.lessonId, status: 'submitted', statusLabel: '等待朱俊杰确认', canEdit: true, submittedAt: new Date().toLocaleDateString('en-CA') });
+      } else {
+        await request('/api/courses/submit', {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'X-Request-ID': fields.requestId,
+            'Authorization': 'Bearer ' + state.session
+          },
+          body: JSON.stringify(fields)
+        });
+      }
+      clearDraft(courseDraftKey(fields.lessonId));
+      sessionStorage.removeItem(requestKey);
+      closeDialog(elements.courseDialog);
+      if (DEMO_MODE) renderActiveView();
+      else await loadDashboard(state.activeRole);
+      showToast('Lesson ' + fields.lessonId + '已提交，等待朱俊杰确认');
+    } catch (error) {
+      elements.courseError.textContent = error.message || '课程记录提交失败，请稍后重试';
+      elements.courseError.hidden = false;
+    } finally {
+      elements.courseSubmit.disabled = false;
+      elements.courseSubmit.textContent = '正式提交';
+    }
+  }
+
+  async function submitCourseReview(action) {
+    const comment = elements.courseReviewComment.value.trim();
+    if (action === 'supplement' && !comment) {
+      elements.courseReviewError.textContent = '选择“需要补充”时，请填写具体补充说明';
+      elements.courseReviewError.hidden = false;
+      elements.courseReviewComment.focus();
+      return;
+    }
+    const requestKey = draftKeys.courseReviewRequest + '-' + state.activeCourseRecordId + '-' + action;
+    const fields = {
+      recordId: state.activeCourseRecordId,
+      action,
+      comment,
+      requestId: pendingRequestId(requestKey, 'course-review')
+    };
+    elements.courseConfirmButton.disabled = true;
+    elements.courseSupplementButton.disabled = true;
+    elements.courseReviewError.hidden = true;
+    try {
+      let result = { completion: { completed: false, notified: false } };
+      if (!DEMO_MODE) {
+        result = await request('/api/courses/confirm', {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'X-Request-ID': fields.requestId,
+            'Authorization': 'Bearer ' + state.session
+          },
+          body: JSON.stringify(fields)
+        });
+      }
+      sessionStorage.removeItem(requestKey);
+      closeDialog(elements.courseReviewDialog);
+      if (!DEMO_MODE) await loadDashboard(state.activeRole);
+      else renderActiveView();
+      if (result.completion && result.completion.notified) showToast('课程已确认，并已向陈铮一教授发送结业通知');
+      else showToast(action === 'confirm' ? '已确认该课程记录' : '已通知学生补充课程记录');
+    } catch (error) {
+      elements.courseReviewError.textContent = error.message || '课程确认失败，请稍后重试';
+      elements.courseReviewError.hidden = false;
+    } finally {
+      elements.courseConfirmButton.disabled = false;
+      elements.courseSupplementButton.disabled = false;
+    }
+  }
+
+  async function submitTeacherFeedback(event) {
+    event.preventDefault();
+    if (!elements.feedbackForm.reportValidity()) return;
+    const fields = Object.fromEntries(new FormData(elements.feedbackForm).entries());
+    fields.requestId = pendingRequestId(draftKeys.feedbackRequest, 'review');
+    elements.feedbackSubmit.disabled = true;
+    elements.feedbackSubmit.textContent = '正在提交…';
+    elements.feedbackError.hidden = true;
+    try {
+      if (!DEMO_MODE) {
+        await request('/api/teacher/review', {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'X-Request-ID': fields.requestId,
+            'Authorization': 'Bearer ' + state.session
+          },
+          body: JSON.stringify(fields)
+        });
+      }
+      const student = (state.dashboard.teacher.students || []).find(function (item) { return String(item.id) === String(state.activeStudentId); });
+      if (student && student.currentReport) {
+        student.currentReport.feedback = fields.comment;
+        student.currentReport.status = '已反馈';
+      }
+      sessionStorage.removeItem(draftKeys.feedbackRequest);
+      closeDialog(elements.studentDetailDialog);
+      renderActiveView();
+      showToast('教师反馈已保存');
+    } catch (error) {
+      elements.feedbackError.textContent = error.message || '反馈提交失败，请稍后重试';
+      elements.feedbackError.hidden = false;
+    } finally {
+      elements.feedbackSubmit.disabled = false;
+      elements.feedbackSubmit.textContent = '保存教师反馈';
     }
   }
 
@@ -683,14 +1028,13 @@
       return '<' + tagName + ' class="search-result' + (safe === '#' ? ' unavailable' : '') + '"' + href + '><span>' + escapeHtml(item.category.slice(0,2)) +
         '</span><div><strong>' + escapeHtml(item.title) + '</strong><small>' + escapeHtml(item.subtitle) + (safe === '#' ? ' · 登录后由飞书工作台提供入口' : '') + '</small></div><b>' + (safe === '#' ? '—' : '→') + '</b></' + tagName + '>';
     }).join('') : '<div class="empty">可以尝试“周报”“ROS”“D435”“项目”或“SOP”</div>';
-    if (typeof elements.searchDialog.showModal === 'function') elements.searchDialog.showModal();
-    else elements.searchDialog.setAttribute('open', '');
+    showDialog(elements.searchDialog);
   }
 
   document.querySelectorAll('[data-close-dialog]').forEach(function (button) {
     button.addEventListener('click', function () {
       const dialog = document.getElementById(button.dataset.closeDialog);
-      if (dialog) dialog.close();
+      if (dialog) closeDialog(dialog);
     });
   });
   document.addEventListener('click', function (event) {
@@ -698,21 +1042,32 @@
     if (!button) return;
     showToast('“' + button.dataset.missingLink + '”尚未配置飞书链接，请管理员在门户链接表中补充');
   });
-  [elements.reportDialog, elements.reportHistoryDialog, elements.literatureDialog, elements.searchDialog, elements.literatureDetailDialog].forEach(function (dialog) {
+  [elements.reportDialog, elements.reportHistoryDialog, elements.literatureDialog, elements.searchDialog, elements.literatureDetailDialog, elements.studentDetailDialog, elements.courseDialog, elements.courseReviewDialog].filter(Boolean).forEach(function (dialog) {
     dialog.addEventListener('click', function (event) {
-      if (event.target === dialog) dialog.close();
+      if (event.target === dialog) closeDialog(dialog);
     });
   });
   document.getElementById('retry-button').addEventListener('click', function () { loadDashboard(state.activeRole); });
   elements.reportForm.addEventListener('submit', submitReport);
   elements.literatureForm.addEventListener('submit', submitLiterature);
+  elements.courseForm.addEventListener('submit', submitCourse);
+  elements.courseConfirmForm.addEventListener('submit', function (event) { event.preventDefault(); submitCourseReview('confirm'); });
+  elements.courseSupplementButton.addEventListener('click', function () { submitCourseReview('supplement'); });
+  elements.feedbackForm.addEventListener('submit', submitTeacherFeedback);
   elements.reportForm.addEventListener('input', function () { saveDraft(elements.reportForm, draftKeys.report); });
   elements.literatureForm.addEventListener('input', function () { saveDraft(elements.literatureForm, draftKeys.literature); });
+  elements.courseForm.addEventListener('input', function () {
+    const lessonId = elements.courseLessonId.value;
+    if (lessonId) saveDraft(elements.courseForm, courseDraftKey(lessonId));
+  });
   elements.searchForm.addEventListener('submit', runSearch);
   elements.logoutButton.addEventListener('click', function () {
     sessionStorage.removeItem('er2-session');
     sessionStorage.removeItem('er2-request-report');
     sessionStorage.removeItem('er2-request-literature');
+    sessionStorage.removeItem(draftKeys.feedbackRequest);
+    sessionStorage.removeItem(draftKeys.courseRequest);
+    sessionStorage.removeItem(draftKeys.courseReviewRequest);
     state.session = '';
     location.href = API_BASE + '/auth/launch?returnTo=' + encodeURIComponent(location.origin + location.pathname);
   });
