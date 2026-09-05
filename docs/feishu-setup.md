@@ -43,9 +43,10 @@ npx wrangler deploy
 ~~~bash
 npx wrangler secret put FEISHU_APP_SECRET
 npx wrangler secret put SESSION_SECRET
+npx wrangler secret put FEISHU_BASE_WIKI_TOKEN
 ~~~
 
-SESSION_SECRET 使用至少32字节随机字符串。不要把以上值写入 GitHub。
+SESSION_SECRET 使用至少32字节随机字符串。所有 `*_BASE_APP_TOKEN`、`*_BASE_WIKI_TOKEN` 也按加密 Secret 管理；不使用的项无需设置。不要把这些值写入 GitHub 或 `wrangler.jsonc`。
 
 设置普通 Variables：
 
@@ -54,8 +55,6 @@ SESSION_SECRET 使用至少32字节随机字符串。不要把以上值写入 Gi
 | FRONTEND_URL | https://1zjj.github.io/ER2_Lab_End/ |
 | FEISHU_REDIRECT_URI | Worker 的 /auth/callback 完整地址 |
 | FEISHU_APP_ID | 飞书自建应用 App ID（非密钥） |
-| FEISHU_BASE_APP_TOKEN | 所有表位于同一 Base 时使用的兼容 app token，可选 |
-| FEISHU_BASE_WIKI_TOKEN | 多维表格 URL 以 `/wiki/` 开头时使用的知识库节点 token；Worker 会解析实际 app token |
 | BOOTSTRAP_FIRST_USER | 首次空表登录时自动登记唯一测试账号；完成首个账号验收后改为 `false` |
 | BOOTSTRAP_ADMIN_NAME | 可选覆盖：允许自动登记为管理者的飞书姓名；代码默认仅允许 `朱俊杰` |
 | PILOT_AUTO_PROVISION | 两人试运行期间设为 `true`，仅对飞书应用可用范围内的新增账号自动登记为学生；两人完成首次登录后改为 `false` |
@@ -69,10 +68,11 @@ SESSION_SECRET 使用至少32字节随机字符串。不要把以上值写入 Gi
 | LINKS_BASE_APP_TOKEN / LINKS_TABLE_ID | 门户链接表的 app token / table id，可选 |
 | AUTOMATION_LOGS_BASE_APP_TOKEN / AUTOMATION_LOGS_TABLE_ID | 自动化日志表的 app token / table id，可选 |
 | PROFESSOR_OPEN_ID | 接收周五摘要的教授 open_id，可选 |
+| COURSE_REVIEWER_OPEN_ID | 朱俊杰的 open_id；只有该账号可以确认 Track A 课程记录 |
 
-ER² Lab 当前数据分布在多套 Base 中，因此优先使用每张表对应的 `*_BASE_APP_TOKEN`。仅当全部表都在同一套 Base 中时，才使用兼容变量 `FEISHU_BASE_APP_TOKEN`。
+ER² Lab 当前数据分布在多套 Base 中，因此优先为每张表设置对应的加密 Secret：`MEMBERS_BASE_APP_TOKEN`、`WEEKLY_BASE_APP_TOKEN`、`LITERATURE_BASE_APP_TOKEN` 等。仅当全部表都在同一套 Base 中时，才使用兼容 Secret `FEISHU_BASE_APP_TOKEN`。
 
-如果某张表位于知识库，可把对应 `*_BASE_APP_TOKEN` 换成 `*_BASE_WIKI_TOKEN`；全部核心表位于同一个知识库节点时可统一填写 `FEISHU_BASE_WIKI_TOKEN`。
+如果某张表位于知识库，可把对应 `*_BASE_APP_TOKEN` 换成加密 Secret `*_BASE_WIKI_TOKEN`；全部核心表位于同一个知识库节点时可统一设置 `FEISHU_BASE_WIKI_TOKEN`。
 
 ## 4. 启用真实数据
 
@@ -86,3 +86,16 @@ ER² Lab 当前数据分布在多套 Base 中，因此优先使用每张表对�
 2. 朱俊杰：学生、教师、管理者角色，可切换三个视图并查看共享文献阅读。
 
 两人完成首次授权后，立即把 `BOOTSTRAP_FIRST_USER` 和 `PILOT_AUTO_PROVISION` 都改为 `false`。还应测试停用成员无法继续写入、学生直接请求教师接口返回403、同一周重复提交更新原记录、文献提交重试不重复建记录，以及飞书移动端可正常打开。
+
+## 6. Track A 课程记录
+
+在课程进度表中按 `docs/data-schema.md` 增加纯文字提交、确认与结业通知字段。设置：
+
+- `COURSES_TABLE_ID`：课程进度表 table id。
+- `COURSES_BASE_APP_TOKEN` 或 `COURSES_BASE_WIKI_TOKEN`：课程表所在 Base 的标识，必须放在 Cloudflare Secret。
+- `COURSE_REVIEWER_OPEN_ID`：朱俊杰的 open_id。
+- `PROFESSOR_OPEN_ID`：陈铮一教授的 open_id。
+
+Lesson 01–10 每名学生各保留一条记录。Lesson 01–09 提交核心收获、问题与处理、其他；Lesson 10 额外提交课程总结。全部十课由朱俊杰确认后，Worker 仅向陈铮一教授发送一次结业消息。
+
+学生只收到自己的课程记录；朱俊杰、陈铮一教授的全量查看权限在 Worker 服务端判断。不要把课程记录表直接共享给普通学生。
