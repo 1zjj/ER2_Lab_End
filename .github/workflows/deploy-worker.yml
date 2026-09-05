@@ -67,3 +67,11 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: worker
           command: deploy
+
+      - name: Verify deployed Worker
+        run: |
+          for attempt in 1 2 3; do
+            curl --fail --silent --show-error --max-time 20 https://er2-lab-api.zhujunjie418.workers.dev/health && exit 0
+            sleep 5
+          done
+          exit 1
