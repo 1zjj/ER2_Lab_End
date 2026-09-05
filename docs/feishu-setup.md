@@ -67,7 +67,7 @@ SESSION_SECRET 使用至少32字节随机字符串。所有 `*_BASE_APP_TOKEN`�
 | TASKS_BASE_APP_TOKEN / TASKS_TABLE_ID | 任务表的 app token / table id |
 | LINKS_BASE_APP_TOKEN / LINKS_TABLE_ID | 门户链接表的 app token / table id，可选 |
 | AUTOMATION_LOGS_BASE_APP_TOKEN / AUTOMATION_LOGS_TABLE_ID | 自动化日志表的 app token / table id，可选 |
-| PROFESSOR_OPEN_ID | 接收周五摘要的教授 open_id，可选 |
+| PROFESSOR_OPEN_ID | 接收周五摘要和 Track A 结业通知的教授 open_id；启用课程流程时必填 |
 | COURSE_REVIEWER_OPEN_ID | 朱俊杰的 open_id；只有该账号可以确认 Track A 课程记录 |
 
 ER² Lab 当前数据分布在多套 Base 中，因此优先为每张表设置对应的加密 Secret：`MEMBERS_BASE_APP_TOKEN`、`WEEKLY_BASE_APP_TOKEN`、`LITERATURE_BASE_APP_TOKEN` 等。仅当全部表都在同一套 Base 中时，才使用兼容 Secret `FEISHU_BASE_APP_TOKEN`。
@@ -97,5 +97,7 @@ ER² Lab 当前数据分布在多套 Base 中，因此优先为每张表设置�
 - `PROFESSOR_OPEN_ID`：陈铮一教授的 open_id。
 
 Lesson 01–10 每名学生各保留一条记录。Lesson 01–09 提交核心收获、问题与处理、其他；Lesson 10 额外提交课程总结。全部十课由朱俊杰确认后，Worker 仅向陈铮一教授发送一次结业消息。
+
+`/health` 只有在课程表、朱俊杰 OpenID 和陈铮一 OpenID 均配置完成时才返回 `courseConfigured: true`。结业通知同时使用飞书消息 `uuid` 幂等参数、课程表持久状态和同一学生串行确认锁。通知发送失败时不会自动重发；管理员核实后可在飞书后台清空结业通知状态，再重新确认触发一次人工重试。
 
 学生只收到自己的课程记录；朱俊杰、陈铮一教授的全量查看权限在 Worker 服务端判断。不要把课程记录表直接共享给普通学生。

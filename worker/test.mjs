@@ -13,7 +13,10 @@ assert.deepEqual(await health.json(), {
   configured: false,
   authConfigured: false,
   dataConfigured: false,
-  literatureConfigured: false
+  literatureConfigured: false,
+  courseConfigured: false,
+  courseDataConfigured: false,
+  courseAccessConfigured: false
 });
 
 const authOnlyHealth = await service.fetch(new Request('https://api.example/health'), {
@@ -28,7 +31,10 @@ assert.deepEqual(await authOnlyHealth.json(), {
   configured: false,
   authConfigured: true,
   dataConfigured: false,
-  literatureConfigured: false
+  literatureConfigured: false,
+  courseConfigured: false,
+  courseDataConfigured: false,
+  courseAccessConfigured: false
 });
 
 const multiBaseHealth = await service.fetch(new Request('https://api.example/health'), {
@@ -41,7 +47,11 @@ const multiBaseHealth = await service.fetch(new Request('https://api.example/hea
   WEEKLY_BASE_APP_TOKEN: 'bas_weekly',
   WEEKLY_TABLE_ID: 'tbl_weekly',
   LITERATURE_BASE_APP_TOKEN: 'bas_literature',
-  LITERATURE_TABLE_ID: 'tbl_literature'
+  LITERATURE_TABLE_ID: 'tbl_literature',
+  COURSES_BASE_APP_TOKEN: 'bas_courses',
+  COURSES_TABLE_ID: 'tbl_courses',
+  COURSE_REVIEWER_OPEN_ID: 'ou_junjie',
+  PROFESSOR_OPEN_ID: 'ou_professor'
 });
 assert.equal((await multiBaseHealth.json()).configured, true);
 
@@ -53,7 +63,10 @@ const wikiBaseHealth = await service.fetch(new Request('https://api.example/heal
   FEISHU_BASE_WIKI_TOKEN: 'wik_test',
   MEMBERS_TABLE_ID: 'tbl_members',
   WEEKLY_TABLE_ID: 'tbl_weekly',
-  LITERATURE_TABLE_ID: 'tbl_literature'
+  LITERATURE_TABLE_ID: 'tbl_literature',
+  COURSES_TABLE_ID: 'tbl_courses',
+  COURSE_REVIEWER_OPEN_ID: 'ou_junjie',
+  PROFESSOR_OPEN_ID: 'ou_professor'
 });
 assert.equal((await wikiBaseHealth.json()).configured, true);
 
@@ -92,6 +105,7 @@ async function makeSession(sub, name, roles) {
 const signature = Buffer.from(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(encoded))).toString('base64url');
 const session = encoded + '.' + signature;
 const studentSession = await makeSession('ou_student', '测试学生', ['student']);
+const otherStudentSession = await makeSession('ou_other_student', '其他学生', ['student']);
 const reviewerSession = await makeSession('ou_junjie', '朱俊杰', ['student', 'teacher', 'manager']);
 const professorSession = await makeSession('ou_professor', '陈铮一', ['teacher']);
 const originalFetch = globalThis.fetch;
@@ -151,6 +165,9 @@ globalThis.fetch = async (url, options = {}) => {
       } },
       { record_id: 'rec_student', fields: {
         '姓名': '测试学生', '飞书OpenID': 'ou_student', '角色': ['学生'], '负责教师OpenID': 'ou_teacher', '项目编号': 'P03', '课程方向': '语义导航', '是否启用': true
+      } },
+      { record_id: 'rec_other_student', fields: {
+        '姓名': '其他学生', '飞书OpenID': 'ou_other_student', '角色': ['学生'], '负责教师OpenID': 'ou_teacher', '项目编号': 'P04', '课程方向': '语义导航', '是否启用': true
       } },
       { record_id: 'rec_junjie', fields: {
         '姓名': '朱俊杰', '飞书OpenID': 'ou_junjie', '角色': ['学生', '教师', '管理者'], '是否启用': true
@@ -269,7 +286,7 @@ assert.deepEqual(submittedDashboardBody.student.report.values, {
   nextPlan: '继续验证'
 });
 assert.equal(submittedDashboardBody.student.history[0].weekId, initialDashboardBody.week.id);
-assert.equal(submittedDashboardBody.teacher.students.length, 1);
+assert.equal(submittedDashboardBody.teacher.students.length, 2);
 assert.equal(submittedDashboardBody.teacher.students[0].currentReport.recordId, 'rec_student_report');
 assert.equal(submittedDashboardBody.catalog[0].title, 'ER²知识库');
 
@@ -326,6 +343,18 @@ assert.equal(teacherReview.status, 200);
 assert.equal(postedReview['教师反馈'], '请补充参数对照实验。');
 assert.equal(postedReview['反馈请求ID'], 'review-test-request');
 
+const noCourseIdentityEnv = { ...literatureEnv, COURSE_REVIEWER_OPEN_ID: '', PROFESSOR_OPEN_ID: '' };
+const nameFallbackCannotConfirm = await service.fetch(new Request('https://api.example/api/courses/confirm', {
+  method: 'POST',
+  headers: { Authorization: 'Bearer ' + reviewerSession, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ recordId: 'missing', action: 'confirm', comment: '' })
+}), noCourseIdentityEnv);
+assert.equal(nameFallbackCannotConfirm.status, 403);
+const nameFallbackCannotView = await service.fetch(new Request('https://api.example/api/dashboard?role=teacher', {
+  headers: { Authorization: 'Bearer ' + professorSession }
+}), noCourseIdentityEnv);
+assert.equal((await nameFallbackCannotView.json()).teacher.courseReview.visible, false);
+
 const courseSubmission = await service.fetch(new Request('https://api.example/api/courses/submit', {
   method: 'POST',
   headers: { Authorization: 'Bearer ' + studentSession, 'Content-Type': 'application/json', 'X-Request-ID': 'course-01-request' },
@@ -337,13 +366,28 @@ assert.equal(postedCourse['Lesson'], '01');
 assert.equal(postedCourse['核心收获'], '理解仿真环境与系统结构。');
 assert.equal(postedCourse['状态'], '等待朱俊杰确认');
 
+courseItems.push({ record_id: 'rec_other_course_01', fields: {
+  '飞书OpenID': 'ou_other_student', '姓名': '其他学生', 'Track': 'Track A｜感知与语义导航',
+  'Lesson': '01', '课程名称': 'Lesson 01｜仿真与系统结构', '核心收获': '其他学生的私有内容',
+  '问题与处理': '无', '状态': '朱俊杰已确认'
+} });
+
 const studentCourseDashboard = await service.fetch(new Request('https://api.example/api/dashboard?role=student', {
   headers: { Authorization: 'Bearer ' + studentSession }
 }), literatureEnv);
 const studentCourseBody = await studentCourseDashboard.json();
 assert.equal(studentCourseBody.student.course.total, 10);
 assert.equal(studentCourseBody.student.course.lessons[0].status, 'submitted');
+assert.equal(studentCourseBody.student.course.lessons[0].coreLearning, '理解仿真环境与系统结构。');
 assert.equal(studentCourseBody.teacher.courseReview.visible, false);
+
+const otherStudentDashboard = await service.fetch(new Request('https://api.example/api/dashboard?role=student', {
+  headers: { Authorization: 'Bearer ' + otherStudentSession }
+}), literatureEnv);
+const otherStudentBody = await otherStudentDashboard.json();
+assert.equal(otherStudentBody.student.course.lessons[0].status, 'confirmed');
+assert.equal(otherStudentBody.student.course.lessons[0].coreLearning, '其他学生的私有内容');
+assert.equal(otherStudentBody.teacher.courseReview.visible, false);
 
 const professorCannotConfirm = await service.fetch(new Request('https://api.example/api/courses/confirm', {
   method: 'POST',
@@ -383,7 +427,17 @@ assert.equal(finalConfirmationBody.completion.completed, true);
 assert.equal(finalConfirmationBody.completion.notified, true);
 assert.equal(sentMessages.length, 1);
 assert.equal(sentMessages[0].receive_id, 'ou_professor');
+assert.match(sentMessages[0].uuid, /^[0-9a-f]{32}$/);
 assert.match(JSON.parse(sentMessages[0].content).text, /测试学生同学已完成“感知与语义导航”课程培训/);
+
+const duplicateFinalConfirmation = await service.fetch(new Request('https://api.example/api/courses/confirm', {
+  method: 'POST',
+  headers: { Authorization: 'Bearer ' + reviewerSession, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ recordId: 'rec_course_10', action: 'confirm', comment: '重复确认不应再次通知。' })
+}), literatureEnv);
+assert.equal(duplicateFinalConfirmation.status, 200);
+assert.equal((await duplicateFinalConfirmation.json()).deduplicated, true);
+assert.equal(sentMessages.length, 1);
 
 const professorDashboard = await service.fetch(new Request('https://api.example/api/dashboard?role=teacher', {
   headers: { Authorization: 'Bearer ' + professorSession }
@@ -391,7 +445,34 @@ const professorDashboard = await service.fetch(new Request('https://api.example/
 const professorDashboardBody = await professorDashboard.json();
 assert.equal(professorDashboardBody.teacher.courseReview.visible, true);
 assert.equal(professorDashboardBody.teacher.courseReview.canConfirm, false);
-assert.equal(professorDashboardBody.teacher.courseReview.submissions.length, 10);
+assert.equal(professorDashboardBody.teacher.courseReview.submissions.length, 11);
+
+const managerDashboard = await service.fetch(new Request('https://api.example/api/dashboard?role=manager', {
+  headers: { Authorization: 'Bearer ' + reviewerSession }
+}), literatureEnv);
+assert.equal((await managerDashboard.json()).manager.stats.courses, 1);
+
+for (let lesson = 2; lesson <= 9; lesson += 1) {
+  courseItems.push({ record_id: 'rec_other_course_' + lesson, fields: {
+    '飞书OpenID': 'ou_other_student', '姓名': '其他学生', 'Track': 'Track A｜感知与语义导航',
+    'Lesson': String(lesson).padStart(2, '0'), '课程名称': 'Lesson ' + String(lesson).padStart(2, '0'),
+    '核心收获': '课程收获', '问题与处理': '无', '状态': '朱俊杰已确认'
+  } });
+}
+courseItems.push({ record_id: 'rec_other_course_10', fields: {
+  '飞书OpenID': 'ou_other_student', '姓名': '其他学生', 'Track': 'Track A｜感知与语义导航',
+  'Lesson': '10', '课程名称': 'Lesson 10｜综合实验与课程总结', '核心收获': '理解完整流程',
+  '问题与处理': '完成问题复盘', '课程总结': '完成课程总结。', '状态': '等待朱俊杰确认'
+} });
+const concurrentConfirmations = await Promise.all([1, 2].map(() => service.fetch(new Request('https://api.example/api/courses/confirm', {
+  method: 'POST',
+  headers: { Authorization: 'Bearer ' + reviewerSession, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ recordId: 'rec_other_course_10', action: 'confirm', comment: '并发确认测试。' })
+}), literatureEnv)));
+assert.deepEqual(concurrentConfirmations.map((response) => response.status), [200, 200]);
+assert.equal(sentMessages.length, 2);
+assert.notEqual(sentMessages[1].uuid, sentMessages[0].uuid);
+assert.match(JSON.parse(sentMessages[1].content).text, /其他学生同学已完成/);
 
 memberEnabled = false;
 const disabledPost = await service.fetch(new Request('https://api.example/api/literature', {

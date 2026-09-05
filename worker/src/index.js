@@ -3,6 +3,7 @@ const FEISHU_AUTHORIZE = 'https://accounts.feishu.cn/open-apis/authen/v1/authori
 const wikiTokenCache = new Map();
 const requestIds = new WeakMap();
 const writeRateBuckets = new Map();
+const courseConfirmationLocks = new Map();
 let tenantTokenCache = { token: '', expiresAt: 0 };
 const LITERATURE_TABLE_FALLBACK = 'tblyHLZpybGVU364';
 const TRACK_A_ID = 'track-a';
@@ -32,18 +33,25 @@ export default {
         const membersBinding = resolveTableBinding(env, 'MEMBERS_TABLE_ID');
         const weeklyBinding = resolveTableBinding(env, 'WEEKLY_TABLE_ID');
         const literatureBinding = resolveTableBinding(env, 'LITERATURE_TABLE_ID');
+        const coursesBinding = resolveTableBinding(env, 'COURSES_TABLE_ID');
         const coreDataConfigured = Boolean(
           (membersBinding.appToken || membersBinding.wikiToken) && membersBinding.tableId &&
           (weeklyBinding.appToken || weeklyBinding.wikiToken) && weeklyBinding.tableId
         );
         const literatureConfigured = Boolean((literatureBinding.appToken || literatureBinding.wikiToken) && literatureBinding.tableId);
+        const courseDataConfigured = Boolean((coursesBinding.appToken || coursesBinding.wikiToken) && coursesBinding.tableId);
+        const courseAccessConfigured = Boolean(env.COURSE_REVIEWER_OPEN_ID && env.PROFESSOR_OPEN_ID);
+        const courseConfigured = courseDataConfigured && courseAccessConfigured;
         return json(request, env, {
           ok: true,
           service: 'er2-lab-api',
-          configured: authConfigured && coreDataConfigured && literatureConfigured,
+          configured: authConfigured && coreDataConfigured && literatureConfigured && courseConfigured,
           authConfigured,
           dataConfigured: coreDataConfigured,
-          literatureConfigured
+          literatureConfigured,
+          courseConfigured,
+          courseDataConfigured,
+          courseAccessConfigured
         });
       }
       if (url.pathname === '/auth/launch') return await launchAuth(request, env);
@@ -452,13 +460,11 @@ function buildTrackAStudentCourse(session, records) {
 }
 
 function isCourseReviewer(session, env) {
-  if (env.COURSE_REVIEWER_OPEN_ID) return String(session.sub) === String(env.COURSE_REVIEWER_OPEN_ID);
-  return session.name === '朱俊杰' && session.roles.includes('manager');
+  return Boolean(env.COURSE_REVIEWER_OPEN_ID) && String(session.sub) === String(env.COURSE_REVIEWER_OPEN_ID);
 }
 
 function isCourseProfessor(session, env) {
-  if (env.PROFESSOR_OPEN_ID) return String(session.sub) === String(env.PROFESSOR_OPEN_ID);
-  return session.name === '陈铮一' && session.roles.includes('teacher');
+  return Boolean(env.PROFESSOR_OPEN_ID) && String(session.sub) === String(env.PROFESSOR_OPEN_ID);
 }
 
 function buildCourseReview(session, members, records, env) {
@@ -589,7 +595,7 @@ function buildManager(members, projects, courses, env) {
     stats: {
       members: members.filter((member) => member.enabled !== false).length,
       projects: projects.filter((record) => !['归档', '已结束'].includes(field(record, '状态'))).length,
-      courses: new Set(courses.map((record) => field(record, '课程名称', 'Lesson')).filter(Boolean)).size
+      courses: 1
     },
     automations: [
       { name: '未交周报提醒', trigger: '周五 11:00', target: '未交学生', status: env.PROFESSOR_OPEN_ID ? '已配置' : '待配置' },
@@ -649,25 +655,72 @@ async function confirmCourseSubmission(request, env, session) {
   validateText(body.comment, '确认说明', body.action === 'supplement' ? 1 : 0, 3000);
 
   const tenantToken = await getTenantToken(env);
-  const records = await listRecords(env, tenantToken, 'COURSES_TABLE_ID');
-  const target = records.find((record) => record.record_id === body.recordId && courseLessonId(record));
-  if (!target) throw httpError(404, '课程提交记录不存在');
-  const status = body.action === 'confirm' ? '朱俊杰已确认' : '需要补充';
-  const confirmedAt = new Date().toISOString();
-  await updateRecord(env, tenantToken, 'COURSES_TABLE_ID', target.record_id, {
-    '状态': status,
-    '确认说明': clean(body.comment),
-    '确认人': session.name,
-    '确认人OpenID': session.sub,
-    '确认时间': confirmedAt
-  });
+  const initialRecords = await listRecords(env, tenantToken, 'COURSES_TABLE_ID');
+  const initialTarget = initialRecords.find((record) => record.record_id === body.recordId && courseLessonId(record));
+  if (!initialTarget) throw httpError(404, '课程提交记录不存在');
+  const studentOpenId = String(field(initialTarget, '飞书OpenID', '人员OpenID', 'OpenID'));
+  if (!studentOpenId) throw httpError(409, '课程记录缺少学生身份，无法确认');
 
-  let completion = { completed: false, notified: false };
-  if (body.action === 'confirm') {
-    target.fields = { ...(target.fields || {}), '状态': status, '确认时间': confirmedAt };
-    completion = await completeTrackAIfReady(env, tenantToken, records, target);
+  return withCourseConfirmationLock(studentOpenId, async () => {
+    const records = await listRecords(env, tenantToken, 'COURSES_TABLE_ID');
+    const target = records.find((record) => record.record_id === body.recordId && courseLessonId(record));
+    if (!target) throw httpError(404, '课程提交记录不存在');
+    const currentStatus = courseStatus(target);
+    if (currentStatus === 'confirmed') {
+      if (body.action === 'supplement') throw httpError(409, '本课已经确认；如需退回，请先由管理员在飞书后台解除确认');
+      const completion = completionState(records, target);
+      return json(request, env, { ok: true, status: '朱俊杰已确认', completion, deduplicated: true });
+    }
+
+    const status = body.action === 'confirm' ? '朱俊杰已确认' : '需要补充';
+    const confirmedAt = new Date().toISOString();
+    await updateRecord(env, tenantToken, 'COURSES_TABLE_ID', target.record_id, {
+      '状态': status,
+      '确认说明': clean(body.comment),
+      '确认人': session.name,
+      '确认人OpenID': session.sub,
+      '确认时间': confirmedAt
+    });
+
+    let completion = { completed: false, notified: false };
+    if (body.action === 'confirm') {
+      target.fields = { ...(target.fields || {}), '状态': status, '确认时间': confirmedAt };
+      completion = await completeTrackAIfReady(env, tenantToken, records, target);
+    }
+    return json(request, env, { ok: true, status, completion });
+  });
+}
+
+async function withCourseConfirmationLock(studentOpenId, task) {
+  const key = String(studentOpenId);
+  const previous = courseConfirmationLocks.get(key) || Promise.resolve();
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const tail = previous.then(() => gate);
+  courseConfirmationLocks.set(key, tail);
+  await previous;
+  try {
+    return await task();
+  } finally {
+    release();
+    if (courseConfirmationLocks.get(key) === tail) courseConfirmationLocks.delete(key);
   }
-  return json(request, env, { ok: true, status, completion });
+}
+
+function completionState(records, target) {
+  const studentOpenId = String(field(target, '飞书OpenID', '人员OpenID', 'OpenID'));
+  const studentRecords = records.filter((record) =>
+    String(field(record, '飞书OpenID', '人员OpenID', 'OpenID')) === studentOpenId && courseLessonId(record)
+  );
+  const confirmedIds = new Set(studentRecords.filter((record) => courseStatus(record) === 'confirmed').map(courseLessonId));
+  const completed = TRACK_A_LESSONS.every((lesson) => confirmedIds.has(lesson.id));
+  const finalRecord = studentRecords.find((record) => courseLessonId(record) === '10');
+  const notificationStatus = clean(field(finalRecord, '结业通知状态'));
+  return {
+    completed,
+    notified: notificationStatus === '已发送',
+    notificationStatus
+  };
 }
 
 async function completeTrackAIfReady(env, tenantToken, records, target) {
@@ -682,17 +735,25 @@ async function completeTrackAIfReady(env, tenantToken, records, target) {
   const finalRecord = studentRecords.find((record) => courseLessonId(record) === '10');
   if (!finalRecord) return { completed: false, notified: false };
   const notificationStatus = clean(field(finalRecord, '结业通知状态'));
-  if (notificationStatus === '已发送' || notificationStatus === '发送中') {
-    return { completed: true, notified: notificationStatus === '已发送' };
+  if (['已发送', '发送中', '发送失败'].includes(notificationStatus)) {
+    return { completed: true, notified: notificationStatus === '已发送', notificationStatus };
   }
 
   const completedAt = new Date().toISOString();
+  const notificationAttemptId = await stableMessageUuid('track-a-completion:' + studentOpenId);
   await updateRecord(env, tenantToken, 'COURSES_TABLE_ID', finalRecord.record_id, {
     '结业状态': '已完成',
     '课程完成时间': completedAt,
-    '结业通知状态': env.PROFESSOR_OPEN_ID ? '发送中' : '待配置'
+    '结业通知状态': env.PROFESSOR_OPEN_ID ? '发送中' : '待配置',
+    '结业通知尝试ID': notificationAttemptId
   });
   if (!env.PROFESSOR_OPEN_ID) return { completed: true, notified: false, warning: '教授接收账号尚未配置' };
+
+  const latestRecords = await listRecords(env, tenantToken, 'COURSES_TABLE_ID');
+  const latestFinalRecord = latestRecords.find((record) => record.record_id === finalRecord.record_id);
+  if (clean(field(latestFinalRecord, '结业通知尝试ID')) !== notificationAttemptId || clean(field(latestFinalRecord, '结业通知状态')) !== '发送中') {
+    return { completed: true, notified: clean(field(latestFinalRecord, '结业通知状态')) === '已发送', notificationStatus: clean(field(latestFinalRecord, '结业通知状态')) };
+  }
 
   const message = [
     '【ER² Lab 培训完成通知】',
@@ -701,7 +762,7 @@ async function completeTrackAIfReady(env, tenantToken, records, target) {
     '完成日期：' + formatRecordDate(completedAt)
   ].join('\n');
   try {
-    const result = await sendText(env, tenantToken, env.PROFESSOR_OPEN_ID, message);
+    const result = await sendText(env, tenantToken, env.PROFESSOR_OPEN_ID, message, notificationAttemptId);
     await updateRecord(env, tenantToken, 'COURSES_TABLE_ID', finalRecord.record_id, {
       '结业通知状态': '已发送',
       '结业通知时间': new Date().toISOString(),
@@ -911,13 +972,23 @@ async function updateRecord(env, token, tableBinding, recordId, fields) {
   });
 }
 
-async function sendText(env, token, openId, text) {
+async function sendText(env, token, openId, text, uuid = '') {
   if (!openId) return;
   return feishuRequest('/im/v1/messages?receive_id_type=open_id', {
     method: 'POST',
     bearer: token,
-    body: { receive_id: openId, msg_type: 'text', content: JSON.stringify({ text }) }
+    body: {
+      receive_id: openId,
+      msg_type: 'text',
+      content: JSON.stringify({ text }),
+      ...(uuid ? { uuid } : {})
+    }
   });
+}
+
+async function stableMessageUuid(value) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(value)));
+  return [...new Uint8Array(digest)].slice(0, 16).map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 async function automationAlreadyRan(env, token, runKey) {

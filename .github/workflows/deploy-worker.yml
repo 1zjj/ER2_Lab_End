@@ -71,7 +71,15 @@ jobs:
       - name: Verify deployed Worker
         run: |
           for attempt in 1 2 3; do
-            curl --fail --silent --show-error --max-time 20 https://er2-lab-api.zhujunjie418.workers.dev/health && exit 0
+            health_json="$(curl --fail --silent --show-error --max-time 20 https://er2-lab-api.zhujunjie418.workers.dev/health)" || true
+            if HEALTH_JSON="$health_json" node -e '
+              const health = JSON.parse(process.env.HEALTH_JSON || "{}");
+              if (!health.ok || !health.configured || !health.courseConfigured) process.exit(1);
+            '; then
+              echo "$health_json"
+              exit 0
+            fi
             sleep 5
           done
+          echo "Worker health check did not reach fully configured state."
           exit 1
