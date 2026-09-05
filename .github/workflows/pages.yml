@@ -23,6 +23,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Verify frontend
+        run: |
+          node --check app.js
+          test -f index.html
+          test -f styles.css
+          test -f data/catalog.json
       - name: Configure Pages
         uses: actions/configure-pages@v5
         with:
