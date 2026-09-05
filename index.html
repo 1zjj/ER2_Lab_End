@@ -7,7 +7,7 @@
   <meta name="description" content="ER² Lab 学生、教师与管理者的一页式飞书工作台">
   <title>ER² Lab 工作台</title>
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="./styles.css?v=20260904-hotfix2">
+  <link rel="stylesheet" href="./styles.css?v=20260905-track-a">
 </head>
 <body>
   <header class="topbar">
@@ -80,13 +80,36 @@
 
   <dialog class="modal literature-detail-modal" id="report-history-dialog">
     <div class="modal-head">
-      <div><p class="kicker">REPORT HISTORY</p><h2>历史周报</h2><p>最近提交记录</p></div>
+      <div><p class="kicker">REPORT HISTORY</p><h2>历史周报</h2><p>最近 12 次提交与教师反馈</p></div>
       <button class="icon-button" type="button" data-close-dialog="report-history-dialog" aria-label="关闭">×</button>
     </div>
     <div class="dialog-scroll" id="report-history-body"></div>
     <div class="modal-actions">
       <button class="button button-secondary" type="button" data-close-dialog="report-history-dialog">关闭</button>
     </div>
+  </dialog>
+
+  <dialog class="modal course-modal" id="course-dialog">
+    <form id="course-form">
+      <input id="course-lesson-id" name="lessonId" type="hidden">
+      <div class="modal-head">
+        <div><p class="kicker">TRACK A RECORD</p><h2 id="course-dialog-title">提交课程记录</h2><p id="course-dialog-prompt"></p></div>
+        <button class="icon-button" type="button" data-close-dialog="course-dialog" aria-label="关闭">×</button>
+      </div>
+      <div class="form-body">
+        <p class="course-confirmation-note" id="course-confirmation-note" hidden></p>
+        <label>核心收获 *<textarea name="coreLearning" required maxlength="3000" rows="5" placeholder="填写本课理解和掌握的主要内容"></textarea></label>
+        <label>问题与处理 *<textarea name="problems" required maxlength="3000" rows="4" placeholder="填写问题、原因和处理方法；没有可填写“无”"></textarea></label>
+        <label id="course-summary-field" hidden>课程总结 *<textarea name="courseSummary" maxlength="3000" rows="5" placeholder="总结已经掌握的内容、仍需加强的内容"></textarea></label>
+        <label>其他<textarea name="other" maxlength="3000" rows="3" placeholder="选填：个人思考、未解决事项或后续学习计划"></textarea></label>
+        <p class="form-hint">课程记录只对本人、管理员朱俊杰和陈铮一教授可见，不支持图片、视频、代码或附件上传。</p>
+        <p class="form-error" id="course-error" role="alert" hidden></p>
+      </div>
+      <div class="modal-actions">
+        <button class="button button-secondary" type="button" data-close-dialog="course-dialog">关闭</button>
+        <button class="button button-primary" id="course-submit" type="submit">正式提交</button>
+      </div>
+    </form>
   </dialog>
 
   <dialog class="modal literature-modal" id="literature-dialog">
@@ -140,8 +163,48 @@
     </div>
   </dialog>
 
+  <dialog class="modal literature-detail-modal" id="student-detail-dialog">
+    <div class="modal-head">
+      <div><p class="kicker">STUDENT REPORT</p><h2 id="student-detail-title">学生周报</h2><p id="student-detail-meta"></p></div>
+      <button class="icon-button" type="button" data-close-dialog="student-detail-dialog" aria-label="关闭">×</button>
+    </div>
+    <div class="dialog-scroll" id="student-detail-body"></div>
+    <form class="teacher-feedback-form" id="teacher-feedback-form">
+      <input id="feedback-record-id" name="recordId" type="hidden">
+      <div class="form-body feedback-body">
+        <label>教师反馈<textarea id="feedback-comment" name="comment" required maxlength="3000" rows="4" placeholder="填写建议、需要补充的证据或下一步要求"></textarea></label>
+        <p class="form-error" id="feedback-error" role="alert" hidden></p>
+      </div>
+      <div class="modal-actions">
+        <button class="button button-secondary" type="button" data-close-dialog="student-detail-dialog">取消</button>
+        <button class="button button-primary" id="feedback-submit" type="submit">保存教师反馈</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="modal literature-detail-modal" id="course-review-dialog">
+    <div class="modal-head">
+      <div><p class="kicker">COURSE CONFIRMATION</p><h2 id="course-review-title">课程记录</h2><p id="course-review-meta"></p></div>
+      <button class="icon-button" type="button" data-close-dialog="course-review-dialog" aria-label="关闭">×</button>
+    </div>
+    <div class="dialog-scroll" id="course-review-body"></div>
+    <form class="teacher-feedback-form" id="course-confirm-form">
+      <input id="course-review-record-id" name="recordId" type="hidden">
+      <div class="form-body feedback-body">
+        <label>确认说明<textarea id="course-review-comment" name="comment" maxlength="3000" rows="4" placeholder="确认完成时可选填；要求补充时必须说明需要补充的内容"></textarea></label>
+        <p class="form-error" id="course-review-error" role="alert" hidden></p>
+      </div>
+      <div class="modal-actions split-actions">
+        <button class="button button-secondary" type="button" data-close-dialog="course-review-dialog">关闭</button>
+        <span></span>
+        <button class="button button-secondary danger-button" id="course-supplement-button" type="button">需要补充</button>
+        <button class="button button-primary" id="course-confirm-button" type="submit">确认完成</button>
+      </div>
+    </form>
+  </dialog>
+
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="./config.js?v=20260904-hotfix2"></script>
-  <script src="./app.js?v=20260904-hotfix2"></script>
+  <script src="./config.js?v=20260905-track-a"></script>
+  <script src="./app.js?v=20260905-track-a"></script>
 </body>
 </html>
