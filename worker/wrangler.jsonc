@@ -1,9 +1,10 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "er2-lab-api",
-  "main": "src/index.js",
+  "main": "src/runtime.js",
   "compatibility_date": "2026-08-01",
   "workers_dev": true,
+  "keep_vars": true,
   "triggers": {
     "crons": ["0 3 * * 5", "0 10 * * 5"]
   },
@@ -14,6 +15,7 @@
     "BOOTSTRAP_FIRST_USER": "true",
     "PILOT_AUTO_PROVISION": "true",
     "MEMBERS_TABLE_ID": "tblOQuocxzeuTD4Z",
-    "WEEKLY_TABLE_ID": "tblDmIOPDnqfSPDL"
+    "WEEKLY_TABLE_ID": "tblDmIOPDnqfSPDL",
+    "AI_ENABLED": "false"
   }
 }
