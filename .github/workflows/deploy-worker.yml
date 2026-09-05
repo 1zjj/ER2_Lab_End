@@ -73,13 +73,21 @@ jobs:
           for attempt in 1 2 3; do
             health_json="$(curl --fail --silent --show-error --max-time 20 https://er2-lab-api.zhujunjie418.workers.dev/health)" || true
             if HEALTH_JSON="$health_json" node -e '
-              const health = JSON.parse(process.env.HEALTH_JSON || "{}");
-              if (!health.ok || !health.configured || !health.courseConfigured) process.exit(1);
+              let health;
+              try { health = JSON.parse(process.env.HEALTH_JSON || "{}"); }
+              catch (_) { console.error("Health endpoint did not return valid JSON."); process.exit(1); }
+              const names = ["ok", "configured", "authConfigured", "dataConfigured", "literatureConfigured", "courseConfigured", "courseDataConfigured", "courseAccessConfigured"];
+              const flags = Object.fromEntries(names.map((name) => [name, health[name] === true]));
+              console.log("Health configuration flags:", JSON.stringify(flags));
+              console.log("AI paused:", health.ai?.enabled === false, "Verbatim digest:", health.professorDigest?.format === "verbatim-v1");
+              if (!health.ok || !health.configured || !health.courseConfigured) {
+                console.error("Unready checks:", names.filter((name) => !flags[name]).join(", "));
+                process.exit(1);
+              }
             '; then
-              echo "$health_json"
               exit 0
             fi
             sleep 5
           done
-          echo "Worker health check did not reach fully configured state."
+          echo "Worker health check did not reach fully configured state. No test messages were sent."
           exit 1
