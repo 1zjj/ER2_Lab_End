@@ -50,13 +50,22 @@ export default {
     if (path !== '/health' || !response.ok) return response;
     const body = await response.json();
     const deep = await cachedDeepHealth(env);
+    const members = deep.tables?.members || {};
+    const weekly = deep.tables?.weekly || {};
     const headers = new Headers(response.headers);
     return new Response(JSON.stringify({
       ...body,
       deepBaseReadOk: deep.ok === true,
       deepLocatorOk: deep.locator?.ok === true,
-      membersSchemaOk: deep.tables?.members?.schemaOk === true,
-      weeklySchemaOk: deep.tables?.weekly?.schemaOk === true,
+      deepAppMetadataOk: deep.appMetadata?.ok === true,
+      membersTablePresent: members.tablePresent === true,
+      membersFieldsReadable: members.fieldsReadable === true,
+      membersRecordReadable: members.recordReadReadable === true,
+      membersSchemaOk: members.schemaOk === true,
+      weeklyTablePresent: weekly.tablePresent === true,
+      weeklyFieldsReadable: weekly.fieldsReadable === true,
+      weeklyRecordReadable: weekly.recordReadReadable === true,
+      weeklySchemaOk: weekly.schemaOk === true,
       ai: AI_STATUS,
       stabilization: {
         version: 2,
@@ -67,8 +76,8 @@ export default {
           authOk: deep.auth?.ok === true,
           locatorOk: deep.locator?.ok === true,
           appMetadataOk: deep.appMetadata?.ok === true,
-          members: deep.tables?.members || {},
-          weekly: deep.tables?.weekly || {},
+          members,
+          weekly,
           errorStage: deep.errorStage || '',
           errorCode: deep.errorCode || ''
         }
