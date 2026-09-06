@@ -43,10 +43,43 @@ await check('Unicode splitting is lossless', () => {
   assert.equal(splitText(value).join(''), value);
   for (const part of splitText(value)) assert.ok(new TextEncoder().encode(part).length <= 5000);
 });
-await check('all four core fields appear in every submitted student block', () => {
-  const text = JSON.stringify(buildCards(digest));
-  for (const label of ['本周完成', '下周计划', '学习进展', '候选知识点']) assert.ok(text.includes(label));
-  assert.ok(text.includes('未填写（不自动生成）'));
+await check('each student body has exactly progress then next plan', () => {
+  const blocks = buildCards(digest).flatMap((card) => card.elements)
+    .filter((element) => element.text?.tag === 'plain_text').map((element) => element.text.content);
+  for (const student of digest.students) {
+    const fields = blocks.filter((content) => content.startsWith(student.name + ' · '));
+    assert.deepEqual(fields, [`${student.name} · 本周完成\n${student.progress}`, `${student.name} · 下周计划\n${student.nextPlan}`]);
+  }
+});
+await check('empty core fields show exactly the unfilled placeholder', () => {
+  const data = buildDigest({ ...input, reports: [report('empty', 'a', { '本周完成与结果': '  ', '下周计划': '' })] });
+  const blocks = buildCards(data).flatMap((card) => card.elements).map((element) => element.text?.content || '');
+  assert.ok(blocks.includes('学生 A · 本周完成\n未填写'));
+  assert.ok(blocks.includes('学生 A · 下周计划\n未填写'));
+});
+await check('non-core fields stay in source data but never append to student bodies', () => {
+  const source = { ...input, reports: [report('private-fields', 'a', {
+    '学习与方法': '仅保留学习原文', '候选知识点': '仅保留知识原文',
+    '问题与阻塞': '仅保留阻塞原文', '证据链接': 'https://example.com/source-evidence'
+  })] };
+  const before = JSON.stringify(source);
+  const data = buildDigest(source);
+  const rendered = JSON.stringify(buildCards(data, 'https://example.com/workbench/'));
+  for (const hidden of ['学习进展', '候选知识点', '问题与支持', '产出证据',
+    '仅保留学习原文', '仅保留知识原文', '仅保留阻塞原文', 'https://example.com/source-evidence']) {
+    assert.ok(!rendered.includes(hidden), 'Unexpected non-core body content: ' + hidden);
+  }
+  assert.equal(data.students[0].learning, '仅保留学习原文');
+  assert.equal(data.students[0].knowledge, '仅保留知识原文');
+  assert.equal(data.students[0].blockers, '仅保留阻塞原文');
+  assert.equal(data.students[0].evidence, 'https://example.com/source-evidence');
+  assert.equal(JSON.stringify(source), before);
+});
+await check('overview is preserved without claiming omitted details appear below', () => {
+  const rendered = JSON.stringify(buildCards(digest, 'https://example.com/workbench/'));
+  assert.ok(rendered.includes('本周概览'));
+  assert.ok(rendered.includes('填写了问题/支持：学生 A（详情见教师工作台）'));
+  assert.ok(!rendered.includes('原文见下方'));
 });
 await check('untrusted student text never becomes card Markdown', () => {
   for (const card of buildCards(digest)) for (const element of card.elements) {
