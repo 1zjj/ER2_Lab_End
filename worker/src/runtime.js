@@ -6,6 +6,10 @@ import { buildDeepHealth } from './v2/deep-health.js';
 export const AI_STATUS = Object.freeze({ enabled: false, status: 'paused', configurationRetained: true });
 let deepHealthCache = { value: null, expiresAt: 0 };
 
+export function shouldRestartOAuth(status, body) {
+  return status === 401 && body?.message === '登录状态已过期';
+}
+
 function aiPaused(request, env) {
   const headers = new Headers({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff', 'Vary': 'Origin' });
@@ -33,7 +37,8 @@ async function cachedDeepHealth(env) {
 
 export default {
   async fetch(request, env, ctx) {
-    const path = new URL(request.url).pathname;
+    const url = new URL(request.url);
+    const path = url.pathname;
     if (request.method !== 'OPTIONS' && /^\/api\/ai(?:\/|$)/.test(path)) return aiPaused(request, env);
 
     if (request.method === 'GET' && path === '/api/v2/health') {
@@ -44,6 +49,16 @@ export default {
     }
 
     const response = await legacy.fetch(request, env, ctx);
+
+    if (path === '/auth/callback' && response.status === 401) {
+      const body = await response.clone().json().catch(() => null);
+      if (shouldRestartOAuth(response.status, body)) {
+        const launch = new URL('/auth/launch', url.origin);
+        if (env.FRONTEND_URL) launch.searchParams.set('returnTo', env.FRONTEND_URL);
+        return Response.redirect(launch.toString(), 302);
+      }
+    }
+
     if (path !== '/health' || !response.ok) return response;
     const body = await response.json();
     const deep = await cachedDeepHealth(env);
