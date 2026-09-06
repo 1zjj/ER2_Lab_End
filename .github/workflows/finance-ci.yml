@@ -1,0 +1,32 @@
+name: ER2 Finance Feature CI
+on:
+  push:
+    branches: [feature/finance-budget-v1]
+  pull_request:
+    paths: ['worker/**', 'finance/**', '.github/workflows/finance-ci.yml']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Run application tests
+        working-directory: worker
+        run: npm test
+      - name: Verify JavaScript syntax
+        run: |
+          find worker/src finance -name '*.js' -type f -print0 2>/dev/null | xargs -0 -r -n1 node --check
+      - name: Create source package for review
+        if: always()
+        run: git archive --format=zip --output=er2-source.zip HEAD
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: er2-source
+          path: er2-source.zip
+          retention-days: 3
