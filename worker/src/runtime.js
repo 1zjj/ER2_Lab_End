@@ -6,6 +6,7 @@ import { buildDeepHealth } from './v2/deep-health.js';
 // Intentional source-level pause: flipping an environment variable alone cannot enable AI.
 // Preserve the plan and any existing external credentials; never delete them in this release.
 export const AI_STATUS = Object.freeze({ enabled: false, status: 'paused', configurationRetained: true });
+let deepHealthCache = { value: null, expiresAt: 0 };
 
 function aiPaused(request, env) {
   const headers = new Headers({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store',
@@ -25,6 +26,13 @@ function jsonNoStore(value, env, status = 200) {
   return new Response(JSON.stringify(value), { status, headers });
 }
 
+async function cachedDeepHealth(env) {
+  if (deepHealthCache.value && deepHealthCache.expiresAt > Date.now()) return deepHealthCache.value;
+  const value = await buildDeepHealth(env);
+  deepHealthCache = { value, expiresAt: Date.now() + 60_000 };
+  return value;
+}
+
 export default {
   async fetch(request, env, ctx) {
     const path = new URL(request.url).pathname;
@@ -35,18 +43,39 @@ export default {
       return jsonNoStore(buildV2Health(env), env);
     }
     if (request.method === 'GET' && path === '/api/v2/health/deep') {
-      return jsonNoStore(await buildDeepHealth(env), env);
+      return jsonNoStore(await cachedDeepHealth(env), env);
     }
 
     const response = await legacy.fetch(request, env, ctx);
     if (path !== '/health' || !response.ok) return response;
     const body = await response.json();
+    const deep = await cachedDeepHealth(env);
     const headers = new Headers(response.headers);
-    return new Response(JSON.stringify({ ...body, ai: AI_STATUS,
-      stabilization: { version: 2, mode: 'shadow', productionCutover: false, writesEnabled: false },
+    return new Response(JSON.stringify({
+      ...body,
+      deepBaseReadOk: deep.ok === true,
+      deepLocatorOk: deep.locator?.ok === true,
+      membersSchemaOk: deep.tables?.members?.schemaOk === true,
+      weeklySchemaOk: deep.tables?.weekly?.schemaOk === true,
+      ai: AI_STATUS,
+      stabilization: {
+        version: 2,
+        mode: 'shadow',
+        productionCutover: false,
+        writesEnabled: false,
+        deep: {
+          authOk: deep.auth?.ok === true,
+          locatorOk: deep.locator?.ok === true,
+          appMetadataOk: deep.appMetadata?.ok === true,
+          members: deep.tables?.members || {},
+          weekly: deep.tables?.weekly || {},
+          errorStage: deep.errorStage || '',
+          errorCode: deep.errorCode || ''
+        }
+      },
       professorDigest: { format: DIGEST_VERSION, source: 'submitted_student_text', aiEnabled: false,
-        timezone: 'Asia/Shanghai', scheduled: 'Friday 18:00', longContent: 'split_without_truncation' } }),
-      { status: response.status, headers });
+        timezone: 'Asia/Shanghai', scheduled: 'Friday 18:00', longContent: 'split_without_truncation' }
+    }), { status: response.status, headers });
   },
   async scheduled(controller, env, ctx) {
     const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
