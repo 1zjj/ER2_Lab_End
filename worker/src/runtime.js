@@ -3,15 +3,13 @@ import { runProfessorDigest, DIGEST_VERSION } from './professor-digest.js';
 import { buildV2Health } from './v2/health.js';
 import { buildDeepHealth } from './v2/deep-health.js';
 
-// Intentional source-level pause: flipping an environment variable alone cannot enable AI.
-// Preserve the plan and any existing external credentials; never delete them in this release.
 export const AI_STATUS = Object.freeze({ enabled: false, status: 'paused', configurationRetained: true });
 let deepHealthCache = { value: null, expiresAt: 0 };
 
 function aiPaused(request, env) {
   const headers = new Headers({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff', 'Vary': 'Origin' });
-  try { headers.set('Access-Control-Allow-Origin', new URL(env.FRONTEND_URL).origin); } catch (_) { /* No configured frontend. */ }
+  try { headers.set('Access-Control-Allow-Origin', new URL(env.FRONTEND_URL).origin); } catch (_) {}
   return new Response(JSON.stringify({ code: 'AI_PAUSED', message: 'AI 功能暂未启用，相关设计与配置保留。', ai: AI_STATUS }), { status: 503, headers });
 }
 
@@ -22,7 +20,7 @@ function jsonNoStore(value, env, status = 200) {
     'X-Content-Type-Options': 'nosniff',
     'Vary': 'Origin'
   });
-  try { headers.set('Access-Control-Allow-Origin', new URL(env.FRONTEND_URL).origin); } catch (_) { /* No configured frontend. */ }
+  try { headers.set('Access-Control-Allow-Origin', new URL(env.FRONTEND_URL).origin); } catch (_) {}
   return new Response(JSON.stringify(value), { status, headers });
 }
 
@@ -38,7 +36,6 @@ export default {
     const path = new URL(request.url).pathname;
     if (request.method !== 'OPTIONS' && /^\/api\/ai(?:\/|$)/.test(path)) return aiPaused(request, env);
 
-    // Shadow V2 is deliberately read-only and isolated from all legacy production routes.
     if (request.method === 'GET' && path === '/api/v2/health') {
       return jsonNoStore(buildV2Health(env), env);
     }
@@ -52,12 +49,17 @@ export default {
     const deep = await cachedDeepHealth(env);
     const members = deep.tables?.members || {};
     const weekly = deep.tables?.weekly || {};
+    const discovery = deep.discovery || {};
     const headers = new Headers(response.headers);
     return new Response(JSON.stringify({
       ...body,
       deepBaseReadOk: deep.ok === true,
       deepLocatorOk: deep.locator?.ok === true,
       deepAppMetadataOk: deep.appMetadata?.ok === true,
+      baseHasAnyTables: discovery.hasAnyTables === true,
+      baseHasMemberLikeTable: discovery.hasMemberLikeTable === true,
+      baseHasWeeklyLikeTable: discovery.hasWeeklyLikeTable === true,
+      baseHasLiteratureLikeTable: discovery.hasLiteratureLikeTable === true,
       membersTablePresent: members.tablePresent === true,
       membersFieldsReadable: members.fieldsReadable === true,
       membersRecordReadable: members.recordReadReadable === true,
@@ -76,6 +78,7 @@ export default {
           authOk: deep.auth?.ok === true,
           locatorOk: deep.locator?.ok === true,
           appMetadataOk: deep.appMetadata?.ok === true,
+          discovery,
           members,
           weekly,
           errorStage: deep.errorStage || '',
@@ -94,7 +97,6 @@ export default {
     if (parts.hour === '18') {
       ctx.waitUntil(runProfessorDigest(controller.scheduledTime, env));
     } else if (parts.hour === '11') {
-      // Preserve the existing Friday reminder, onboarding, courses and all authenticated APIs.
       await legacy.scheduled(controller, env, ctx);
     }
   }
