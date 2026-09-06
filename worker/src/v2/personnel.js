@@ -9,6 +9,7 @@ export const TRAINING_STATUSES = Object.freeze(['未开始', '进行中', '已�
 export const SYSTEM_DUTIES = Object.freeze(['管理员', '财务', '课程审核', '预算审批', '教授周报接收', '知识编辑']);
 
 export function normalizePersonRecord(record = {}) {
+  if (looksNormalized(record)) return { ...record };
   const fields = record.fields || record;
   return {
     personId: text(fields['人员编号']),
@@ -42,7 +43,7 @@ export function validatePersonRecord(record = {}) {
   if (!MEMBER_STATUSES.includes(p.status)) errors.push('INVALID_STATUS');
   if (!CONFIDENTIALITY_LEVELS.includes(p.confidentiality)) errors.push('INVALID_CONFIDENTIALITY');
   if (!TRAINING_STATUSES.includes(p.trainingStatus)) errors.push('INVALID_TRAINING_STATUS');
-  for (const duty of p.systemDuties) if (!SYSTEM_DUTIES.includes(duty)) errors.push('INVALID_SYSTEM_DUTY:' + duty);
+  for (const duty of p.systemDuties || []) if (!SYSTEM_DUTIES.includes(duty)) errors.push('INVALID_SYSTEM_DUTY:' + duty);
   if (p.status !== '在组' && !p.leftAt) errors.push('MISSING_LEFT_AT');
   if (p.status === '在组' && p.leftAt) errors.push('ACTIVE_MEMBER_HAS_LEFT_AT');
   return { ok: errors.length === 0, errors, person: p };
@@ -64,6 +65,10 @@ export function isActiveMember(record = {}) {
 export function mayUseWorkbench(record = {}, groupMembershipConfirmed = true) {
   const person = normalizePersonRecord(record);
   return groupMembershipConfirmed && person.status === '在组' && Boolean(person.openId || person.feishuMember);
+}
+
+function looksNormalized(value) {
+  return Boolean(value && typeof value === 'object' && ('personId' in value || 'status' in value || 'systemDuties' in value));
 }
 
 function extractOpenId(value) {
