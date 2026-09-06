@@ -11,6 +11,12 @@ export async function buildDeepHealth(env, fetchImpl = fetch) {
     auth: { ok: false },
     locator: { ok: false, type: 'none' },
     appMetadata: { ok: false },
+    discovery: {
+      hasAnyTables: false,
+      hasMemberLikeTable: false,
+      hasWeeklyLikeTable: false,
+      hasLiteratureLikeTable: false
+    },
     tables: {}
   };
 
@@ -27,7 +33,15 @@ export async function buildDeepHealth(env, fetchImpl = fetch) {
     result.appMetadata.ok = Boolean(appMeta);
 
     const tableList = await getJson('/bitable/v1/apps/' + encodeURIComponent(resolved.appToken) + '/tables?page_size=100', token, fetchImpl);
-    const tableIds = new Set((tableList?.items || []).map((item) => item.table_id));
+    const tableItems = tableList?.items || [];
+    const tableIds = new Set(tableItems.map((item) => item.table_id));
+    const tableNames = tableItems.map((item) => String(item.name || '').trim()).filter(Boolean);
+    result.discovery = {
+      hasAnyTables: tableItems.length > 0,
+      hasMemberLikeTable: tableNames.some((name) => /人员|成员|member/i.test(name)),
+      hasWeeklyLikeTable: tableNames.some((name) => /周报|工作记录|weekly|report/i.test(name)),
+      hasLiteratureLikeTable: tableNames.some((name) => /文献|阅读|literature|paper/i.test(name))
+    };
 
     for (const spec of [
       ['members', 'MEMBERS_TABLE_ID'],
