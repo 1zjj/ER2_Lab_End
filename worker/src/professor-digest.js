@@ -131,17 +131,14 @@ function blocksFor(digest) {
     const notices = [];
     if (digest.missing.length) notices.push('未提交：' + digest.missing.join('、'));
     // Only report who filled this field; do not invent severity, priorities or decisions.
-    if (digest.attention.length) notices.push('填写了问题/支持：' + digest.attention.map((item) => item.name).join('、') + '（原文见下方）');
+    if (digest.attention.length) notices.push('填写了问题/支持：' + digest.attention.map((item) => item.name).join('、') + '（详情见教师工作台）');
     if (digest.missingTimestamps) notices.push(`${digest.missingTimestamps} 份记录缺少有效提交时间，请核对。`);
     for (const notice of notices) for (const part of splitText(notice)) blocks.push(plain(part));
   }
   for (let index = 0; index < digest.students.length; index++) {
     const student = digest.students[index];
     blocks.push(rule(), plain(`${String(index + 1).padStart(2, '0')}　${student.name}${student.project ? ' · ' + student.project : ''}`));
-    const fields = [['本周完成', student.progress || '未填写'], ['下周计划', student.nextPlan || '未填写'],
-      ['学习进展', student.learning || '未填写'], ['候选知识点', student.knowledge || '未填写（不自动生成）']];
-    if (hasIssue(student.blockers)) fields.push(['问题与支持', student.blockers]);
-    if (student.evidence) fields.push(['产出证据', student.evidence]);
+    const fields = [['本周完成', student.progress || '未填写'], ['下周计划', student.nextPlan || '未填写']];
     for (const [label, value] of fields) {
       splitText(value).forEach((part, i) => blocks.push(plain(`${student.name} · ${label}${i ? `（续 ${i + 1}）` : ''}\n${part}`)));
     }
