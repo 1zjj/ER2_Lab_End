@@ -1,0 +1,44 @@
+name: ER2 Binding Discovery (read only)
+on:
+  push:
+    branches: [feature/finance-budget-v1]
+    paths: [.github/workflows/er2-binding-check.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/setup-node@v4
+        with: {node-version: 24}
+      - name: Inspect ER2 nodes and known tables only
+        env:
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+        run: |
+          node --input-type=module <<'NODE'
+          const base='https://open.feishu.cn/open-apis';
+          const auth=await fetch(base+'/auth/v3/tenant_access_token/internal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({app_id:'cli_aa10819ad9badbe8',app_secret:process.env.FEISHU_APP_SECRET})}).then(r=>r.json());
+          if(!auth.tenant_access_token)throw Error('App authorization failed');
+          const get=async p=>{const r=await fetch(base+p,{headers:{Authorization:'Bearer '+auth.tenant_access_token},signal:AbortSignal.timeout(15000)});const j=await r.json();if(!r.ok||j.code!==0)throw Error('Read failed: '+r.status+'/'+j.code);return j.data;};
+          const {node}=await get('/wiki/v2/spaces/get_node?token=LIYtwb1ZaiEZinkowkbczYx5nIe');
+          const {space}=await get('/wiki/v2/spaces/'+node.space_id);
+          console.log('Confirmed link:',JSON.stringify({title:node.title,type:node.obj_type,hasParent:Boolean(node.parent_node_token),hasChild:node.has_child,spaceName:space?.name}));
+          if(!/^ER[²2](?:\s|$|[_-])/.test(space?.name||''))throw Error('Space is not confirmed ER2; stop');
+          const nodes=[];const parents=[''];const seen=new Set();
+          while(parents.length){const parent=parents.shift();let page='';do{const q='?page_size=50'+(parent?'&parent_node_token='+encodeURIComponent(parent):'')+(page?'&page_token='+encodeURIComponent(page):'');const data=await get('/wiki/v2/spaces/'+node.space_id+'/nodes'+q);for(const n of data.items||[]){if(seen.has(n.node_token))continue;seen.add(n.node_token);if(n.node_type!=='origin'||n.node_token==='U9VXwIUq7iO9TakZXjEc2lNEnVl')continue;nodes.push(n);if(n.has_child)parents.push(n.node_token);}page=data.has_more?data.page_token:'';if(nodes.length>250)throw Error('Traversal bound exceeded');}while(page);}
+          console.log('ER2 origin nodes:',nodes.length,'finance sections:',nodes.filter(n=>/^04/.test(n.title)).map(n=>({title:n.title,type:n.obj_type})));
+          const known={tblOQuocxzeuTD4Z:'members',tblDmIOPDnqfSPDL:'weekly',tblyHLZpybGVU364:'literature'};
+          let foundMembers=false;
+          for(const b of nodes.filter(n=>n.obj_type==='bitable')){
+            const d=await get('/bitable/v1/apps/'+b.obj_token+'/tables?page_size=100');
+            console.log('ER2 Base:',b.title,'known bindings:',(d.items||[]).filter(t=>known[t.table_id]).map(t=>known[t.table_id]),'course candidates:',(d.items||[]).filter(t=>/课程|培训/.test(t.name)).map(t=>t.name));
+            if((d.items||[]).some(t=>t.table_id==='tblOQuocxzeuTD4Z')){
+              foundMembers=true;const d=await get('/bitable/v1/apps/'+b.obj_token+'/tables/tblOQuocxzeuTD4Z/records?page_size=500');
+              const txt=v=>Array.isArray(v)?v.map(txt).join(''):v&&typeof v==='object'?(v.text||v.name||''):String(v||'');
+              for(const name of ['朱俊杰','孙世纪','陈铮一']){const matches=(d.items||[]).filter(r=>txt(r.fields?.['姓名']).trim()===name);console.log('Member verification:',name,'matches:',matches.length,'hasOpenId:',matches.length===1&&Boolean(txt(matches[0].fields?.['飞书OpenID'])));}
+            }
+          }
+          console.log('Known member table found:',foundMembers,'No production writes performed.');
+          NODE
