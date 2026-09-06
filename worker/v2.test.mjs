@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { resolveTableBinding, bindingConfigured, summarizeAllBindings } from './src/v2/bindings.js';
-import { normalizeCapabilities, canReviewCourses, canApproveBudgets, canHandleFinance } from './src/v2/capabilities.js';
+import { capabilitiesFromMemberFields, canReviewCourses, canApproveBudgets, canHandleFinance, isAdmin } from './src/v2/capabilities.js';
 import { validateSchema, SCHEMA_VERSION } from './src/v2/schema.js';
 import { buildTrainingCatalog, visibleTrainingCatalog } from './src/v2/training.js';
 import { buildV2Health } from './src/v2/health.js';
+import { nextPersonId, validatePersonRecord, mayUseWorkbench } from './src/v2/personnel.js';
 
 {
   const env = {
@@ -23,22 +24,42 @@ import { buildV2Health } from './src/v2/health.js';
 }
 
 {
-  const caps = normalizeCapabilities(['finance', 'course_reviewer'], ['学生']);
-  assert.deepEqual(new Set(caps), new Set(['finance', 'course_reviewer', 'student']));
-  assert.equal(canHandleFinance({ capabilities: caps }), true);
+  const fields = { 人员边界:'团队内', 成员类别:'硕士', 系统职责:['管理员','课程审核'] };
+  const caps = capabilitiesFromMemberFields(fields);
+  assert.ok(caps.includes('internal_member'));
+  assert.ok(caps.includes('master'));
+  assert.ok(caps.includes('admin'));
+  assert.ok(caps.includes('course_reviewer'));
+  assert.equal(isAdmin({ capabilities: caps }), true);
   assert.equal(canReviewCourses({ capabilities: caps }), true);
+  assert.equal(canHandleFinance({ capabilities: caps }), false);
   assert.equal(canApproveBudgets({ capabilities: caps }), false);
-  assert.equal(canApproveBudgets({ capabilities: ['admin'] }), true);
 }
 
 {
-  const schema = validateSchema('members', ['姓名', '飞书OpenID', '是否启用']);
+  const schema = validateSchema('members', [
+    '人员编号','姓名','飞书成员','人员边界','成员类别','人员状态','入组时间',
+    '保密等级','培训状态','直属负责人','关联项目','系统职责'
+  ]);
   assert.equal(schema.ok, true);
   assert.equal(schema.version, SCHEMA_VERSION);
-  assert.ok(schema.missingRecommended.includes('PersonID'));
+  assert.ok(schema.missingRecommended.includes('飞书OpenID'));
   const broken = validateSchema('weekly', ['飞书OpenID', '姓名']);
   assert.equal(broken.ok, false);
   assert.ok(broken.missingRequired.includes('周次'));
+}
+
+{
+  assert.equal(nextPersonId(['P-001','P-002','P-004']), 'P-003');
+  const valid = validatePersonRecord({ fields: {
+    人员编号:'P-004', 姓名:'孙世纪', 飞书成员:[{open_id:'ou-test'}], 人员边界:'团队内',
+    成员类别:'博士', 人员状态:'在组', 入组时间:1, 保密等级:'内部', 培训状态:'已完成',
+    直属负责人:['P-001'], 关联项目:[], 系统职责:['财务']
+  }});
+  assert.equal(valid.ok, true);
+  assert.equal(canHandleFinance({ capabilities: valid.person.capabilities }), true);
+  assert.equal(mayUseWorkbench(valid.person, true), true);
+  assert.equal(mayUseWorkbench(valid.person, false), false);
 }
 
 {
