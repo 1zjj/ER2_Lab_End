@@ -1,6 +1,7 @@
 import legacy from './index.js';
 import { runProfessorDigest, DIGEST_VERSION } from './professor-digest.js';
 import { buildV2Health } from './v2/health.js';
+import { buildDeepHealth } from './v2/deep-health.js';
 
 // Intentional source-level pause: flipping an environment variable alone cannot enable AI.
 // Preserve the plan and any existing external credentials; never delete them in this release.
@@ -32,6 +33,9 @@ export default {
     // Shadow V2 is deliberately read-only and isolated from all legacy production routes.
     if (request.method === 'GET' && path === '/api/v2/health') {
       return jsonNoStore(buildV2Health(env), env);
+    }
+    if (request.method === 'GET' && path === '/api/v2/health/deep') {
+      return jsonNoStore(await buildDeepHealth(env), env);
     }
 
     const response = await legacy.fetch(request, env, ctx);
