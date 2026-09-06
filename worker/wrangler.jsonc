@@ -16,6 +16,9 @@
     "PILOT_AUTO_PROVISION": "true",
     "MEMBERS_TABLE_ID": "tblOQuocxzeuTD4Z",
     "WEEKLY_TABLE_ID": "tblDmIOPDnqfSPDL",
-    "AI_ENABLED": "false"
+    "AI_ENABLED": "false",
+    "V2_SHADOW_ENABLED": "true",
+    "V2_WRITES_ENABLED": "false",
+    "LEGACY_GLOBAL_BASE_FALLBACK": "true"
   }
 }
