@@ -2,6 +2,7 @@ import legacy from './index.js';
 import { runProfessorDigest, DIGEST_VERSION } from './professor-digest.js';
 import { buildV2Health } from './v2/health.js';
 import { buildDeepHealth } from './v2/deep-health.js';
+import { enrichStudentDashboard } from './v2/student-home.js';
 
 export const AI_STATUS = Object.freeze({ enabled: false, status: 'paused', configurationRetained: true });
 let deepHealthCache = { value: null, expiresAt: 0 };
@@ -35,6 +36,13 @@ async function cachedDeepHealth(env) {
   return value;
 }
 
+function cloneJsonResponse(response, value) {
+  const headers = new Headers(response.headers);
+  headers.set('Content-Type', 'application/json; charset=utf-8');
+  headers.set('Cache-Control', 'no-store');
+  return new Response(JSON.stringify(value), { status: response.status, headers });
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -57,6 +65,11 @@ export default {
         if (env.FRONTEND_URL) launch.searchParams.set('returnTo', env.FRONTEND_URL);
         return Response.redirect(launch.toString(), 302);
       }
+    }
+
+    if (request.method === 'GET' && path === '/api/dashboard' && response.ok) {
+      const dashboard = await response.json();
+      return cloneJsonResponse(response, enrichStudentDashboard(dashboard));
     }
 
     if (path !== '/health' || !response.ok) return response;
