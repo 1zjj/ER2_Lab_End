@@ -1,0 +1,46 @@
+name: ER2 Read-only Access Check
+on:
+  push:
+    branches: [feature/finance-budget-v1]
+    paths: [.github/workflows/er2-access-check.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Read existing configuration and ER2 root
+        env:
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          node --input-type=module <<'NODE'
+          const health = await fetch('https://er2-lab-api.zhujunjie418.workers.dev/health').then(r=>r.json());
+          console.log('Current readiness:', JSON.stringify(Object.fromEntries(Object.entries(health).filter(([k,v])=>typeof v==='boolean'))));
+          if (process.env.CLOUDFLARE_API_TOKEN && process.env.CLOUDFLARE_ACCOUNT_ID) {
+            const url = 'https://api.cloudflare.com/client/v4/accounts/'+process.env.CLOUDFLARE_ACCOUNT_ID+'/workers/scripts/er2-lab-api/settings';
+            const r = await fetch(url,{headers:{Authorization:'Bearer '+process.env.CLOUDFLARE_API_TOKEN}});
+            const j = await r.json();
+            console.log('Cloudflare settings readable:',r.ok&&j.success);
+            if (j.success) console.log('Binding names only:', (j.result?.bindings||[]).map(x=>x.name).sort().join(', '));
+          }
+          const base='https://open.feishu.cn/open-apis';
+          const a=await fetch(base+'/auth/v3/tenant_access_token/internal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({app_id:'cli_aa10819ad9badbe8',app_secret:process.env.FEISHU_APP_SECRET})}).then(r=>r.json());
+          console.log('Feishu app token available:',Boolean(a.tenant_access_token),'code:',a.code);
+          if(!a.tenant_access_token) process.exit(1);
+          const headers={Authorization:'Bearer '+a.tenant_access_token};
+          const n=await fetch(base+'/wiki/v2/spaces/get_node?token=LIYtwb1ZaiEZinkowkbczYx5nIe',{headers}).then(r=>r.json());
+          console.log('ER2 root readable:',n.code===0,'code:',n.code);
+          if(n.code!==0){console.log('Required scope names:',JSON.stringify(n.error?.permission_violations||[]).replace(/https?:[^\s"<>]+/g,'[link]'));process.exit(1);}
+          const root=n.data.node;
+          const j=await fetch(base+'/wiki/v2/spaces/'+root.space_id+'/nodes?page_size=50&parent_node_token='+root.node_token,{headers}).then(r=>r.json());
+          console.log('ER2 children readable:',j.code===0,'code:',j.code);
+          if(j.code===0){const items=j.data?.items||[];console.log('Child count:',items.length,'paged:',Boolean(j.data?.has_more));console.log('04 node matches:',items.filter(x=>/^04[_\.\s]/.test(x.title||'')).map(x=>({title:x.title,type:x.obj_type,children:x.has_child})));}
+          console.log('Read-only complete: no table, member, permission, message, or wiki writes performed. Joey Lab reference not accessed.');
+          NODE
