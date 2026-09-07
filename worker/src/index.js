@@ -1,3 +1,4 @@
+import { evidenceUrl, serializeWeekly } from './weekly-write.js';
 import { authority, AUTH_BINDINGS, strictBinding, identity, canProject, requireProject, businessProjectId, visibleProjects } from './authorization.js';
 import { resolveTableBinding as resolveBinding } from './v2/bindings.js';
 const FEISHU_API = 'https://open.feishu.cn/open-apis';
@@ -346,7 +347,7 @@ function reportValues(record) {
   return {
     progress: clean(field(record, '本周完成与结果')),
     learning: clean(field(record, '学习与方法')),
-    evidence: clean(field(record, '证据链接')),
+    evidence: clean(typeof field(record, '证据链接') === 'object' && typeof field(record, '证据链接')?.link === 'string' ? field(record, '证据链接').link : field(record, '证据链接')),
     blockers: clean(field(record, '问题与阻塞', '阻塞')),
     nextPlan: clean(field(record, '下周计划'))
   };
@@ -870,7 +871,8 @@ async function saveReport(request, env, session) {
   validateText(body.nextPlan, '下周计划', 1, 3000);
   validateText(body.learning, '学习与方法', 0, 3000);
   validateText(body.blockers, '问题与阻塞', 0, 3000);
-  if (body.evidence && !/^https:\/\//i.test(body.evidence)) throw httpError(400, '证据链接必须使用HTTPS地址');
+  try { body.evidence = evidenceUrl(body.evidence); }
+  catch (error) { throw httpError(400, error.message); }
 
   const currentWeek = weekInfo(new Date());
   if (body.weekId && body.weekId !== currentWeek.id) throw httpError(400, '只能提交当前周记录');
@@ -896,10 +898,24 @@ async function saveReport(request, env, session) {
     '提交状态': '已提交',
     '提交时间': new Date().toISOString()
   };
+  const binding = resolveTableBinding(env, 'WEEKLY_TABLE_ID');
+  const appToken = await resolveBitableAppToken(binding, tenantToken);
+  const schema = [], pages = new Set(); let page = '';
+  do {
+    const result = await feishuRequest('/bitable/v1/apps/' + appToken + '/tables/' + binding.tableId +
+      '/fields?page_size=100' + (page ? '&page_token=' + encodeURIComponent(page) : ''), { bearer: tenantToken });
+    if (!Array.isArray(result.data?.items)) throw httpError(502, '周报字段读取异常');
+    schema.push(...result.data.items);
+    if (result.data.has_more !== true) break;
+    page = result.data.page_token;
+    if (!page || pages.has(page)) throw httpError(502, '周报字段分页不完整');
+    pages.add(page);
+  } while (page);
+  const payload = serializeWeekly(schema, fields);
   const current = await requireActiveMember(env, session);
   if (existing) requireResource(current, existing, 'edit');
-  if (existing) await updateRecord(env, tenantToken, 'WEEKLY_TABLE_ID', existing.record_id, fields);
-  else await createRecord(env, tenantToken, 'WEEKLY_TABLE_ID', fields);
+  if (existing) await updateRecord(env, tenantToken, 'WEEKLY_TABLE_ID', existing.record_id, payload);
+  else await createRecord(env, tenantToken, 'WEEKLY_TABLE_ID', payload);
   return json(request, env, { ok: true, weekId: currentWeek.id, updated: Boolean(existing) });
 }
 
