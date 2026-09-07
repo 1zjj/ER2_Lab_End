@@ -206,7 +206,8 @@
     const match = location.hash.match(/(?:^#|&)session=([^&]+)/);
     if (match) {
       const token = decodeURIComponent(match[1]);
-      privateDrafts.clear();
+      // Drafts remain unreadable until /api/me or the dashboard confirms the
+      // owner. bind() clears them when a different account signs in.
       sessionStorage.setItem('er2-session', token);
       history.replaceState(null, '', location.pathname + location.search);
       return token;
@@ -305,8 +306,8 @@
     elements.error.hidden = false;
   }
 
-  window.addEventListener('er2-session-denied', function () {
-    privateDrafts.clear();
+  window.addEventListener('er2-session-denied', function (event) {
+    if (event.detail?.status !== 401) privateDrafts.clear();
     state.dashboard = null;
     document.getElementById('weekly-source-panel').hidden = true;
     document.getElementById('weekly-source-result').textContent = '';
@@ -318,7 +319,7 @@
   async function authenticatedFetch(url, options) {
     const response = await fetch(url, options);
     if (response.status === 401 || response.status === 403) {
-      window.dispatchEvent(new Event('er2-session-denied'));
+      window.dispatchEvent(new CustomEvent('er2-session-denied', { detail: { status: response.status } }));
     }
     return response;
   }
@@ -331,7 +332,6 @@
       }
     }, options || {}));
     if (response.status === 401) {
-      privateDrafts.clear();
       sessionStorage.removeItem('er2-session');
       location.href = API_BASE + '/auth/launch?returnTo=' + encodeURIComponent(location.href);
       throw new Error('身份已过期，正在重新登录');
@@ -952,6 +952,7 @@
 
   async function submitReport(event) {
     event.preventDefault();
+    if (elements.reportSubmit.disabled) return;
     if (!elements.reportForm.reportValidity()) return;
     const fields = Object.fromEntries(new FormData(elements.reportForm).entries());
     fields.requestId = pendingRequestId('er2-request-report', 'weekly');
@@ -1009,6 +1010,18 @@
       privateDrafts.remove('er2-request-report', draftScope());
       renderActiveView();
       showToast('本周工作记录已提交');
+      // Refresh the same source for dual-role users. Never turn a confirmed
+      // save into a submission failure if this secondary refresh is unavailable.
+      if (!DEMO_MODE) {
+        try {
+          const fresh = await request('/api/weekly');
+          if (state.dashboard && fresh.week?.id === state.dashboard.week.id && fresh.student && fresh.teacher) {
+            state.dashboard.student = Object.assign({}, state.dashboard.student, fresh.student);
+            state.dashboard.teacher = Object.assign({}, state.dashboard.teacher, fresh.teacher);
+            renderActiveView();
+          }
+        } catch (_) { /* Confirmed report/history already remain visible above. */ }
+      }
     } catch (error) {
       elements.reportError.textContent = error.message || '提交失败，请稍后重试';
       elements.reportError.hidden = false;

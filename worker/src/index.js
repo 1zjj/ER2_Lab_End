@@ -1,4 +1,6 @@
 import { evidenceText, serializeWeekly, weeklyValues, weeklyMatches, weeklyCompatibility, WEEKLY_VERSION } from './weekly-write.js';
+import { weeklyRoster, isWeeklySubmitted, hasWeeklyIssue, weeklyAutomationConfiguration } from './weekly-policy.js';
+import { recordPage } from './feishu-record-page.js';
 import { authority, AUTH_BINDINGS, strictBinding, identity, canProject, requireProject, businessProjectId, visibleProjects, hasProjectScope } from './authorization.js';
 import { resolveTableBinding as resolveBinding } from './v2/bindings.js';
 const FEISHU_API = 'https://open.feishu.cn/open-apis';
@@ -57,7 +59,8 @@ export default {
           literatureConfigured,
           courseConfigured,
           courseDataConfigured,
-          courseAccessConfigured
+          courseAccessConfigured,
+          weeklyAutomation: weeklyAutomationConfiguration(env)
         });
       }
       if (url.pathname === '/auth/launch') return await launchAuth(request, env);
@@ -538,6 +541,7 @@ function buildOnboarding(session, records) {
 }
 
 function buildStudent(session, week, reports, projects, courses, tasks, links) {
+  reports = reports.filter(isWeeklySubmitted);
   const mine = (record) => String(field(record, '飞书OpenID', '人员OpenID', 'OpenID')) === String(session.sub);
   const currentReport = reports.find((record) => mine(record) && String(field(record, '周次', 'WeekID')) === week.id);
   const project = projects[0] || {};
@@ -586,6 +590,7 @@ function buildStudent(session, week, reports, projects, courses, tasks, links) {
 }
 
 function buildTeacher(session, week, members, reports, courses, env) {
+  reports = reports.filter(isWeeklySubmitted);
   const managed = members.filter((member) => session.roles.includes('manager') ||
     (session.roles.includes('teacher') && String(member.teacherOpenId) === String(session.sub)));
   const currentReports = reports.filter((record) => String(field(record, '周次', 'WeekID')) === week.id);
@@ -600,7 +605,7 @@ function buildTeacher(session, week, members, reports, courses, env) {
       track: member.track || '',
       status: report ? '已提交' : '未提交',
       blocker: blocker || (report ? '无' : '等待本周记录'),
-      tone: report ? (blocker ? 'red' : 'green') : 'orange',
+      tone: report ? (hasWeeklyIssue(blocker) ? 'red' : 'green') : 'orange',
       currentReport: report ? normalizeReport(report) : null,
       history: memberReports
         .sort((a, b) => parseRecordTime(field(b, '提交时间')) - parseRecordTime(field(a, '提交时间')))
@@ -614,13 +619,14 @@ function buildTeacher(session, week, members, reports, courses, env) {
       blocked: students.filter((student) => student.tone === 'red').length
     },
     students,
-    commonIssues: students.filter((student) => student.blocker && student.blocker !== '无' && student.status === '已提交')
+    commonIssues: students.filter((student) => hasWeeklyIssue(student.blocker) && student.status === '已提交')
       .map((student) => student.name + '：' + student.blocker).slice(0, 5),
     courseReview: buildCourseReview(session, members, courses, env)
   };
 }
 
 function buildManager(members, projects, courses, env) {
+  const weeklyAutomation = weeklyAutomationConfiguration(env);
   return {
     stats: {
       members: members.filter((member) => member.enabled !== false).length,
@@ -628,9 +634,9 @@ function buildManager(members, projects, courses, env) {
       courses: 1
     },
     automations: [
-      { name: '未交周报提醒', trigger: '周五 11:00', target: '未交学生', status: env.PROFESSOR_OPEN_ID ? '已配置' : '待配置' },
+      { name: '未交周报提醒', trigger: '周五 11:00', target: '未交学生', status: weeklyAutomation.remindersConfigured ? '已配置' : '待配置' },
       { name: '提交状态更新', trigger: '学生提交后', target: '周报记录', status: '页面已支持' },
-      { name: '教授周报摘要', trigger: '周五 18:00', target: '教授', status: env.PROFESSOR_OPEN_ID ? '已配置' : '待配置' }
+      { name: '教授周报摘要', trigger: '周五 18:00', target: '教授', status: weeklyAutomation.digestConfigured ? '已配置' : '待配置' }
     ]
   };
 }
@@ -931,6 +937,9 @@ async function saveReport(request, env, session) {
   if (!session.roles.includes('student')) throw httpError(403, '只有学生账号可以提交本人周报');
   const body = await readJson(request);
   const businessRequestId = requestBusinessId(request, body, 'weekly');
+  for (const key of ['progress', 'learning', 'blockers', 'nextPlan']) {
+    if (body[key] != null && typeof body[key] !== 'string') throw httpError(400, '周报内容必须是文本');
+  }
   validateText(body.progress, '本周完成与结果', 1, 5000);
   validateText(body.nextPlan, '下周计划', 1, 3000);
   validateText(body.learning, '学习与方法', 0, 3000);
@@ -969,6 +978,7 @@ async function saveReport(request, env, session) {
   const schema = await weeklySchema(appToken, binding.tableId, tenantToken);
   const payload = serializeWeekly(schema, fields);
   const current = await requireActiveMember(env, session);
+  if (!current.roles.includes('student')) throw httpError(403, '周报提交资格已撤销');
   if (existing) requireResource(current, existing, 'edit');
   if (existing) await updateRecord(env, tenantToken, 'WEEKLY_TABLE_ID', existing.record_id, payload);
   else await createRecord(env, tenantToken, 'WEEKLY_TABLE_ID', payload);
@@ -1017,51 +1027,43 @@ async function saveTeacherReview(request, env, session) {
 }
 
 async function runScheduledTask(scheduledTime, env) {
+  const local = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Shanghai', weekday: 'short', hour: '2-digit', hourCycle: 'h23'
+  }).formatToParts(new Date(scheduledTime)).map(part => [part.type, part.value]));
+  if (local.weekday !== 'Fri' || local.hour !== '11') return;
   requireConfig(env, ['FEISHU_APP_ID', 'FEISHU_APP_SECRET', 'MEMBERS_TABLE_ID', 'WEEKLY_TABLE_ID']);
-  const localHour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Shanghai', hour: '2-digit', hour12: false }).format(new Date(scheduledTime)));
+  // Durable delivery receipts are required before any reminder can be sent.
+  for (const key of ['MEMBERS_TABLE_ID', 'WEEKLY_TABLE_ID', 'AUTOMATION_LOGS_TABLE_ID']) {
+    const binding = resolveTableBinding(env, key);
+    if (!binding.tableId || (!binding.appToken && !binding.wikiToken)) throw httpError(503, '周报定时任务缺少配置：' + key);
+  }
   const tenantToken = await getTenantToken(env);
-  const [memberRecords, reports, literatureRecords] = await Promise.all([
+  const [memberRecords, reports, logs] = await Promise.all([
     listRecords(env, tenantToken, 'MEMBERS_TABLE_ID'),
     listRecords(env, tenantToken, 'WEEKLY_TABLE_ID'),
-    listRecords(env, tenantToken, 'LITERATURE_TABLE_ID')
+    listRecords(env, tenantToken, 'AUTOMATION_LOGS_TABLE_ID')
   ]);
-  const members = memberRecords.flatMap(record => { try { const member = authority(memberRecords, [], [], identity(record)); return member.roles.includes('manager') || member.roles.includes('teacher') ? [] : [{ ...member, openId: member.sub, enabled: true }]; } catch (_) { return []; } });
+  const members = weeklyRoster(memberRecords);
   const week = weekInfo(new Date(scheduledTime));
-  const currentReports = reports.filter((record) => String(field(record, '周次', 'WeekID')) === week.id);
-  const currentLiterature = literatureRecords.filter((record) => String(field(record, '周次')) === week.id);
-
-  if (localHour === 11) {
-    const runKey = week.id + '-weekly-reminder';
-    if (await automationAlreadyRan(env, tenantToken, runKey)) return;
-    const missing = members.filter((member) => !currentReports.some((record) => String(field(record, '飞书OpenID', '人员OpenID', 'OpenID')) === String(member.openId)));
-    const results = await Promise.allSettled(missing.map((member) => sendText(env, tenantToken, member.openId,
-      'ER² Lab提醒：你本周的工作记录尚未提交，请在今天18:00前进入工作台完成。')));
-    const failed = results.filter((result) => result.status === 'rejected').length;
-    await writeAutomationLog(env, tenantToken, runKey, '未交周报提醒', failed ? '部分失败' : '成功', missing.length + '人，失败' + failed + '人');
-  }
-
-  if (localHour === 18 && env.PROFESSOR_OPEN_ID) {
-    const runKey = week.id + '-professor-summary';
-    if (await automationAlreadyRan(env, tenantToken, runKey)) return;
-    const submitted = currentReports.length;
-    const missingNames = members.filter((member) => !currentReports.some((record) => String(field(record, '飞书OpenID', '人员OpenID', 'OpenID')) === String(member.openId))).map((member) => member.name);
-    const blockers = currentReports.map((record) => field(record, '问题与阻塞', '阻塞')).filter(Boolean);
-    const literatureContributors = new Set(currentLiterature.map((record) => field(record, '提交人OpenID')).filter(Boolean)).size;
-    const summary = [
-      'ER² Lab ' + week.label + ' 周报汇总',
-      '已提交：' + submitted + '/' + members.length,
-      '未提交：' + (missingNames.join('、') || '无'),
-      '文献阅读：' + currentLiterature.length + '篇 / ' + literatureContributors + '人',
-      '主要阻塞：' + (blockers.slice(0, 5).join('；') || '无')
-    ].join('\n');
-    try {
-      await sendText(env, tenantToken, env.PROFESSOR_OPEN_ID, summary);
-      await writeAutomationLog(env, tenantToken, runKey, '教授周报摘要', '成功', submitted + '/' + members.length);
-    } catch (error) {
-      await writeAutomationLog(env, tenantToken, runKey, '教授周报摘要', '失败', error.message || '发送失败');
-      throw error;
-    }
-  }
+  const currentReports = reports.filter(record => isWeeklySubmitted(record) && String(field(record, '周次', 'WeekID')) === week.id);
+  const runKey = week.id + '-weekly-reminder';
+  const succeeded = key => logs.some(record => clean(field(record, '运行键')) === key && clean(field(record, '执行结果')) === '成功');
+  if (succeeded(runKey)) return;
+  const missing = members.filter(member => !currentReports.some(record =>
+    String(field(record, '飞书OpenID', '人员OpenID', 'OpenID')) === member.sub));
+  const results = await Promise.allSettled(missing.map(async member => {
+    const recipientKey = runKey + '-' + await stableMessageUuid(member.sub);
+    if (succeeded(recipientKey)) return;
+    const current = await requireActiveMember(env, { sub: member.sub });
+    if (!current.roles.includes('student')) return;
+    await sendText(env, tenantToken, member.sub,
+      'ER² Lab提醒：你本周的工作记录尚未提交，请在今天18:00前进入工作台完成。',
+      await stableMessageUuid(recipientKey));
+    await writeAutomationLog(env, tenantToken, recipientKey, '未交周报提醒', '成功', '单人提醒已发送');
+  }));
+  const failed = results.filter(result => result.status === 'rejected').length;
+  await writeAutomationLog(env, tenantToken, runKey, '未交周报提醒', failed ? '部分失败' : '成功', missing.length + '人，失败' + failed + '人');
+  if (failed) throw httpError(502, '部分周报提醒发送失败，已发送人员不会重复提醒');
 }
 
 async function getTenantToken(env) {
@@ -1111,23 +1113,21 @@ async function readTableRecords(env, token, tableBinding) {
   do {
     const suffix = pageToken ? '&page_token=' + encodeURIComponent(pageToken) : '';
     const result = await feishuRequest('/bitable/v1/apps/' + appToken + '/tables/' + tableId + '/records?user_id_type=open_id&page_size=500' + suffix, { bearer: token });
-    const data = result.data;
-    // Only accept an omitted/null items list when the first page explicitly
-    // reports zero records and no further page. Never hide malformed responses.
-    const explicitEmpty = result.code === 0 && data && data.total === 0 &&
-      data.has_more === false && data.items == null && !data.page_token && !pageToken && records.length === 0;
-    if (!Array.isArray(data?.items) && !explicitEmpty) {
+    let parsed;
+    try { parsed = recordPage(result, pageToken, records.length); }
+    catch (error) {
+      const data = result.data;
       console.error('ER2_RECORD_PAGE_INVALID', JSON.stringify({
         binding: tableBinding, itemsType: data?.items === null ? 'null' : typeof data?.items,
         total: typeof data?.total === 'number' ? data.total : null,
         hasMore: typeof data?.has_more === 'boolean' ? data.has_more : null,
         hasData: Boolean(data), subsequentPage: Boolean(pageToken)
       }));
-      throw httpError(502, '数据表返回格式异常');
+      throw error;
     }
-    records.push(...(explicitEmpty ? [] : data.items));
-    pageToken = result.data?.has_more ? result.data?.page_token : '';
-    if (result.data?.has_more && (!pageToken || pages.has(pageToken))) throw httpError(502, '数据表分页不完整');
+    records.push(...parsed.items);
+    pageToken = parsed.next;
+    if (pageToken && pages.has(pageToken)) throw httpError(502, '数据表分页不完整');
     if (pageToken) pages.add(pageToken);
   } while (pageToken);
   return records;
@@ -1175,13 +1175,6 @@ async function sendText(env, token, openId, text, uuid = '') {
 async function stableMessageUuid(value) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(value)));
   return [...new Uint8Array(digest)].slice(0, 16).map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-async function automationAlreadyRan(env, token, runKey) {
-  const binding = resolveTableBinding(env, 'AUTOMATION_LOGS_TABLE_ID');
-  if ((!binding.appToken && !binding.wikiToken) || !binding.tableId) return false;
-  const records = await listRecords(env, token, 'AUTOMATION_LOGS_TABLE_ID');
-  return records.some((record) => clean(field(record, '运行键')) === runKey && clean(field(record, '执行结果')) === '成功');
 }
 
 async function writeAutomationLog(env, token, runKey, name, result, detail) {

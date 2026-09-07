@@ -4,6 +4,8 @@ import service from './src/index.js';
 const env = {
   FRONTEND_URL: 'https://1zjj.github.io/ER2_Lab_End/'
 };
+const unconfiguredWeeklyAutomation = { remindersConfigured: false, digestConfigured: false,
+  missingBindings: ['MEMBERS_TABLE_ID', 'AUTH_PROJECTS_TABLE_ID', 'PROJECT_MEMBERS_TABLE_ID', 'WEEKLY_TABLE_ID', 'AUTOMATION_LOGS_TABLE_ID'], scope: 'configuration_only' };
 
 const health = await service.fetch(new Request('https://api.example/health'), env);
 assert.equal(health.status, 200);
@@ -16,7 +18,8 @@ assert.deepEqual(await health.json(), {
   literatureConfigured: false,
   courseConfigured: false,
   courseDataConfigured: false,
-  courseAccessConfigured: false
+  courseAccessConfigured: false,
+  weeklyAutomation: unconfiguredWeeklyAutomation
 });
 
 const authOnlyHealth = await service.fetch(new Request('https://api.example/health'), {
@@ -34,7 +37,8 @@ assert.deepEqual(await authOnlyHealth.json(), {
   literatureConfigured: false,
   courseConfigured: false,
   courseDataConfigured: false,
-  courseAccessConfigured: false
+  courseAccessConfigured: false,
+  weeklyAutomation: unconfiguredWeeklyAutomation
 });
 
 const multiBaseHealth = await service.fetch(new Request('https://api.example/health'), {
@@ -280,6 +284,7 @@ const initialDashboard = await service.fetch(new Request('https://api.example/ap
 }), literatureEnv);
 const initialDashboardBody = await initialDashboard.json();
 weeklyItems = [{ record_id: 'rec_report', fields: {
+  '提交状态': '已提交',
   '飞书OpenID': 'ou_teacher',
   '周次': initialDashboardBody.week.id,
   '本周完成与结果': '完成测试',
@@ -288,6 +293,7 @@ weeklyItems = [{ record_id: 'rec_report', fields: {
   '问题与阻塞': '暂无',
   '下周计划': '继续验证'
 } }, { record_id: 'rec_student_report', fields: {
+  '提交状态': '已提交',
   '飞书OpenID': 'ou_student',
   '周次': initialDashboardBody.week.id,
   '本周完成与结果': '完成学生实验',

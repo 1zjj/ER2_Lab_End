@@ -6,7 +6,7 @@ export const WEEKLY_FIELDS = Object.freeze({
   '问题与阻塞': [1], '下周计划': [1], '提交状态': [1, 3], '提交时间': [1, 5]
 });
 
-export const WEEKLY_VERSION = 'weekly-five-fields-v2';
+export const WEEKLY_VERSION = 'weekly-stability-v3';
 // First name is the approved questionnaire label. Remaining names are read/write
 // compatibility for existing tables during migration, never new columns to create.
 export const WEEKLY_NAMES = Object.freeze({
@@ -34,8 +34,12 @@ export function weeklyText(value) {
 export function weeklyValues(record) {
   const read = name => {
     for (const alias of WEEKLY_NAMES[name] || [name]) {
-      const value = weeklyText(record?.fields?.[alias]);
-      if (value.trim()) return value;
+      // An explicit blank is an intentional clear, not permission to revive
+      // a superseded column. Fallback only when that column is absent.
+      if (Object.hasOwn(record?.fields || {}, alias)) {
+        const value = weeklyText(record.fields[alias]);
+        return value.trim() ? value : '';
+      }
     }
     return '';
   };

@@ -62,6 +62,31 @@ synthetic content and remove only the corresponding test record afterwards.
 A binding health check alone is not submission acceptance. Native sharing/ACLs,
 other modules and cross-request uniqueness require their own verification.
 
+## Stability regression coverage
+
+The weekly stability regression covers dual-role students in the reminder and
+digest roster, explicit empty Feishu record pages, draft/submitted status,
+no-issue text, text-only input, and final-write eligibility revalidation.
+Reminder deliveries require a configured receipt table, use deterministic
+message identifiers and retain per-recipient success receipts for partial retries.
+The retired legacy text-summary path is removed; the runtime uses the verbatim
+digest implementation at the scheduled summary time.
+
+Optional literature statistics cannot block a weekly reminder or digest. When
+literature cannot be read, the digest explicitly labels those statistics as
+unavailable rather than reporting zero. Failures reading personnel, weekly
+records or delivery receipts still stop delivery.
+
+The frontend preserves owner-scoped drafts across session expiry and binds them
+only after the server confirms the account. Switching accounts, explicit logout
+or denied access clears private drafts. Confirmed saves refresh the teacher view;
+failure of that secondary refresh does not turn a verified save into a failure.
+
+`health.weeklyAutomation` reports configuration presence only. It does not
+certify receipt-table permissions/schema or successful message delivery. Keep
+real-account acceptance results and deployment identifiers in private operations
+records. The mock tests do not send messages or alter production data.
+
 ## Empty-source preparation helper
 
 `worker/prepare-weekly-consolidation.mjs` accepts a private release configuration
