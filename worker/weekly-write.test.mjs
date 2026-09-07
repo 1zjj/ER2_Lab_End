@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { WEEKLY_FIELDS, evidenceUrl, serializeWeekly, weeklyCompatibility } from './src/weekly-write.js';
+import { WEEKLY_FIELDS, WEEKLY_NAMES, weeklyValues, evidenceText, evidenceUrl, serializeWeekly, weeklyCompatibility } from './src/weekly-write.js';
 import { auditWeekly } from './audit-weekly-migration.mjs';
 const fields = Object.entries(WEEKLY_FIELDS).map(([field_name, types]) => ({ field_name, type: types[0] }));
 assert.equal(evidenceUrl(' http://example.com/path '), 'http://example.com/path');
@@ -29,3 +29,14 @@ const result = await auditWeekly({ FEISHU_APP_ID: 'test', FEISHU_APP_SECRET: 'te
 assert.equal(result.allSourcesReadable, true); assert.equal(result.sources[0].records, 0);
 assert.equal(result.readyToMigrate, false); assert.equal(result.deletionAllowed, false); assert.equal(snapshots, 1);
 console.log('PASS weekly field serialization, URL validation and read-only inventory');
+
+const canonical = fields.map(f => ({ ...f, field_name: (WEEKLY_NAMES[f.field_name] || [f.field_name])[0] }));
+const original = '说明 <script>alert(1)</script>\nhttps://example.com/a\nhttps://lab.feishu.cn/wiki/test';
+assert.equal(evidenceText(original), original);
+const canonicalOutput = serializeWeekly(canonical, { '证据链接': original, '问题与阻塞': '阻塞原文' });
+assert.equal(canonicalOutput['产出（若有阶段性成果，可以提交文档链接）'], original);
+assert.deepEqual(weeklyValues({ fields: canonicalOutput }), { progress: '', learning: '', evidence: original, blockers: '阻塞原文', nextPlan: '' });
+assert.equal(weeklyCompatibility(canonical).ok, true);
+assert.equal(weeklyValues({ fields: { '证据链接': { text: '查看代码', link: 'https://example.com/source' } } }).evidence, 'https://example.com/source');
+assert.equal(weeklyValues({ fields: { '本周完成了什么': [{ text: '第一段' }, { text: '第二段' }] } }).progress, '第一段第二段');
+assert.throws(() => evidenceText({ text: 'bad' }));

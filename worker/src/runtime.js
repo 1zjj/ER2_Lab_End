@@ -1,3 +1,4 @@
+import { WEEKLY_VERSION } from './weekly-write.js';
 import legacy from './index.js';
 import { runProfessorDigest, DIGEST_VERSION } from './professor-digest.js';
 import { buildV2Health } from './v2/health.js';
@@ -84,6 +85,7 @@ export default {
     return new Response(JSON.stringify({
       ...body,
       securityPatch: 'p0-20260907-2',
+      weeklyPatch: WEEKLY_VERSION,
       configured: body.configured && deep.ok === true && AUTH_BINDINGS.every(key => { try { strictBinding(env, key); return true; } catch (_) { return false; } }),
       authorization: { enforced: true, mode: 'authoritative-fail-closed', nativeFeishuAclManaged: false,
         bindings: Object.fromEntries(AUTH_BINDINGS.map(key => { try { strictBinding(env, key); return [key, true]; } catch (_) { return [key, false]; } })) },

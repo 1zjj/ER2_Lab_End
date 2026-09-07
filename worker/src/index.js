@@ -1,4 +1,4 @@
-import { evidenceUrl, serializeWeekly } from './weekly-write.js';
+import { evidenceText, serializeWeekly, weeklyValues, weeklyMatches, weeklyCompatibility, WEEKLY_VERSION } from './weekly-write.js';
 import { authority, AUTH_BINDINGS, strictBinding, identity, canProject, requireProject, businessProjectId, visibleProjects } from './authorization.js';
 import { resolveTableBinding as resolveBinding } from './v2/bindings.js';
 const FEISHU_API = 'https://open.feishu.cn/open-apis';
@@ -69,6 +69,7 @@ export default {
       if (url.pathname === '/api/me' && request.method === 'GET') return json(request, env, { profile: { sub: session.sub, personId: session.personId, name: session.name, roles: session.roles } });
       if (url.pathname === '/api/admin/weekly-source' && request.method === 'GET') return await weeklySource(request, env, session);
       if (/^\/api\/projects(?:\/|$)/.test(url.pathname)) return await projectApi(request, env, session);
+      if (url.pathname === '/api/weekly' && request.method === 'GET') return await weeklyPage(request, env, session);
       if (url.pathname === '/api/dashboard' && request.method === 'GET') return await dashboard(request, env, session);
       if (url.pathname === '/api/reports' && request.method === 'POST') return await saveReport(request, env, session);
       if (url.pathname === '/api/literature' && request.method === 'GET') return await getLiterature(request, env, session);
@@ -80,9 +81,10 @@ export default {
       return json(request, env, { message: '接口不存在' }, 404);
     } catch (error) {
       const status = Number(error.status || 500);
-      const message = status >= 500 ? '服务暂时不可用，请稍后重试' : error.message;
+      const messages = { WEEKLY_SCHEMA_MISMATCH: '周报存储字段尚未统一，请联系管理员完成配置', WEEKLY_EVIDENCE_COLUMN_TYPE: '产出字段仍是旧的单链接类型，暂不能保存说明和多个链接', WEEKLY_BINDING_MISSING: '周报存储尚未配置', WEEKLY_READBACK_FAILED: '保存请求已处理，但尚未确认读回结果；请保留草稿后重试' };
+      const message = status >= 500 ? (messages[error.code] || (error.binding ? '数据读取失败（' + error.binding.replace('_TABLE_ID', '') + '），请将下方诊断编号提供给管理员' : '服务暂时不可用，请稍后重试')) : error.message;
       if (status >= 500) console.error(error);
-      return json(request, env, { message, requestId: requestIds.get(request) || '' }, status);
+      return json(request, env, { message, code: error.code || (error.binding ? 'TABLE_READ_FAILED' : 'REQUEST_FAILED'), requestId: requestIds.get(request) || '' }, status);
     }
   },
 
@@ -275,6 +277,9 @@ async function saveLiterature(request, env, session) {
   validateHttps(body.paperUrl, '论文链接', false);
   validateHttps(body.attachmentUrl, '论文附件链接', false);
 
+  const configuredWeekly = resolveTableBinding(env, 'WEEKLY_TABLE_ID');
+  if (!configuredWeekly.tableId || (!configuredWeekly.appToken && !configuredWeekly.wikiToken))
+    throw Object.assign(httpError(503, '周报尚未配置'), { code: 'WEEKLY_BINDING_MISSING' });
   const currentWeek = weekInfo(new Date());
   if (body.weekId && body.weekId !== currentWeek.id) throw httpError(400, '只能提交当前周阅读记录');
   const year = body.year === '' || body.year == null ? '' : Number(body.year);
@@ -344,15 +349,7 @@ function shanghaiDate(date) {
   }).format(date);
 }
 
-function reportValues(record) {
-  return {
-    progress: clean(field(record, '本周完成与结果')),
-    learning: clean(field(record, '学习与方法')),
-    evidence: clean(typeof field(record, '证据链接') === 'object' && typeof field(record, '证据链接')?.link === 'string' ? field(record, '证据链接').link : field(record, '证据链接')),
-    blockers: clean(field(record, '问题与阻塞', '阻塞')),
-    nextPlan: clean(field(record, '下周计划'))
-  };
-}
+function reportValues(record) { return weeklyValues(record); }
 
 function normalizeReport(record) {
   return {
@@ -599,7 +596,7 @@ function buildTeacher(session, week, members, reports, courses, env) {
   const students = managed.filter((member) => member.roles.includes('student')).map((member) => {
     const memberReports = reports.filter((record) => String(field(record, '飞书OpenID', '人员OpenID', 'OpenID')) === String(member.openId));
     const report = currentReports.find((record) => String(field(record, '飞书OpenID', '人员OpenID', 'OpenID')) === String(member.openId));
-    const blocker = report ? field(report, '问题与阻塞', '阻塞') : '';
+    const blocker = report ? reportValues(report).blockers : '';
     return {
       id: member.openId,
       name: member.name,
@@ -864,6 +861,42 @@ async function completeTrackAIfReady(env, tenantToken, records, target) {
   }
 }
 
+async function weeklySchema(app, table, token) {
+  const fields = [], seen = new Set(); let page = '';
+  do {
+    const data = (await feishuRequest('/bitable/v1/apps/' + app + '/tables/' + table +
+      '/fields?page_size=100' + (page ? '&page_token=' + encodeURIComponent(page) : ''), { bearer: token })).data;
+    if (!Array.isArray(data?.items)) throw httpError(502, '周报字段读取异常');
+    fields.push(...data.items);
+    if (data.has_more === false) return fields;
+    if (data.has_more !== true || !data.page_token || seen.has(data.page_token)) throw httpError(502, '周报字段分页不完整');
+    page = data.page_token; seen.add(page);
+  } while (page);
+  return fields;
+}
+
+async function weeklyPage(request, env, session) {
+  const binding = resolveTableBinding(env, 'WEEKLY_TABLE_ID');
+  if (!binding.tableId || (!binding.appToken && !binding.wikiToken))
+    throw Object.assign(httpError(503, '周报尚未配置'), { code: 'WEEKLY_BINDING_MISSING' });
+  const token = await getTenantToken(env);
+  const [people, records] = await Promise.all([
+    listRecords(env, token, 'MEMBERS_TABLE_ID'), listRecords(env, token, 'WEEKLY_TABLE_ID')
+  ]);
+  const reports = records.filter(record => {
+    const f = record.fields || {};
+    return !['统一项目编号', 'ProjectID', '项目编号', '关联项目'].some(k => f[k]) || canProject(session, businessProjectId(record));
+  });
+  const members = people.flatMap(record => { try { const member = authority(people, [], [], identity(record)); return [{ ...member, openId: member.sub }]; } catch (_) { return []; } });
+  const week = weekInfo(new Date());
+  const student = buildStudent(session, week, reports, [], [], [], []);
+  const teacher = buildTeacher(session, week, members, reports, [], env);
+  return json(request, env, { weeklyOnly: true, weeklyVersion: WEEKLY_VERSION,
+    profile: { sub: session.sub, personId: session.personId, name: session.name, roles: session.roles }, week,
+    student: { report: student.report, history: student.history },
+    teacher: { students: teacher.students, stats: teacher.stats } });
+}
+
 async function weeklySource(request, env, session) {
   if (!session.roles.includes('manager')) throw httpError(403, '仅管理员可以查看数据源配置');
   const binding = resolveTableBinding(env, 'WEEKLY_TABLE_ID');
@@ -897,7 +930,8 @@ async function weeklySource(request, env, session) {
   } catch (_) { /* The API may omit a browser URL; never fabricate one. */ }
   return json(request, env, { readOnly: true, tableId: binding.tableId,
     tableName: target.name || '', baseName: meta?.name || '', tableUrl,
-    bindingSource: binding.source || '', recordsRead: false });
+    bindingSource: binding.source || '', recordsRead: false, weeklyVersion: WEEKLY_VERSION,
+    schema: weeklyCompatibility(await weeklySchema(app, binding.tableId, token)) });
 }
 
 async function saveReport(request, env, session) {
@@ -908,17 +942,19 @@ async function saveReport(request, env, session) {
   validateText(body.nextPlan, '下周计划', 1, 3000);
   validateText(body.learning, '学习与方法', 0, 3000);
   validateText(body.blockers, '问题与阻塞', 0, 3000);
-  try { body.evidence = evidenceUrl(body.evidence); }
+  try { body.evidence = evidenceText(body.evidence); }
   catch (error) { throw httpError(400, error.message); }
 
   const currentWeek = weekInfo(new Date());
   if (body.weekId && body.weekId !== currentWeek.id) throw httpError(400, '只能提交当前周记录');
   const tenantToken = await getTenantToken(env);
   const records = await listRecords(env, tenantToken, 'WEEKLY_TABLE_ID');
-  const existing = records.find((record) =>
+  const sameWeek = records.filter((record) =>
     String(field(record, '飞书OpenID', '人员OpenID', 'OpenID')) === String(session.sub) &&
     String(field(record, '周次', 'WeekID')) === currentWeek.id
   );
+  if (sameWeek.length > 1) throw httpError(409, '本周存在重复周报，请管理员先合并记录');
+  const existing = sameWeek[0];
   const fields = {
     '请求ID': businessRequestId,
     '飞书OpenID': session.sub,
@@ -937,23 +973,19 @@ async function saveReport(request, env, session) {
   };
   const binding = resolveTableBinding(env, 'WEEKLY_TABLE_ID');
   const appToken = await resolveBitableAppToken(binding, tenantToken);
-  const schema = [], pages = new Set(); let page = '';
-  do {
-    const result = await feishuRequest('/bitable/v1/apps/' + appToken + '/tables/' + binding.tableId +
-      '/fields?page_size=100' + (page ? '&page_token=' + encodeURIComponent(page) : ''), { bearer: tenantToken });
-    if (!Array.isArray(result.data?.items)) throw httpError(502, '周报字段读取异常');
-    schema.push(...result.data.items);
-    if (result.data.has_more !== true) break;
-    page = result.data.page_token;
-    if (!page || pages.has(page)) throw httpError(502, '周报字段分页不完整');
-    pages.add(page);
-  } while (page);
+  const schema = await weeklySchema(appToken, binding.tableId, tenantToken);
   const payload = serializeWeekly(schema, fields);
   const current = await requireActiveMember(env, session);
   if (existing) requireResource(current, existing, 'edit');
   if (existing) await updateRecord(env, tenantToken, 'WEEKLY_TABLE_ID', existing.record_id, payload);
   else await createRecord(env, tenantToken, 'WEEKLY_TABLE_ID', payload);
-  return json(request, env, { ok: true, weekId: currentWeek.id, updated: Boolean(existing) });
+  const confirmed = (await listRecords(env, tenantToken, 'WEEKLY_TABLE_ID')).filter(record =>
+    String(field(record, '飞书OpenID')) === session.sub && String(field(record, '周次', 'WeekID')) === currentWeek.id);
+  if (confirmed.length !== 1 || clean(field(confirmed[0], '请求ID')) !== businessRequestId ||
+      !weeklyMatches(reportValues(confirmed[0]), { progress: clean(body.progress), learning: clean(body.learning),
+        evidence: clean(body.evidence), blockers: clean(body.blockers), nextPlan: clean(body.nextPlan) }))
+    throw Object.assign(httpError(503, '周报读回未确认'), { code: 'WEEKLY_READBACK_FAILED' });
+  return json(request, env, { ok: true, weekId: currentWeek.id, updated: Boolean(existing), readBackVerified: true, report: normalizeReport(confirmed[0]) });
 }
 
 async function saveTeacherReview(request, env, session) {
@@ -1072,6 +1104,11 @@ async function resolveBitableAppToken(binding, token) {
 }
 
 async function listRecords(env, token, tableBinding) {
+  try { return await readTableRecords(env, token, tableBinding); }
+  catch (error) { error.binding = tableBinding; throw error; }
+}
+
+async function readTableRecords(env, token, tableBinding) {
   const binding = resolveTableBinding(env, tableBinding);
   if ((!binding.appToken && !binding.wikiToken) || !binding.tableId) return [];
   const appToken = await resolveBitableAppToken(binding, token);

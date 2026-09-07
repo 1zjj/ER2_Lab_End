@@ -52,6 +52,11 @@
       <button type="button" id="retry-button">重新载入</button>
     </section>
 
+    <section class="panel" id="weekly-source-panel" hidden>
+      <h2>周报数据源核对</h2><p>查看后端实际连接的周报表及字段配置。</p>
+      <button class="button button-secondary" type="button" id="weekly-source-button">查看当前连接的周报表</button>
+      <div id="weekly-source-result" aria-live="polite"></div>
+    </section>
     <div id="app-root" hidden></div>
   </main>
 
@@ -64,11 +69,11 @@
         <button class="icon-button" type="button" data-close-dialog="report-dialog" aria-label="关闭">×</button>
       </div>
       <div class="form-body">
-        <label>本周完成与结果<textarea name="progress" required rows="4" placeholder="完成了什么？结果和结论是什么？"></textarea></label>
-        <label>学习与方法<textarea name="learning" rows="3" placeholder="学习了哪些课程、工具或方法？"></textarea></label>
-        <label>产出证据或飞书文件链接<input name="evidence" type="url" placeholder="https://...（大文件请先上传飞书云盘）"></label>
-        <label>当前问题与阻塞<textarea name="blockers" rows="3" placeholder="现象、已尝试的方法和需要的帮助"></textarea></label>
-        <label>下周计划<textarea name="nextPlan" required rows="3" placeholder="下一步任务和预计完成时间"></textarea></label>
+        <label>本周完成与结果<textarea name="progress" required maxlength="5000" rows="4" placeholder="完成了什么？结果和结论是什么？"></textarea></label>
+        <label>学习与方法<textarea name="learning" maxlength="3000" rows="3" placeholder="在科研过程中，掌握的学习经验、技术"></textarea></label>
+        <label>产出（若有阶段性成果，可以提交文档链接）<textarea name="evidence" maxlength="5000" rows="3" placeholder="可填写产出说明、普通网页或飞书文档链接；多个链接可换行填写"></textarea></label>
+        <label>当前问题与阻塞<textarea name="blockers" maxlength="3000" rows="3" placeholder="现象、已尝试的方法和需要的帮助"></textarea></label>
+        <label>下周计划<textarea name="nextPlan" required maxlength="3000" rows="3" placeholder="下一步任务和预计完成时间"></textarea></label>
         <p class="form-error" id="report-error" role="alert" hidden></p>
       </div>
       <div class="modal-actions">
@@ -240,6 +245,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="./config.js?v=20260905-track-a"></script>
   <script src="./draft-store.js?v=p0-2"></script>
-  <script src="./app.js?v=p0-2"></script>
+  <script src="./app.js?v=weekly-five-fields-1"></script>
 </body>
 </html>

@@ -1,6 +1,7 @@
 window.ER2_CONFIG = Object.freeze({
   apiBase: 'https://er2-lab-api.zhujunjie418.workers.dev',
   demo: false,
+  feishuDocsOrigin: 'https://lcnywl4yrecr.feishu.cn',
   feishuWikiUrl: ''
 });
 

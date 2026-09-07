@@ -308,6 +308,8 @@
   window.addEventListener('er2-session-denied', function () {
     privateDrafts.clear();
     state.dashboard = null;
+    document.getElementById('weekly-source-panel').hidden = true;
+    document.getElementById('weekly-source-result').textContent = '';
     document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
     elements.app.hidden = true;
     showError('访问权限需要重新核验', '请重新登录；若账号已停用，请联系管理员核对。');
@@ -335,7 +337,10 @@
       throw new Error('身份已过期，正在重新登录');
     }
     const payload = await response.json().catch(function () { return {}; });
-    if (!response.ok) throw new Error(payload.message || '请求失败（' + response.status + '）');
+    if (!response.ok) {
+      const error = new Error((payload.message || '请求失败（' + response.status + '）') + (payload.requestId ? '；诊断编号：' + payload.requestId : ''));
+      error.status = response.status; error.code = payload.code; throw error;
+    }
     return payload;
   }
 
@@ -364,7 +369,15 @@
           location.href = API_BASE + '/auth/launch?returnTo=' + encodeURIComponent(location.href);
           return;
         }
-        data = await request('/api/dashboard' + (role ? '?role=' + encodeURIComponent(role) : ''));
+        if (new URLSearchParams(location.search).get('page') === 'weekly') data = await request('/api/weekly');
+        else {
+          try { data = await request('/api/dashboard' + (role ? '?role=' + encodeURIComponent(role) : '')); }
+          catch (error) {
+            if (!error.status || error.status < 500) throw error;
+            data = await request('/api/weekly');
+            data.dashboardUnavailable = true;
+          }
+        }
       }
       privateDrafts.bind(DEMO_MODE ? 'demo' : data.profile.sub);
       state.dashboard = data;
@@ -372,14 +385,25 @@
       const roles = Array.isArray(data.profile.roles) ? data.profile.roles.filter(function (item) { return roleMeta[item]; }) : ['student'];
       state.activeRole = roles.includes(role) ? role : (roles.includes(state.activeRole) ? state.activeRole : roles[0]);
       renderAccount();
+      document.getElementById('weekly-source-panel').hidden = !roles.includes('manager');
       renderRoleNavigation(roles);
       renderActiveView();
       elements.notice.hidden = !DEMO_MODE;
       elements.error.hidden = true;
       elements.loading.hidden = true;
       elements.app.hidden = false;
+      if (new URLSearchParams(location.search).get('page') === 'weekly' && roles.includes('student')) openReportDialog();
     } catch (error) {
+      elements.accountName.textContent = '身份或数据读取未完成';
       showError('工作台暂时无法载入', error.message || '请稍后重试');
+      if (state.session && error.status !== 401 && error.status !== 403) {
+        try { const me = await request('/api/me');
+          elements.accountName.textContent = me.profile.name;
+          elements.accountRole.textContent = '已确认身份';
+          elements.logoutButton.hidden = false;
+          document.getElementById('weekly-source-panel').hidden = !me.profile.roles.includes('manager');
+        } catch (_) { /* Keep the original failure and do not assume an identity. */ }
+      }
     }
   }
 
@@ -640,7 +664,37 @@
     ].join('');
   }
 
+  function renderWeeklyOnly() {
+    const data = state.dashboard;
+    const roles = data.profile.roles;
+    const mine = roles.includes('student') ? '<button class="button button-primary" data-open-report>' +
+      (data.student.report.status === 'submitted' ? '修改本周记录' : '填写本周工作记录') +
+      '</button> <button class="button button-secondary" data-open-report-history>查看本人历史</button>' : '';
+    const students = roles.some(role => ['teacher', 'manager'].includes(role)) ?
+      (data.teacher.students || []).map(student => '<button class="button button-secondary" data-student="' + escapeHtml(student.id) + '">' +
+        escapeHtml(student.name + ' · ' + student.status) + '</button>').join(' ') : '';
+    elements.app.innerHTML = '<section class="panel"><h2>本周工作记录</h2><p>' + escapeHtml(data.week.label) + '</p>' +
+      (data.dashboardUnavailable ? '<p>其他模块暂时无法加载。周报服务已独立读取，可继续填写和查看记录。</p>' : '') +
+      mine + (students ? '<h3>教师查看</h3>' + students : '') + '</section>';
+    bindViewActions();
+  }
+
+  function evidenceMarkup(value) {
+    if (!value) return '';
+    const content = String(value).split(/(https?:\/\/[^\s<>"'，。；（）]+)/g).map(function (part) {
+      if (/^https?:\/\//.test(part)) {
+        try { const url = new URL(part);
+          if (url.username || url.password) return escapeHtml(part);
+          return '<a target="_blank" rel="noopener noreferrer" href="' + escapeHtml(url.href) + '">' + escapeHtml(part) + '</a>';
+        } catch (_) { /* Non-URL text stays text. */ }
+      }
+      return escapeHtml(part).replace(/\n/g, '<br>');
+    }).join('');
+    return '<section class="detail-wide"><h3>产出（若有阶段性成果，可以提交文档链接）</h3><p>' + content + '</p></section>';
+  }
+
   function renderActiveView() {
+    if (state.dashboard.weeklyOnly) { renderWeeklyOnly(); return; }
     if (state.activeRole === 'teacher') elements.app.innerHTML = renderTeacher();
     else if (state.activeRole === 'manager') elements.app.innerHTML = renderManager();
     else elements.app.innerHTML = renderStudent();
@@ -781,10 +835,10 @@
     const history = state.dashboard.student.history || state.dashboard.student.submissions || [];
     elements.reportHistoryBody.innerHTML = history.length ? history.map(function (report) {
       const values = report.values || {};
-      const evidence = values.evidence ? '<div class="history-link">' + availableLink(values.evidence, '打开证据链接', 'button button-secondary') + '</div>' : '';
+      const evidence = evidenceMarkup(values.evidence);
       return '<article class="history-record"><div class="history-record-head"><div><strong>' + escapeHtml(report.title || report.weekId || (report.weekNumber ? ('第' + report.weekNumber + '周') : '历史周报')) + '</strong><small>' + escapeHtml(report.submittedAt || report.date || '') + '</small></div>' + tag(report.status || '已提交', report.feedback ? 'green' : '') + '</div><div class="literature-detail-grid">' +
         detailSection('本周完成与结果', values.progress, true) + detailSection('学习与方法', values.learning, true) +
-        detailSection('问题与阻塞', values.blockers, true) + detailSection('下周计划', values.nextPlan, true) +
+        detailSection('当前问题与阻塞', values.blockers, true) + detailSection('下周计划', values.nextPlan, true) +
         detailSection('教师反馈', report.feedback, true) + '</div>' + evidence + '</article>';
     }).join('') : '<div class="empty">还没有历史周报。</div>';
     showDialog(elements.reportHistoryDialog);
@@ -874,14 +928,14 @@
     const report = student.currentReport;
     if (report) {
       const values = report.values || {};
-      const evidence = values.evidence ? '<div class="history-link">' + availableLink(values.evidence, '打开证据链接', 'button button-secondary') + '</div>' : '';
+      const evidence = evidenceMarkup(values.evidence);
       const previous = (student.history || []).filter(function (item) { return item.recordId !== report.recordId; }).slice(0, 3);
       const previousHtml = previous.length ? '<div class="student-history"><h3>最近历史记录</h3>' + previous.map(function (item) {
         return '<div><span><strong>' + escapeHtml(item.weekId || '历史周报') + '</strong><small>' + escapeHtml(item.submittedAt || '') + '</small></span>' + tag(item.feedback ? '已反馈' : '已提交', item.feedback ? 'green' : '') + '</div>';
       }).join('') + '</div>' : '';
       elements.studentDetailBody.innerHTML = '<div class="student-report-summary"><span>本周周报</span><strong>' + escapeHtml(report.weekId || '') + ' · ' + escapeHtml(report.submittedAt || '') + '</strong></div><div class="literature-detail-grid">' +
         detailSection('本周完成与结果', values.progress, true) + detailSection('学习与方法', values.learning, true) +
-        detailSection('问题与阻塞', values.blockers, true) + detailSection('下周计划', values.nextPlan, true) +
+        detailSection('当前问题与阻塞', values.blockers, true) + detailSection('下周计划', values.nextPlan, true) +
         detailSection('已有教师反馈', report.feedback, true) + '</div>' + evidence + previousHtml;
       elements.feedbackForm.hidden = false;
       elements.feedbackRecordId.value = report.recordId || '';
@@ -905,10 +959,11 @@
     elements.reportSubmit.textContent = '正在提交…';
     elements.reportError.hidden = true;
     try {
+      let saved;
       if (DEMO_MODE) {
         await new Promise(function (resolve) { setTimeout(resolve, 500); });
       } else {
-        await request('/api/reports', {
+        saved = await request('/api/reports', {
           method: 'POST',
           headers: {
             'Accept': 'application/json',
@@ -918,6 +973,7 @@
           },
           body: JSON.stringify(Object.assign({ weekId: state.dashboard.week.id }, fields))
         });
+        if (saved.readBackVerified !== true || !saved.report) throw new Error('后端未返回保存读回确认，草稿已保留；请管理员核对部署版本。');
       }
       state.dashboard.student.report = {
         status: 'submitted',
@@ -931,7 +987,7 @@
           nextPlan: fields.nextPlan || ''
         }
       };
-      const historyEntry = {
+      const historyEntry = saved && saved.report ? saved.report : {
         recordId: '',
         weekId: state.dashboard.week.id,
         submittedAt: new Date().toLocaleDateString('en-CA'),
@@ -939,6 +995,10 @@
         feedback: '',
         values: state.dashboard.student.report.values
       };
+      if (saved && saved.report) {
+        state.dashboard.student.report.values = saved.report.values;
+        state.dashboard.student.report.submittedAt = saved.report.submittedAt;
+      }
       const previousHistory = state.dashboard.student.history || [];
       state.dashboard.student.history = [historyEntry].concat(previousHistory.filter(function (item) {
         return item.weekId !== state.dashboard.week.id;
@@ -1188,6 +1248,16 @@
     dialog.addEventListener('click', function (event) {
       if (event.target === dialog) closeDialog(dialog);
     });
+  });
+  document.getElementById('weekly-source-button').addEventListener('click', async function () {
+    const output = document.getElementById('weekly-source-result');
+    output.textContent = '正在读取服务器实际配置…';
+    try {
+      const source = await request('/api/admin/weekly-source' + (config.feishuDocsOrigin ? '?docsOrigin=' + encodeURIComponent(config.feishuDocsOrigin) : ''));
+      output.innerHTML = '<p>' + escapeHtml(source.baseName + ' / ' + source.tableName) + '</p><p>表 ID：' + escapeHtml(source.tableId) + '</p>' +
+        (source.tableUrl ? availableLink(source.tableUrl, '打开实际连接的周报表', 'button button-secondary') : '<p>未返回直达地址，请核对飞书文档域名配置。</p>') +
+        (source.schema ? '<p>' + (source.schema.ok ? '当前写入字段检查通过；仍需实际提交验收。' : escapeHtml('待修复字段：' + source.schema.missing.concat(source.schema.incompatible).join('、'))) + '</p>' : '');
+    } catch (error) { output.textContent = error.message; }
   });
   document.getElementById('retry-button').addEventListener('click', function () { loadDashboard(state.activeRole); });
   elements.reportForm.addEventListener('submit', submitReport);

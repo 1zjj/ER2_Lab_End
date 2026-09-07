@@ -25,7 +25,7 @@ const relation = (pid, prj, extra = {}) => ({ record_id: 'rec-rel' + pid + '-' +
   '权限级别': '编辑', '授权状态': '有效', '工作台授权确认': '已确认', '权限落实状态': '已落实', '成员边界': '团队内',
   '加入日期': '2020-01-01', '权限到期日': '2099-01-01', '审批人': [{ id: 'ou_9' }], ...extra
 } });
-let people, projects, relations, rows, writes, failRead, recordResponses;
+let people, projects, relations, rows, writes, failRead, recordResponses, weeklyColumns;
 function reset() {
   people = [person(1), person(2), person(9, { '系统职责': ['管理员'] }), person(8, { '系统职责': ['管理员'] })];
   projects = [project(1), project(2), project(3, { '项目阶段': '暂停' })];
@@ -33,14 +33,14 @@ function reset() {
   rows = {
     projects: [1, 2, 3].map(i => ({ record_id: 'business' + i, fields: { '项目编号': 'P0' + i, '统一项目编号': 'PRJ-00' + i, '项目名称': '业务项目' + i } })),
     weekly: [], courses: [], tasks: [], links: [], literature: []
-  }; writes = []; failRead = false; recordResponses = {};
+  }; writes = []; failRead = false; recordResponses = {}; weeklyColumns = Object.entries(WEEKLY_FIELDS).map(([field_name, types]) => ({ field_name, type: field_name === '证据链接' ? 15 : types[0] }));
 }
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (input, options = {}) => {
   const url = new URL(input);
   assert.equal(url.hostname, 'open.feishu.cn', 'Tests must never call another host');
   if (url.pathname.endsWith('/tenant_access_token/internal')) return Response.json({ code: 0, tenant_access_token: 'mock-token' });
-  if (url.pathname.endsWith('/tables/weekly/fields')) return Response.json({ code: 0, data: { items: Object.entries(WEEKLY_FIELDS).map(([field_name, types]) => ({ field_name, type: field_name === '证据链接' ? 15 : types[0] })), has_more: false } });
+  if (url.pathname.endsWith('/tables/weekly/fields')) return Response.json({ code: 0, data: { items: weeklyColumns, has_more: false } });
   if (url.pathname === '/open-apis/bitable/v1/apps/base-weekly') return Response.json({ code: 0, data: { app: { name: '测试旧后台', url: 'https://test.feishu.cn/base/base-weekly' } } });
   if (url.pathname === '/open-apis/bitable/v1/apps/base-weekly/tables') return Response.json({ code: 0, data: { items: [{ table_id: 'weekly', name: '周报旧表' }], has_more: false } });
   const m = url.pathname.match(/\/apps\/([^/]+)\/tables\/([^/]+)\/records(?:\/([^/]+))?$/);
@@ -56,6 +56,10 @@ globalThis.fetch = async (input, options = {}) => {
   assert.ok(['POST', 'PUT'].includes(options.method));
   const fields = JSON.parse(options.body).fields;
   writes.push({ table, recordId, fields });
+  if (table === 'weekly') {
+    if (recordId) Object.assign(rows.weekly.find(r => r.record_id === recordId).fields, fields);
+    else rows.weekly.push({ record_id: 'created', fields });
+  }
   return Response.json({ code: 0, data: { record: { record_id: recordId || 'created', fields } } });
 };
 async function token(id, extra = {}) {
@@ -100,9 +104,50 @@ try {
     const r = await call(1, '/api/reports', 'POST', { progress: '完成', nextPlan: '计划', evidence: '' });
     assert.equal(r.status, 200); assert.equal(writes[0].fields['证据链接'], null);
   });
-  await test('weekly unsafe link is rejected before write', async () => {
+  await test('old URL-only column blocks free text without blaming user or dropping content', async () => {
     const r = await call(1, '/api/reports', 'POST', { progress: '完成', nextPlan: '计划', evidence: 'javascript:alert(1)' });
-    assert.equal(r.status, 400); assert.equal(writes.length, 0);
+    assert.equal(r.status, 503); assert.equal((await r.json()).code, 'WEEKLY_EVIDENCE_COLUMN_TYPE'); assert.equal(writes.length, 0);
+  });
+  await test('five-field text report persists, reads back and resubmits the same row', async () => {
+    weeklyColumns = weeklyColumns.map(f => f.field_name === '证据链接' ? { field_name: '产出（若有阶段性成果，可以提交文档链接）', type: 1 } : f.field_name === '问题与阻塞' ? { field_name: '当前问题与阻塞', type: 1 } : f);
+    const body = { progress: '本周完成', learning: '方法说明', evidence: '代码 https://example.com/code\n飞书文档 https://test.feishu.cn/docx/test', blockers: '需要协助', nextPlan: '下周验证' };
+    const result = await call(1, '/api/reports', 'POST', body);
+    assert.equal(result.status, 200);
+    const saved = await result.json(); assert.equal(saved.readBackVerified, true);
+    assert.deepEqual(saved.report.values, body);
+    assert.equal(writes[0].fields['产出（若有阶段性成果，可以提交文档链接）'], body.evidence);
+    assert.equal(Object.hasOwn(writes[0].fields, '证据链接'), false);
+    const updated = await call(1, '/api/reports', 'POST', { ...body, progress: '更新结果' });
+    assert.equal(updated.status, 200); assert.equal(rows.weekly.length, 1);
+    const page = await (await call(1, '/api/weekly')).json();
+    assert.equal(page.student.history[0].values.progress, '更新结果');
+    const teacher = await (await call(9, '/api/weekly')).json();
+    assert.equal(teacher.teacher.students.find(p => p.id === 'ou_1').currentReport.values.evidence, body.evidence);
+    assert.equal((await (await call(2, '/api/weekly')).json()).student.history.length, 0);
+  });
+  await test('weekly-only page survives broken literature but never bypasses personnel checks', async () => {
+    recordResponses.literature = { items: null, total: 1, has_more: false };
+    const failed = await call(1, '/api/dashboard'); assert.equal(failed.status, 502);
+    const error = await failed.json(); assert.equal(error.code, 'TABLE_READ_FAILED'); assert.ok(error.message.includes('LITERATURE'));
+    const weekly = await call(1, '/api/weekly'); assert.equal(weekly.status, 200);
+    const data = await weekly.json(); assert.equal(data.weeklyOnly, true); assert.equal('literature' in data, false);
+    people[0].fields['人员状态'] = '离组'; assert.equal((await call(1, '/api/weekly')).status, 403);
+  });
+  await test('missing weekly binding cannot masquerade as an empty history', async () => {
+    const response = await call(1, '/api/weekly', 'GET', null, { ...env, WEEKLY_TABLE_ID: '' });
+    assert.equal(response.status, 503); assert.equal((await response.json()).code, 'WEEKLY_BINDING_MISSING');
+  });
+  await test('write without confirmed read-back is not reported as success', async () => {
+    recordResponses.weekly = { items: [], has_more: false };
+    const response = await call(1, '/api/reports', 'POST', { progress: 'saved', nextPlan: 'next' });
+    assert.equal(response.status, 503); assert.equal((await response.json()).code, 'WEEKLY_READBACK_FAILED');
+    assert.equal(writes.length, 1);
+  });
+  await test('duplicate weekly records block overwrite', async () => {
+    const week = (await (await call(1, '/api/weekly')).json()).week.id;
+    rows.weekly = ['a', 'b'].map(record_id => ({ record_id, fields: { 飞书OpenID: 'ou_1', 周次: week } }));
+    assert.equal((await call(1, '/api/reports', 'POST', { progress: 'test', nextPlan: 'test' })).status, 409);
+    assert.equal(writes.length, 0);
   });
   await test('signed old manager role is replaced by current master duties', async () => {
     const r = await call(1, '/api/me'); assert.equal(r.status, 200); const data = await r.json();

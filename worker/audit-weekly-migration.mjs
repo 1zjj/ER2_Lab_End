@@ -4,11 +4,10 @@ import { resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { resolveTableBinding } from './src/v2/bindings.js';
+import { WEEKLY_FIELDS, WEEKLY_NAMES, weeklyCompatibility } from './src/weekly-write.js';
 
-export const WEEKLY_WRITE_FIELDS = [
-  '请求ID', '飞书OpenID', '姓名', '周次', '周序号', '周起始', '周结束',
-  '本周完成与结果', '学习与方法', '证据链接', '问题与阻塞', '下周计划', '提交状态', '提交时间'
-];
+export const WEEKLY_WRITE_FIELDS = Object.keys(WEEKLY_FIELDS);
+
 const text = value => typeof value === 'string' ? value : Array.isArray(value)
   ? value.map(v => v?.text || '').join('') : '';
 
@@ -63,8 +62,10 @@ export async function auditWeekly(env, sources, fetchImpl = fetch, snapshot = ()
       entry.readable = true;
       entry.records = records.length;
       entry.fields = fields.map(f => ({ name: f.field_name, type: f.type, uiType: f.ui_type || '' }));
-      const names = new Set(fields.map(f => f.field_name));
-      entry.missingCurrentWriteFields = WEEKLY_WRITE_FIELDS.filter(name => !names.has(name));
+      const check = weeklyCompatibility(fields);
+      entry.missingCurrentWriteFields = check.missing;
+      entry.incompatibleWriteFields = check.incompatible;
+      entry.canonicalContentNames = Object.values(WEEKLY_NAMES).map(names => names[0]);
       entry.computedWriteFields = fields.filter(f => WEEKLY_WRITE_FIELDS.includes(f.field_name) &&
         [19, 20, 1001, 1002, 1003, 1004, 1005].includes(f.type)).map(f => f.field_name);
       entry.recordsWithoutStableIdentity = records.filter(r => !/^ou_/.test(text(r.fields?.['飞书OpenID']))).length;

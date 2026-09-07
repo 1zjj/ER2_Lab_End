@@ -1,3 +1,4 @@
+import { weeklyValues } from './weekly-write.js';
 import { authority, identity as masterIdentity, strictBinding } from './authorization.js';
 import { resolveTableBinding } from './v2/bindings.js';
 /** Deterministic ER² professor digest. No model requests, inference or public storage. */
@@ -90,10 +91,10 @@ export function buildDigest({ members = [], reports = [], literature = [], at })
     if (!found) { missing.push(name); continue; }
     const record = found.record;
     students.push({ name, project: read(member, '项目编号', '项目代码'),
-      progress: read(record, '本周完成与结果', '本周完成'),
-      nextPlan: read(record, '下周计划'), learning: read(record, '学习与方法', '学习进展'),
-      knowledge: read(record, '候选知识点'), blockers: read(record, '问题与阻塞', '阻塞'),
-      evidence: read(record, '证据链接'), submittedAt: found.time,
+      progress: weeklyValues(record).progress || read(record, '本周完成'),
+      nextPlan: weeklyValues(record).nextPlan, learning: weeklyValues(record).learning || read(record, '学习进展'),
+      knowledge: read(record, '候选知识点'), blockers: weeklyValues(record).blockers || read(record, '阻塞'),
+      evidence: weeklyValues(record).evidence, submittedAt: found.time,
       recordId: record.record_id || '' });
   }
   const reading = literature.filter((record) => read(record, '周次', 'WeekID') === week.id &&
