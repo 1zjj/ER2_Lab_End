@@ -121,6 +121,24 @@ export function canProject(context, id, action = 'read') {
 export function requireProject(context, id, action = 'read') {
   if (!canProject(context, id, action)) throw authError(403, '没有该项目的操作权限');
 }
+// Empty Feishu association cells may be arrays or link envelopes. Unknown or
+// malformed values remain scoped so they cannot bypass project authorization.
+function emptyProjectValue(value) {
+  if (value == null) return true;
+  if (typeof value === 'string') return value.trim() === '';
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === 'object') {
+    const keys = Object.keys(value);
+    return keys.length > 0 && keys.every(key =>
+      ['link_record_ids', 'record_ids'].includes(key) &&
+      Array.isArray(value[key]) && value[key].length === 0);
+  }
+  return false;
+}
+export function hasProjectScope(record) {
+  const fields = record?.fields || {};
+  return ['统一项目编号', 'ProjectID', '项目编号', '关联项目'].some(key => !emptyProjectValue(fields[key]));
+}
 export function businessProjectId(record) {
   const f = record?.fields || {};
   const ids = ['统一项目编号', 'ProjectID', '项目编号'].map(k => text(f[k])).filter(v => /^PRJ-\d{3,}$/.test(v));

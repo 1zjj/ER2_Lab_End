@@ -125,6 +125,32 @@ try {
     assert.equal(teacher.teacher.students.find(p => p.id === 'ou_1').currentReport.values.evidence, body.evidence);
     assert.equal((await (await call(2, '/api/weekly')).json()).student.history.length, 0);
   });
+  await test('empty Feishu project links preserve personal weekly history, teacher visibility and edits', async () => {
+    people.push(person(31));
+    const body = { progress: '个人周报', nextPlan: '继续验证' };
+    assert.equal((await call(31, '/api/reports', 'POST', body)).status, 200);
+    for (const empty of [[], null, '', '  ', { link_record_ids: [] }, { record_ids: [] }]) {
+      rows.weekly[0].fields['关联项目'] = empty;
+      const own = await (await call(31, '/api/weekly')).json();
+      assert.equal(own.student.history.length, 1, 'Empty project link must not hide a saved personal report');
+      const teacher = await (await call(9, '/api/weekly')).json();
+      assert.equal(teacher.teacher.students.find(p => p.id === 'ou_31').status, '已提交');
+      assert.equal((await (await call(2, '/api/weekly')).json()).student.history.length, 0);
+      assert.equal((await call(31, '/api/reports', 'POST', { ...body, progress: '修改个人周报' })).status, 200);
+      assert.equal(rows.weekly.length, 1);
+      assert.equal((await (await call(31, '/api/dashboard')).json()).student.history.length, 1);
+    }
+  });
+  await test('nonempty or malformed project links still require explicit project authorization', async () => {
+    people.push(person(31));
+    const body = { progress: '个人周报', nextPlan: '计划' };
+    assert.equal((await call(31, '/api/reports', 'POST', body)).status, 200);
+    for (const linked of [[{ record_id: 'rec-private' }], { link_record_ids: ['rec-private'] }, { unexpected: 'private' }, {}]) {
+      rows.weekly[0].fields['关联项目'] = linked;
+      assert.equal((await (await call(31, '/api/weekly')).json()).student.history.length, 0);
+      assert.equal((await call(31, '/api/reports', 'POST', body)).status, 403);
+    }
+  });
   await test('weekly-only page survives broken literature but never bypasses personnel checks', async () => {
     recordResponses.literature = { items: null, total: 1, has_more: false };
     const failed = await call(1, '/api/dashboard'); assert.equal(failed.status, 502);

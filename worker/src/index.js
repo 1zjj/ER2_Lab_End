@@ -1,5 +1,5 @@
 import { evidenceText, serializeWeekly, weeklyValues, weeklyMatches, weeklyCompatibility, WEEKLY_VERSION } from './weekly-write.js';
-import { authority, AUTH_BINDINGS, strictBinding, identity, canProject, requireProject, businessProjectId, visibleProjects } from './authorization.js';
+import { authority, AUTH_BINDINGS, strictBinding, identity, canProject, requireProject, businessProjectId, visibleProjects, hasProjectScope } from './authorization.js';
 import { resolveTableBinding as resolveBinding } from './v2/bindings.js';
 const FEISHU_API = 'https://open.feishu.cn/open-apis';
 const FEISHU_AUTHORIZE = 'https://accounts.feishu.cn/open-apis/authen/v1/authorize';
@@ -171,11 +171,7 @@ async function dashboard(request, env, session) {
     roles: session.roles
   };
   const permittedProjects = visibleProjects(session, projectRecords);
-  const allowedResource = record => {
-    const f = record.fields || {};
-    const hasProject = ['统一项目编号', 'ProjectID', '项目编号', '关联项目'].some(k => f[k]);
-    return !hasProject || canProject(session, businessProjectId(record));
-  };
+  const allowedResource = record => !hasProjectScope(record) || canProject(session, businessProjectId(record));
   const permittedReports = reportRecords.filter(allowedResource);
   const permittedCourses = courseRecords.filter(allowedResource);
   const permittedLinks = linkRecords.filter(allowedResource);
@@ -883,10 +879,7 @@ async function weeklyPage(request, env, session) {
   const [people, records] = await Promise.all([
     listRecords(env, token, 'MEMBERS_TABLE_ID'), listRecords(env, token, 'WEEKLY_TABLE_ID')
   ]);
-  const reports = records.filter(record => {
-    const f = record.fields || {};
-    return !['统一项目编号', 'ProjectID', '项目编号', '关联项目'].some(k => f[k]) || canProject(session, businessProjectId(record));
-  });
+  const reports = records.filter(record => !hasProjectScope(record) || canProject(session, businessProjectId(record)));
   const members = people.flatMap(record => { try { const member = authority(people, [], [], identity(record)); return [{ ...member, openId: member.sub }]; } catch (_) { return []; } });
   const week = weekInfo(new Date());
   const student = buildStudent(session, week, reports, [], [], [], []);
@@ -1305,8 +1298,7 @@ async function requireActiveMember(env, session) {
 }
 
 function requireResource(session, record, action = 'read') {
-  const f = record?.fields || {};
-  if (['统一项目编号', 'ProjectID', '项目编号', '关联项目'].some(k => f[k])) requireProject(session, businessProjectId(record), action);
+  if (hasProjectScope(record)) requireProject(session, businessProjectId(record), action);
 }
 
 function projectView(record, session) {

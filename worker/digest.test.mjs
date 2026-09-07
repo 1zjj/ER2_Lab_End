@@ -117,7 +117,7 @@ const originalFetch = globalThis.fetch;
 const sent = [], logs = [];
 let recipientStatus = '在组';
 const runtimeMembers = members.slice(0, 5).map((r, i) => ({ ...r, fields: { ...r.fields, '飞书OpenID': 'ou_' + r.fields['飞书OpenID'], '飞书成员': [{ id: 'ou_' + r.fields['飞书OpenID'] }], '成员编号': 'P-' + String(i + 1).padStart(3, '0'), '人员边界': '团队内', '人员状态': '在组', '成员类别': i === 4 ? 'PI' : '博士', '系统职责': [] } }));
-const runtimeReports = reports.map(r => ({ ...r, fields: { ...r.fields, '飞书OpenID': 'ou_' + r.fields['飞书OpenID'] } }));
+const runtimeReports = reports.map(r => ({ ...r, fields: { ...r.fields, '飞书OpenID': 'ou_' + r.fields['飞书OpenID'], '关联项目': [] } }));
 const env = { FEISHU_APP_ID: 'test-app', FEISHU_APP_SECRET: 'test-secret', FEISHU_BASE_APP_TOKEN: 'test-base',
   MEMBERS_BASE_APP_TOKEN: 'test-base', MEMBERS_TABLE_ID: 'members', WEEKLY_TABLE_ID: 'weekly', LITERATURE_TABLE_ID: 'literature', AUTOMATION_LOGS_TABLE_ID: 'logs',
   PROFESSOR_OPEN_ID: 'ou_professor', FRONTEND_URL: 'https://example.com/workbench/' };
@@ -142,6 +142,21 @@ try {
   await check('successful weekly digest is not resent', async () => {
     const count = sent.length;
     assert.equal((await runProfessorDigest(at, env)).skipped, 'already_sent'); assert.equal(sent.length, count);
+  });
+  await check('digest includes empty project cells but excludes linked and malformed project scope', async () => {
+    const originalScopes = runtimeReports.map(r => r.fields['关联项目']);
+    try {
+      logs.length = 0;
+      for (const r of runtimeReports) r.fields['关联项目'] =
+        r.fields['飞书OpenID'] === 'ou_a' ? { link_record_ids: ['private-project'] } : {};
+      const before = sent.length;
+      const result = await runProfessorDigest(at, env);
+      assert.equal(result.submitted, 0);
+      assert.ok(sent.slice(before).every(message => !message.content.includes('完整正文')));
+    } finally {
+      runtimeReports.forEach((r, i) => { r.fields['关联项目'] = originalScopes[i]; });
+      logs.length = 0;
+    }
   });
   await check('revoked professor cannot receive a new digest', async () => {
     logs.length = 0; recipientStatus = '离组'; const before = sent.length;

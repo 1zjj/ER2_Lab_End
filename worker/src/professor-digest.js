@@ -1,5 +1,5 @@
 import { weeklyValues } from './weekly-write.js';
-import { authority, identity as masterIdentity, strictBinding } from './authorization.js';
+import { authority, identity as masterIdentity, strictBinding, hasProjectScope } from './authorization.js';
 import { resolveTableBinding } from './v2/bindings.js';
 /** Deterministic ER² professor digest. No model requests, inference or public storage. */
 const API = 'https://open.feishu.cn/open-apis';
@@ -259,7 +259,7 @@ export async function runProfessorDigest(at, env) {
     } catch (_) { return []; }
   });
   // Weekly reports are personal records. Project-labelled material requires separate project authorization.
-  const personalReports = reports.filter(record => !['统一项目编号', 'ProjectID', '项目编号', '关联项目'].some(key => record.fields?.[key]));
+  const personalReports = reports.filter(record => !hasProjectScope(record));
   const digest = buildDigest({ members, reports: personalReports, literature, at });
   const cards = buildCards(digest, env.FRONTEND_URL, env.PROFESSOR_OPEN_ID);
   const snapshotId = await stableId(JSON.stringify(cards));
