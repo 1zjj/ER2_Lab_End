@@ -2,6 +2,24 @@
 export const AUTH_BINDINGS = ['MEMBERS_TABLE_ID', 'AUTH_PROJECTS_TABLE_ID', 'PROJECT_MEMBERS_TABLE_ID'];
 export const text = value => Array.isArray(value) ? value.map(text).join('') : String(value && typeof value === 'object' ? value.text ?? value.name ?? value.value ?? '' : value ?? '').trim();
 const values = value => (Array.isArray(value) ? value : value ? [value] : []).map(text).filter(Boolean);
+// Explicit user-approved matrix; personnel labels are not an ordinal scale.
+export function confidentialityAllows(personLevel, projectLevel) {
+  const matrix = { '普通': ['公开'], '受限': ['公开', '内部'], '内部': ['公开', '内部', '机密', '绝密'] };
+  return Object.hasOwn(matrix, personLevel) && matrix[personLevel].includes(projectLevel);
+}
+function qualifiedApproval(people, value, applicant) {
+  const linked = refs(value);
+  const raw = Array.isArray(value) ? value : [];
+  const ids = raw.map(v => String(v?.open_id || v?.id || '')).filter(Boolean);
+  const matches = people.filter(p => linked.includes(p.record_id) || ids.includes(identity(p)));
+  if (matches.length !== 1 || (linked.length + ids.length) !== 1) return false;
+  const p = matches[0], f = p.fields || {}, id = identity(p);
+  return Boolean(id && p.record_id !== applicant.record_id &&
+    people.filter(other => claimsIdentity(other, id)).length === 1 &&
+    /^P-\d{3,}$/.test(personNumber(p)) && people.filter(other => personNumber(other) === personNumber(p)).length === 1 &&
+    f['人员状态'] === '在组' && f['人员边界'] === '团队内' && f['是否启用'] !== false && !f['离组时间'] &&
+    values(f['系统职责']).includes('管理员'));
+}
 export function personNumber(record) {
   const f = record?.fields || {}, a = text(f['人员编号']), b = text(f['成员编号']);
   return a && b && a !== b ? '' : a || b;
@@ -50,7 +68,7 @@ export function authority(people, projects, relations, openId, now = Date.now())
   const matches = people.filter(p => claimsIdentity(p, openId));
   if (matches.length !== 1 || identity(matches[0]) !== openId || !openId) throw authError(403, '账号不存在、重复或身份字段不一致');
   const record = matches[0], f = record.fields || {}, personId = personNumber(record);
-  if (!/^P-\d{3}$/.test(personId) || people.filter(p => personNumber(p) === personId).length !== 1) throw authError(403, '人员编号缺失或重复');
+  if (!/^P-\d{3,}$/.test(personId) || people.filter(p => personNumber(p) === personId).length !== 1) throw authError(403, '人员编号缺失或重复');
   if (!text(f['姓名']) || f['人员状态'] !== '在组' || !['团队内', '团队外'].includes(f['人员边界']) || f['是否启用'] === false || f['离组时间']) throw authError(403, '人员资料无效或账号已停用');
   const duties = values(f['系统职责']);
   if (!['PI', 'RA', '管理员', '博士', '硕士', '本科生', '联合培养', '企业伙伴', '临时'].includes(f['成员类别'])) throw authError(403, '成员类别无效');
@@ -60,7 +78,7 @@ export function authority(people, projects, relations, openId, now = Date.now())
   const projectMap = new Map(), invalid = new Set();
   for (const project of projects) {
     const id = text(project.fields?.['项目编号']);
-    if (!/^PRJ-\d{3}$/.test(id)) continue;
+    if (!/^PRJ-\d{3,}$/.test(id)) continue;
     if (projectMap.has(id)) invalid.add(id);
     projectMap.set(id, project);
   }
@@ -77,11 +95,10 @@ export function authority(people, projects, relations, openId, now = Date.now())
     if (!id) continue;
     counts.set(id, (counts.get(id) || 0) + 1);
     const start = date(rf['加入日期']), end = date(rf['权限到期日'], true);
-    const approvers = refs(rf['审批人']);
-    const hasApprover = approvers.some(ref => people.some(p => p.record_id === ref && identity(p))) ||
-      (Array.isArray(rf['审批人']) && rf['审批人'].some(v => /^ou_[\w-]+$/.test(String(v?.open_id || v?.id || ''))));
+    const hasApprover = qualifiedApproval(people, rf['审批人'], record);
     const level = ({ '只读': 1, '编辑': 2, '管理': 3 })[text(rf['权限级别'])] || 0;
-    if (invalid.has(id) || !level || rf['授权状态'] !== '有效' || rf['权限落实状态'] !== '已落实' || !hasApprover || rf['成员边界'] !== f['人员边界'] || !Number.isFinite(start) || !Number.isFinite(end) || end < start || now < start || now > end) continue;
+    if (invalid.has(id) || !level || rf['授权状态'] !== '有效' || rf['工作台授权确认'] !== '已确认' || ['待变更', '待撤回', '已撤回'].includes(rf['权限落实状态']) || !hasApprover || rf['成员边界'] !== f['人员边界'] || !Number.isFinite(start) || !Number.isFinite(end) || end < start || now < start || now > end) continue;
+    if (!confidentialityAllows(text(f['保密等级']), text(project?.fields?.['保密等级']))) continue;
     const statuses = ['项目阶段', '项目状态', '状态'].map(k => text(project.fields?.[k])).filter(Boolean);
     const status = new Set(statuses).size === 1 ? statuses[0] : '';
     if (!['执行中', '进行中', '暂停'].includes(status)) continue;
@@ -99,14 +116,14 @@ export function authority(people, projects, relations, openId, now = Date.now())
 }
 export function canProject(context, id, action = 'read') {
   const required = { read: 1, edit: 2, manage: 3 }[action];
-  return Boolean(required && /^PRJ-\d{3}$/.test(id) && context?.grants?.[id]?.level >= required && context.grants[id].expiresAt >= Date.now());
+  return Boolean(required && /^PRJ-\d{3,}$/.test(id) && context?.grants?.[id]?.level >= required && context.grants[id].expiresAt >= Date.now());
 }
 export function requireProject(context, id, action = 'read') {
   if (!canProject(context, id, action)) throw authError(403, '没有该项目的操作权限');
 }
 export function businessProjectId(record) {
   const f = record?.fields || {};
-  const ids = ['统一项目编号', 'ProjectID', '项目编号'].map(k => text(f[k])).filter(v => /^PRJ-\d{3}$/.test(v));
+  const ids = ['统一项目编号', 'ProjectID', '项目编号'].map(k => text(f[k])).filter(v => /^PRJ-\d{3,}$/.test(v));
   return new Set(ids).size === 1 ? ids[0] : '';
 }
 export function visibleProjects(context, records) {
