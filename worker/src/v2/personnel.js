@@ -1,7 +1,7 @@
 import { capabilitiesFromMemberFields } from './capabilities.js';
 import { personNumber } from '../authorization.js';
 
-export const PERSON_ID_PATTERN = /^P-\d{3}$/;
+export const PERSON_ID_PATTERN = /^P-\d{3,}$/;
 export const MEMBER_BOUNDARIES = Object.freeze(['团队内', '团队外']);
 export const MEMBER_CATEGORIES = Object.freeze(['PI', 'RA', '博士', '硕士', '本科生', '联合培养', '企业伙伴', '临时']);
 export const MEMBER_STATUSES = Object.freeze(['在组', '离组', '已归档']);
