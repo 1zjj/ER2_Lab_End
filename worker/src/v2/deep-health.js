@@ -1,3 +1,4 @@
+import { weeklyCompatibility } from '../weekly-write.js';
 import { resolveTableBinding } from './bindings.js';
 import { validateSchema } from './schema.js';
 
@@ -78,6 +79,12 @@ export async function buildDeepHealth(env, fetchImpl = fetch) {
       const schema = validateSchema(schemaName, names);
       item.schemaOk = schema.ok;
       item.missingRequired = schema.missingRequired;
+      if (schemaName === 'weekly') {
+        const contract = weeklyCompatibility(fields?.items || []);
+        item.schemaOk = contract.ok;
+        item.missingRequired = contract.missing;
+        item.incompatibleFields = contract.incompatible;
+      }
 
       await getJson('/bitable/v1/apps/' + encodeURIComponent(tableBase.appToken) + '/tables/' + encodeURIComponent(binding.tableId) + '/records?user_id_type=open_id&page_size=1', token, fetchImpl);
       item.recordReadReadable = true;
