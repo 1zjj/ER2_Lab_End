@@ -14,21 +14,21 @@ for (const key of ['MEMBERS', 'AUTH_PROJECTS', 'PROJECT_MEMBERS', 'PROJECTS', 'W
 }
 const person = (id, extra = {}) => ({ record_id: 'rec-p' + id, fields: {
   '成员编号': 'P-' + String(id).padStart(3, '0'), '姓名': '模拟人员' + id,
-  '飞书成员': [{ id: 'ou_' + id }], '人员状态': '在组', '人员边界': '团队内', '成员类别': '博士', '系统职责': [], ...extra
+  '飞书成员': [{ id: 'ou_' + id }], '人员状态': '在组', '人员边界': '团队内', '成员类别': '博士', '系统职责': [], '保密等级': '内部', ...extra
 } });
 const project = (id, extra = {}) => ({ record_id: 'rec-prj' + id, fields: {
-  '项目编号': 'PRJ-' + String(id).padStart(3, '0'), '项目阶段': '执行中', ...extra
+  '项目编号': 'PRJ-' + String(id).padStart(3, '0'), '项目阶段': '执行中', '保密等级': '内部', ...extra
 } });
 const relation = (pid, prj, extra = {}) => ({ record_id: 'rec-rel' + pid + '-' + prj, fields: {
   '关联人员': { link_record_ids: ['rec-p' + pid] }, '关联项目': { link_record_ids: ['rec-prj' + prj] },
-  '权限级别': '编辑', '授权状态': '有效', '权限落实状态': '已落实', '成员边界': '团队内',
+  '权限级别': '编辑', '授权状态': '有效', '工作台授权确认': '已确认', '权限落实状态': '已落实', '成员边界': '团队内',
   '加入日期': '2020-01-01', '权限到期日': '2099-01-01', '审批人': [{ id: 'ou_9' }], ...extra
 } });
 let people, projects, relations, rows, writes, failRead;
 function reset() {
-  people = [person(1), person(2), person(9, { '系统职责': ['管理员'] })];
+  people = [person(1), person(2), person(9, { '系统职责': ['管理员'] }), person(8, { '系统职责': ['管理员'] })];
   projects = [project(1), project(2), project(3, { '项目阶段': '暂停' })];
-  relations = [relation(1, 1), relation(2, 2, { '权限级别': '只读' }), relation(9, 1, { '权限级别': '管理' })];
+  relations = [relation(1, 1), relation(2, 2, { '权限级别': '只读' }), relation(9, 1, { '权限级别': '管理', '审批人': [{ id: 'ou_8' }] })];
   rows = {
     projects: [1, 2, 3].map(i => ({ record_id: 'business' + i, fields: { '项目编号': 'P0' + i, '统一项目编号': 'PRJ-00' + i, '项目名称': '业务项目' + i } })),
     weekly: [], courses: [], tasks: [], links: [], literature: []
@@ -97,7 +97,7 @@ try {
   await test('editor edits content but cannot manage project title', async () => { assert.equal((await call(1, '/api/projects/PRJ-001', 'PATCH', { milestone: 'verified' })).status, 200); assert.equal((await call(1, '/api/projects/PRJ-001', 'PATCH', { title: 'rename' })).status, 403); assert.equal(writes[0].recordId, 'business1'); });
   await test('project management includes editing but has no cross-project bypass', async () => { assert.equal((await call(9, '/api/projects/PRJ-001', 'PATCH', { title: '管理修改', blocker: '' })).status, 200); assert.equal((await call(9, '/api/projects/PRJ-002')).status, 403); });
   await test('unknown and authorization fields cannot be patched', async () => { assert.equal((await call(1, '/api/projects/PRJ-001', 'PATCH', { '权限级别': '管理' })).status, 400); assert.equal(writes.length, 0); });
-  for (const [field, value] of [['权限落实状态', '待核验'], ['权限落实状态', '待撤回'], ['授权状态', '待审批'], ['授权状态', '已撤销'], ['权限到期日', '2020-01-01'], ['加入日期', '2099-01-01'], ['加入日期', ''], ['权限到期日', ''], ['审批人', []], ['成员边界', '团队外']]) {
+  for (const [field, value] of [['工作台授权确认', ''], ['工作台授权确认', '待确认'], ['权限落实状态', '待撤回'], ['授权状态', '待审批'], ['授权状态', '已撤销'], ['权限到期日', '2020-01-01'], ['加入日期', '2099-01-01'], ['加入日期', ''], ['权限到期日', ''], ['审批人', []], ['成员边界', '团队外']]) {
     await test('invalid relation denies: ' + field + '=' + String(value), async () => { relations[0].fields[field] = value; assert.equal((await call(1, '/api/projects/PRJ-001')).status, 403); });
   }
   await test('deleted relation revokes existing session', async () => { assert.equal((await call(1, '/api/projects/PRJ-001')).status, 200); relations = relations.filter(r => r !== relations[0]); assert.equal((await call(1, '/api/projects/PRJ-001')).status, 403); });
@@ -144,6 +144,41 @@ try {
       return Response.json({ code: 0, data: { items, has_more: false } });
     });
     assert.equal(result.ready, true); assert.equal(result.writesPerformed, false); assert.equal(requests, 9);
+  });
+  let matrixIdentity = 100;
+  for (const personLevel of ['普通', '受限', '内部', '', '未知']) {
+    for (const projectLevel of ['公开', '内部', '机密', '绝密', '', '未知']) {
+      await test(`confidentiality ${personLevel}/${projectLevel}`, async () => {
+        const login = matrixIdentity++;
+        people[0].fields['飞书成员'] = [{ id: 'ou_' + login }];
+        people[0].fields['保密等级'] = personLevel;
+        projects[0].fields['保密等级'] = projectLevel;
+        const allowed = ({ '普通': ['公开'], '受限': ['公开', '内部'], '内部': ['公开', '内部', '机密', '绝密'] })[personLevel]?.includes(projectLevel) || false;
+        assert.equal((await call(login, '/api/projects/PRJ-001')).status, allowed ? 200 : 403);
+        assert.equal((await call(login, '/api/projects/PRJ-001', 'PATCH', { milestone: 'x' })).status, allowed ? 200 : 403);
+        if (!allowed) assert.equal(writes.length, 0);
+      });
+    }
+  }
+  await test('native ACL pending is independent of explicitly confirmed portal authorization', async () => {
+    relations[0].fields['权限落实状态'] = '待核验';
+    assert.equal((await call(1, '/api/projects/PRJ-001')).status, 200);
+    delete relations[0].fields['工作台授权确认'];
+    assert.equal((await call(1, '/api/projects/PRJ-001')).status, 403);
+  });
+  for (const mutation of ['student', 'self', 'left', 'external', 'duplicate', 'multiple']) await test('invalid approver ' + mutation, async () => {
+    if (mutation === 'student') people[2].fields['系统职责'] = [];
+    if (mutation === 'self') { people[0].fields['系统职责'] = ['管理员']; relations[0].fields['审批人'] = [{ id: 'ou_1' }]; }
+    if (mutation === 'left') people[2].fields['人员状态'] = '离组';
+    if (mutation === 'external') people[2].fields['人员边界'] = '团队外';
+    if (mutation === 'duplicate') people.push(person(7, { '飞书成员': [{ id: 'ou_9' }] }));
+    if (mutation === 'multiple') relations[0].fields['审批人'].push({ id: 'ou_8' });
+    assert.equal((await call(1, '/api/projects/PRJ-001')).status, 403);
+  });
+  await test('clearance downgrade revokes old session', async () => {
+    assert.equal((await call(1, '/api/projects/PRJ-001')).status, 200);
+    people[0].fields['保密等级'] = '普通';
+    assert.equal((await call(1, '/api/projects/PRJ-001')).status, 403);
   });
   const storage = new Map();
   const fakeStorage = { get length() { return storage.size; }, key(i) { return [...storage.keys()][i]; }, getItem(k) { return storage.get(k) ?? null; }, setItem(k,v) { storage.set(k,v); }, removeItem(k) { storage.delete(k); } };
