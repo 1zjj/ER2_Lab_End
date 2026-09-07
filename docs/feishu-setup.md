@@ -66,8 +66,8 @@ SESSION_SECRET 使用至少32字节随机字符串。所有 `*_BASE_APP_TOKEN`�
 | COURSES_BASE_APP_TOKEN / COURSES_TABLE_ID | 课程进度表的 app token / table id |
 | TASKS_BASE_APP_TOKEN / TASKS_TABLE_ID | 任务表的 app token / table id |
 | LINKS_BASE_APP_TOKEN / LINKS_TABLE_ID | 门户链接表的 app token / table id，可选 |
-| AUTOMATION_LOGS_BASE_APP_TOKEN / AUTOMATION_LOGS_TABLE_ID | 自动化日志表的 app token / table id，可选 |
-| PROFESSOR_OPEN_ID | 接收周五摘要和 Track A 结业通知的教授 open_id；启用课程流程时必填 |
+| AUTOMATION_LOGS_BASE_APP_TOKEN / AUTOMATION_LOGS_TABLE_ID | 自动化日志表的 app token / table id；周五提醒和教授汇总必填，用于保存发送回执和重试状态 |
+| PROFESSOR_OPEN_ID | 接收周五汇总和 Track A 结业通知的教授 open_id；启用任一通知时必填；周报汇总还会校验人员表中的“教授周报接收”职责 |
 | COURSE_REVIEWER_OPEN_ID | 朱俊杰的 open_id；只有该账号可以确认 Track A 课程记录 |
 
 ER² Lab 当前数据分布在多套 Base 中，因此优先为每张表设置对应的加密 Secret：`MEMBERS_BASE_APP_TOKEN`、`WEEKLY_BASE_APP_TOKEN`、`LITERATURE_BASE_APP_TOKEN` 等。仅当全部表都在同一套 Base 中时，才使用兼容 Secret `FEISHU_BASE_APP_TOKEN`。
@@ -77,6 +77,18 @@ ER² Lab 当前数据分布在多套 Base 中，因此优先为每张表设置�
 ## 4. 启用真实数据
 
 修改仓库根目录 config.js，把 apiBase 改为 Worker 地址并把 demo 改为 false。
+
+### 周报定时任务配置
+
+周五 11:00 的未交提醒和 18:00 的教授汇总按 `Asia/Shanghai` 运行。两个任务都读取正式 `WEEKLY_TABLE_ID`；自动化日志表仅保存运行和发送回执，不是另一张周报提交表。
+
+- 为 `MEMBERS_TABLE_ID`、`AUTH_PROJECTS_TABLE_ID`、`PROJECT_MEMBERS_TABLE_ID` 显式配置各自所属 Base，权限主表不使用全局 Base 回退。
+- 为 `WEEKLY_TABLE_ID` 和 `AUTOMATION_LOGS_TABLE_ID` 配置正确的表及所属 Base。日志表需要应用可读取和新增记录的权限，不能只填一个 table id。
+- 日志表应包含文本字段：`运行键`、`任务名称`、`执行时间`、`执行结果`、`执行说明`。当前代码把执行时间写为 ISO 文本。已有字段类型不同的表需先核对兼容性，不要直接改动历史字段。
+- 教授汇总还要求 `PROFESSOR_OPEN_ID` 对应当前有效、具有“教授周报接收”职责的权威人员记录。接收人停用或职责不符时停止发送。
+- 部署后检查 `/health` 的 `weeklyAutomation.remindersConfigured`、`digestConfigured`、`missingBindings`。这些是配置存在性检查（`scope: configuration_only`），不证明日志字段、应用权限或真实消息送达已通过验收。
+
+缺少自动化日志表时，定时任务停止发送；已经保存的逐人回执用于后续重试。周报提交与本人历史记录本身不依赖自动化日志表。文献读取失败也不应阻断周报提醒或汇总原文。
 
 ## 5. 验收账号
 
