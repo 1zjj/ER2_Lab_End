@@ -1,6 +1,7 @@
 // Read-only migration inventory. Never writes Feishu records, fields, workflows or messages.
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { resolveTableBinding } from './src/v2/bindings.js';
 
@@ -97,8 +98,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
       { label: 'current_worker', ...resolveTableBinding(env, 'WEEKLY_TABLE_ID') },
       fromUrl('target_90_2', targetUrl), fromUrl('questionnaire', formUrl)
     ];
-    const folder = resolve('weekly-snapshot-' + new Date().toISOString().replace(/[:.]/g, '-'));
-    mkdirSync(folder, { mode: 0o700 });
+    const folder = resolve(homedir(), 'ER2-private-backups', 'weekly-snapshot-' + new Date().toISOString().replace(/[:.]/g, '-'));
+    mkdirSync(folder, { mode: 0o700, recursive: true });
     const report = await auditWeekly(env, sources, fetch, (label, data) => {
       writeFileSync(resolve(folder, label + '.json'), JSON.stringify(data, null, 2), { mode: 0o600, flag: 'wx' });
     });
