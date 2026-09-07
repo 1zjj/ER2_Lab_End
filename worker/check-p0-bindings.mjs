@@ -11,9 +11,12 @@ export async function checkBindings(env, fetchImpl = fetch) {
   let token = '', stage = 'authentication', table = '';
   const progress = { authentication: false };
   async function request(path, body) {
+    const attempts = body ? 1 : 2;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
     const response = await fetchImpl(api + path, { method: body ? 'POST' : 'GET',
       headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
-      ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(10000) });
+      ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(20000) });
     let data;
     try { data = await response.json(); }
     catch (_) { throw Object.assign(new Error('NON_JSON_RESPONSE'), { httpStatus: response.status }); }
@@ -21,6 +24,13 @@ export async function checkBindings(env, fetchImpl = fetch) {
       httpStatus: response.status, apiCode: typeof data.code === 'number' ? data.code : null
     });
     return data;
+    } catch (error) {
+      const transient = ['TimeoutError', 'AbortError', 'TypeError'].includes(error.name) || error.httpStatus === 429 || error.httpStatus >= 500;
+      if (!transient || attempt + 1 >= attempts) throw error;
+      result.readRetries = (result.readRetries || 0) + 1;
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    }
   }
   async function list(path, collection) {
     const all = [], seen = new Set(); let page = '';
