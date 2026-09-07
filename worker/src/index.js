@@ -67,6 +67,7 @@ export default {
       if (url.pathname.startsWith('/api/')) session = await requireActiveMember(env, session);
       if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(request.method) && url.pathname.startsWith('/api/')) enforceWriteRateLimit(session.sub);
       if (url.pathname === '/api/me' && request.method === 'GET') return json(request, env, { profile: { sub: session.sub, personId: session.personId, name: session.name, roles: session.roles } });
+      if (url.pathname === '/api/admin/weekly-source' && request.method === 'GET') return await weeklySource(request, env, session);
       if (/^\/api\/projects(?:\/|$)/.test(url.pathname)) return await projectApi(request, env, session);
       if (url.pathname === '/api/dashboard' && request.method === 'GET') return await dashboard(request, env, session);
       if (url.pathname === '/api/reports' && request.method === 'POST') return await saveReport(request, env, session);
@@ -861,6 +862,42 @@ async function completeTrackAIfReady(env, tenantToken, records, target) {
     });
     throw error;
   }
+}
+
+async function weeklySource(request, env, session) {
+  if (!session.roles.includes('manager')) throw httpError(403, '仅管理员可以查看数据源配置');
+  const binding = resolveTableBinding(env, 'WEEKLY_TABLE_ID');
+  if (!binding.tableId || (!binding.appToken && !binding.wikiToken)) throw httpError(503, '周报数据源未配置');
+  const token = await getTenantToken(env);
+  const app = await resolveBitableAppToken(binding, token);
+  const prefix = '/bitable/v1/apps/' + encodeURIComponent(app);
+  const meta = (await feishuRequest(prefix, { bearer: token })).data?.app;
+  let target, page = ''; const seen = new Set();
+  do {
+    const data = (await feishuRequest(prefix + '/tables?page_size=100' +
+      (page ? '&page_token=' + encodeURIComponent(page) : ''), { bearer: token })).data;
+    if (!Array.isArray(data?.items)) throw httpError(502, '数据表目录读取失败');
+    target = data.items.find(item => item.table_id === binding.tableId);
+    if (target || data.has_more === false) break;
+    page = data.page_token;
+    if (data.has_more !== true || !page || seen.has(page)) throw httpError(502, '数据表目录分页不完整');
+    seen.add(page);
+  } while (page);
+  if (!target) throw httpError(404, '当前配置的周报表不在目标多维表格中');
+  let tableUrl = '';
+  try {
+    const requestedOrigin = new URL(request.url).searchParams.get('docsOrigin') || env.FEISHU_DOCS_ORIGIN;
+    const link = requestedOrigin
+      ? new URL((binding.wikiToken ? '/wiki/' + encodeURIComponent(binding.wikiToken) : '/base/' + encodeURIComponent(app)), requestedOrigin)
+      : new URL(meta?.url);
+    if (link.protocol === 'https:' && (link.hostname === 'feishu.cn' || link.hostname.endsWith('.feishu.cn')) && !link.username && !link.password) {
+      link.search = ''; link.hash = ''; link.searchParams.set('table', binding.tableId);
+      tableUrl = link.href;
+    }
+  } catch (_) { /* The API may omit a browser URL; never fabricate one. */ }
+  return json(request, env, { readOnly: true, tableId: binding.tableId,
+    tableName: target.name || '', baseName: meta?.name || '', tableUrl,
+    bindingSource: binding.source || '', recordsRead: false });
 }
 
 async function saveReport(request, env, session) {
