@@ -8,13 +8,18 @@ export async function checkBindings(env, fetchImpl = fetch) {
   const result = { writesPerformed: false, credentialsPresent: Boolean(env.FEISHU_APP_ID && env.FEISHU_APP_SECRET), tables: {}, ready: false };
   if (!result.credentialsPresent) return { ...result, blocked: 'APP_CREDENTIALS_NOT_AVAILABLE' };
   const api = 'https://open.feishu.cn/open-apis';
-  let token = '';
+  let token = '', stage = 'authentication', table = '';
+  const progress = { authentication: false };
   async function request(path, body) {
     const response = await fetchImpl(api + path, { method: body ? 'POST' : 'GET',
       headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
       ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(10000) });
-    const data = await response.json();
-    if (!response.ok || data.code !== 0) throw new Error('READ_FAILED');
+    let data;
+    try { data = await response.json(); }
+    catch (_) { throw Object.assign(new Error('NON_JSON_RESPONSE'), { httpStatus: response.status }); }
+    if (!response.ok || data.code !== 0) throw Object.assign(new Error('READ_FAILED'), {
+      httpStatus: response.status, apiCode: typeof data.code === 'number' ? data.code : null
+    });
     return data;
   }
   async function list(path, collection) {
@@ -33,20 +38,30 @@ export async function checkBindings(env, fetchImpl = fetch) {
     const auth = await request('/auth/v3/tenant_access_token/internal', { app_id: env.FEISHU_APP_ID, app_secret: env.FEISHU_APP_SECRET });
     token = auth.tenant_access_token;
     if (!token) throw new Error('AUTH_FAILED');
+    progress.authentication = true;
     const datasets = {};
     for (const [key, schema] of [['MEMBERS', 'members'], ['AUTH_PROJECTS', 'authorityProjects'], ['PROJECT_MEMBERS', 'projectMembers'], ['PROJECTS', null]]) {
+      table = key;
+      stage = 'binding';
       const binding = strictBinding(env, key + '_TABLE_ID');
+      stage = 'wiki_locator';
       const base = binding.appToken || (await request('/wiki/v2/spaces/get_node?token=' + encodeURIComponent(binding.wikiToken))).data?.node?.obj_token;
       if (!base) throw new Error('INVALID_BASE_LOCATOR');
       const prefix = '/bitable/v1/apps/' + encodeURIComponent(base) + '/tables/' + encodeURIComponent(binding.tableId);
+      progress[key] = { locatorResolved: true, fieldsReadable: false, recordsReadable: false };
+      stage = 'fields';
       const fields = await list(prefix + '/fields', 'items');
+      progress[key].fieldsReadable = true;
       const names = fields.map(f => f.field_name);
+      stage = 'records';
       const records = await list(prefix + '/records?user_id_type=open_id', 'items');
+      progress[key].recordsReadable = true;
       const missing = schema ? validateSchema(schema, names).missingRequired : ['项目名称', '当前里程碑', '最近阻塞'].filter(n => !names.includes(n));
       if (!schema && !names.some(n => ['统一项目编号', 'ProjectID'].includes(n))) missing.push('统一项目编号');
       result.tables[key] = { readable: true, records: records.length, missingRequired: missing };
       datasets[key] = records;
     }
+    stage = 'data_validation'; table = '';
     let usable = 0, denied = 0, activeDenied = 0, grants = 0;
     for (const person of datasets.MEMBERS) {
       try { const ctx = authority(datasets.MEMBERS, datasets.AUTH_PROJECTS, datasets.PROJECT_MEMBERS, identity(person)); usable++; grants += Object.keys(ctx.grants).length; }
@@ -61,7 +76,15 @@ export async function checkBindings(env, fetchImpl = fetch) {
     result.ready = usable > 0 && activeDenied === 0 && invalidMappings === 0 && Object.values(result.tables).every(t => t.missingRequired.length === 0);
     result.nativeAclVerified = false;
     return result;
-  } catch (_) { return { ...result, ready: false, blocked: 'BINDING_OR_READ_CHECK_FAILED' }; }
+  } catch (error) {
+    // Never return upstream messages, URLs, bodies, headers or error stacks: they may contain identifiers or secrets.
+    const safeReasons = ['READ_FAILED', 'NON_JSON_RESPONSE', 'INVALID_LIST_RESPONSE', 'INCOMPLETE_PAGINATION', 'AUTH_FAILED', 'INVALID_BASE_LOCATOR'];
+    return { ...result, ready: false, blocked: 'BINDING_OR_READ_CHECK_FAILED', progress,
+      failure: { stage, table: table || null, httpStatus: error.httpStatus || null,
+        apiCode: error.apiCode ?? null,
+        reason: safeReasons.includes(error.message) ? error.message :
+          ['TimeoutError', 'AbortError'].includes(error.name) ? 'REQUEST_TIMEOUT' : stage === 'binding' ? 'MISSING_EXPLICIT_BINDING' : 'NETWORK_OR_RESPONSE_ERROR' } };
+  }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
