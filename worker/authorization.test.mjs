@@ -131,7 +131,8 @@ try {
     const result = await checkBindings({}, () => { throw new Error('Must not call network'); });
     assert.equal(result.ready, false); assert.equal(result.blocked, 'APP_CREDENTIALS_NOT_AVAILABLE');
   });
-  await test('preflight validates per-Base schemas and mappings without writes', async () => {
+  for (const confirmed of [true, false]) await test('preflight separates binding from authorization readiness: ' + confirmed, async () => {
+    if (!confirmed) for (const r of relations) r.fields['工作台授权确认'] = '待确认';
     let requests = 0;
     const result = await checkBindings(env, async (input, options) => {
       const url = new URL(input); requests++;
@@ -144,6 +145,12 @@ try {
       return Response.json({ code: 0, data: { items, has_more: false } });
     });
     assert.equal(result.ready, true); assert.equal(result.writesPerformed, false); assert.equal(requests, 9);
+    assert.equal(result.bindingReady, true);
+    assert.equal(result.authorizationReady, confirmed);
+    assert.equal(result.grantedProjectRelationships, confirmed ? 3 : 0);
+    assert.equal(result.productionReady, false);
+    assert.equal(result.accessByPerson.length, 4);
+    assert.equal(JSON.stringify(result.accessByPerson).includes('ou_'), false);
   });
   let matrixIdentity = 100;
   for (const personLevel of ['普通', '受限', '内部', '', '未知']) {
