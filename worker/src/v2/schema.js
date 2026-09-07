@@ -21,12 +21,12 @@ export const SCHEMAS = Object.freeze({
   },
   projectMembers: {
     tableBinding: 'PROJECT_MEMBERS_TABLE_ID',
-    required: ['关联人员', '关联项目', '权限级别', '成员边界', '加入日期', '权限到期日', '授权状态', '审批人', '权限落实状态'],
+    required: ['关联人员', '关联项目', '权限级别', '成员边界', '加入日期', '权限到期日', '授权状态', '审批人', '权限落实状态', '工作台授权确认'],
     recommended: ['关系编号', '项目角色']
   },
   authorityProjects: {
     tableBinding: 'AUTH_PROJECTS_TABLE_ID',
-    required: ['项目编号', '项目名称', '项目阶段'],
+    required: ['项目编号', '项目名称', '项目阶段', '保密等级'],
     recommended: []
   },
   trainingCatalog: {
