@@ -117,7 +117,8 @@ const originalFetch = globalThis.fetch;
 const sent = [], logs = [];
 let recipientStatus = '在组';
 const runtimeMembers = members.slice(0, 5).map((r, i) => ({ ...r, fields: { ...r.fields, '飞书OpenID': 'ou_' + r.fields['飞书OpenID'], '飞书成员': [{ id: 'ou_' + r.fields['飞书OpenID'] }], '成员编号': 'P-' + String(i + 1).padStart(3, '0'), '人员边界': '团队内', '人员状态': '在组', '成员类别': i === 4 ? 'PI' : '博士', '系统职责': [] } }));
-const runtimeReports = reports.map(r => ({ ...r, fields: { ...r.fields, '飞书OpenID': 'ou_' + r.fields['飞书OpenID'], '关联项目': [] } }));
+const runtimeReports = reports.map(r => ({ ...r, fields: { ...r.fields, '飞书OpenID': 'ou_' + r.fields['飞书OpenID'],
+  '关联项目': [{ table_id: 'tblU8hJpQTFMwDWJ', text_arr: [], type: 'text' }] } }));
 const env = { FEISHU_APP_ID: 'test-app', FEISHU_APP_SECRET: 'test-secret', FEISHU_BASE_APP_TOKEN: 'test-base',
   MEMBERS_BASE_APP_TOKEN: 'test-base', MEMBERS_TABLE_ID: 'members', WEEKLY_TABLE_ID: 'weekly', LITERATURE_TABLE_ID: 'literature', AUTOMATION_LOGS_TABLE_ID: 'logs',
   PROFESSOR_OPEN_ID: 'ou_professor', FRONTEND_URL: 'https://example.com/workbench/' };

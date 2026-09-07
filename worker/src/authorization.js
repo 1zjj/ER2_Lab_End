@@ -123,10 +123,18 @@ export function requireProject(context, id, action = 'read') {
 }
 // Empty Feishu association cells may be arrays or link envelopes. Unknown or
 // malformed values remain scoped so they cannot bypass project authorization.
+function emptyLinkedText(value) {
+  // A live empty DuplexLink cell is [{ table_id: 'tbl...', text_arr: [], type: 'text' }].
+  // The table id identifies the linked table, not a linked project record.
+  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    value.type === 'text' && typeof value.table_id === 'string' && /^tbl[A-Za-z0-9]+$/.test(value.table_id) &&
+    Array.isArray(value.text_arr) && value.text_arr.length === 0 &&
+    Object.keys(value).every(key => ['table_id', 'text_arr', 'type'].includes(key));
+}
 function emptyProjectValue(value) {
   if (value == null) return true;
   if (typeof value === 'string') return value.trim() === '';
-  if (Array.isArray(value)) return value.length === 0;
+  if (Array.isArray(value)) return value.length === 0 || value.every(emptyLinkedText);
   if (typeof value === 'object') {
     const keys = Object.keys(value);
     return keys.length > 0 && keys.every(key =>

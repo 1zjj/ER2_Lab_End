@@ -129,10 +129,13 @@ try {
     people.push(person(31));
     const body = { progress: '个人周报', nextPlan: '继续验证' };
     assert.equal((await call(31, '/api/reports', 'POST', body)).status, 200);
-    for (const empty of [[], null, '', '  ', { link_record_ids: [] }, { record_ids: [] }]) {
+    // Exact empty DuplexLink response observed through Feishu's API explorer.
+    const liveEmptyLink = [{ table_id: 'tblU8hJpQTFMwDWJ', text_arr: [], type: 'text' }];
+    for (const empty of [[], null, '', '  ', { link_record_ids: [] }, { record_ids: [] }, liveEmptyLink]) {
       rows.weekly[0].fields['关联项目'] = empty;
       const own = await (await call(31, '/api/weekly')).json();
       assert.equal(own.student.history.length, 1, 'Empty project link must not hide a saved personal report');
+      assert.equal(own.student.report.status, 'submitted');
       const teacher = await (await call(9, '/api/weekly')).json();
       assert.equal(teacher.teacher.students.find(p => p.id === 'ou_31').status, '已提交');
       assert.equal((await (await call(2, '/api/weekly')).json()).student.history.length, 0);
@@ -145,7 +148,12 @@ try {
     people.push(person(31));
     const body = { progress: '个人周报', nextPlan: '计划' };
     assert.equal((await call(31, '/api/reports', 'POST', body)).status, 200);
-    for (const linked of [[{ record_id: 'rec-private' }], { link_record_ids: ['rec-private'] }, { unexpected: 'private' }, {}]) {
+    for (const linked of [[{ record_id: 'rec-private' }], { link_record_ids: ['rec-private'] }, { unexpected: 'private' }, {},
+      [{ table_id: 'tblProject', text_arr: ['private project'], type: 'text' }],
+      [{ table_id: 'tblProject', text_arr: [], type: 'text', record_ids: ['rec-private'] }],
+      [{ table_id: 'tblProject', text_arr: [], type: 'unknown' }],
+      [{ table_id: 'tblProject', text_arr: null, type: 'text' }],
+      [{ table_id: 'tblProject', text_arr: [], type: 'text' }, { record_id: 'rec-private' }]]) {
       rows.weekly[0].fields['关联项目'] = linked;
       assert.equal((await (await call(31, '/api/weekly')).json()).student.history.length, 0);
       assert.equal((await call(31, '/api/reports', 'POST', body)).status, 403);

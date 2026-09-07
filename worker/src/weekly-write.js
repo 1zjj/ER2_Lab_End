@@ -6,7 +6,7 @@ export const WEEKLY_FIELDS = Object.freeze({
   '问题与阻塞': [1], '下周计划': [1], '提交状态': [1, 3], '提交时间': [1, 5]
 });
 
-export const WEEKLY_VERSION = 'weekly-five-fields-v1';
+export const WEEKLY_VERSION = 'weekly-five-fields-v2';
 // First name is the approved questionnaire label. Remaining names are read/write
 // compatibility for existing tables during migration, never new columns to create.
 export const WEEKLY_NAMES = Object.freeze({
