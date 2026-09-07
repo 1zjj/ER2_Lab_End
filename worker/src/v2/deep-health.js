@@ -21,6 +21,7 @@ export async function buildDeepHealth(env, fetchImpl = fetch) {
   };
 
   try {
+    if (!env.FEISHU_APP_ID || !env.FEISHU_APP_SECRET) return { ...result, ok: false, errorStage: 'auth', errorCode: 'NOT_CONFIGURED' };
     const token = await tenantToken(env, fetchImpl);
     result.auth.ok = true;
 
@@ -61,20 +62,24 @@ export async function buildDeepHealth(env, fetchImpl = fetch) {
         result.tables[schemaName] = item;
         continue;
       }
-      item.tablePresent = tableIds.has(binding.tableId);
+      const tableBase = await resolveAppToken(binding, token, fetchImpl);
+      if (!tableBase.appToken) { result.tables[schemaName] = item; continue; }
+      const ownList = tableBase.appToken === resolved.appToken ? tableItems :
+        (await getJson('/bitable/v1/apps/' + encodeURIComponent(tableBase.appToken) + '/tables?page_size=100', token, fetchImpl))?.items || [];
+      item.tablePresent = ownList.some(table => table.table_id === binding.tableId);
       if (!item.tablePresent) {
         result.tables[schemaName] = item;
         continue;
       }
 
-      const fields = await getJson('/bitable/v1/apps/' + encodeURIComponent(resolved.appToken) + '/tables/' + encodeURIComponent(binding.tableId) + '/fields?page_size=100', token, fetchImpl);
+      const fields = await getJson('/bitable/v1/apps/' + encodeURIComponent(tableBase.appToken) + '/tables/' + encodeURIComponent(binding.tableId) + '/fields?page_size=100', token, fetchImpl);
       const names = (fields?.items || []).map((field) => field.field_name).filter(Boolean);
       item.fieldsReadable = true;
       const schema = validateSchema(schemaName, names);
       item.schemaOk = schema.ok;
       item.missingRequired = schema.missingRequired;
 
-      await getJson('/bitable/v1/apps/' + encodeURIComponent(resolved.appToken) + '/tables/' + encodeURIComponent(binding.tableId) + '/records?page_size=1', token, fetchImpl);
+      await getJson('/bitable/v1/apps/' + encodeURIComponent(tableBase.appToken) + '/tables/' + encodeURIComponent(binding.tableId) + '/records?user_id_type=open_id&page_size=1', token, fetchImpl);
       item.recordReadReadable = true;
       result.tables[schemaName] = item;
     }
@@ -95,6 +100,7 @@ export function summarizeFieldCompatibility(schemaName, fieldNames) {
 async function tenantToken(env, fetchImpl) {
   const response = await fetchImpl(FEISHU_API + '/auth/v3/tenant_access_token/internal', {
     method: 'POST',
+    signal: AbortSignal.timeout(10000),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ app_id: env.FEISHU_APP_ID, app_secret: env.FEISHU_APP_SECRET })
   });
@@ -114,6 +120,7 @@ async function resolveAppToken(binding, token, fetchImpl) {
 
 async function getJson(path, token, fetchImpl) {
   const response = await fetchImpl(FEISHU_API + path, {
+    signal: AbortSignal.timeout(10000),
     headers: { Authorization: 'Bearer ' + token }
   });
   const body = await response.json();

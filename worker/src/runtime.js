@@ -3,6 +3,7 @@ import { runProfessorDigest, DIGEST_VERSION } from './professor-digest.js';
 import { buildV2Health } from './v2/health.js';
 import { buildDeepHealth } from './v2/deep-health.js';
 import { enrichStudentDashboard } from './v2/student-home.js';
+import { AUTH_BINDINGS, strictBinding } from './authorization.js';
 
 export const AI_STATUS = Object.freeze({ enabled: false, status: 'paused', configurationRetained: true });
 let deepHealthCache = { value: null, expiresAt: 0 };
@@ -30,9 +31,10 @@ function jsonNoStore(value, env, status = 200) {
 }
 
 async function cachedDeepHealth(env) {
-  if (deepHealthCache.value && deepHealthCache.expiresAt > Date.now()) return deepHealthCache.value;
+  const key = JSON.stringify([env.FEISHU_APP_ID, env.MEMBERS_TABLE_ID, env.MEMBERS_BASE_APP_TOKEN, env.MEMBERS_BASE_WIKI_TOKEN, env.WEEKLY_TABLE_ID, env.WEEKLY_BASE_APP_TOKEN, env.WEEKLY_BASE_WIKI_TOKEN, env.FEISHU_BASE_APP_TOKEN, env.FEISHU_BASE_WIKI_TOKEN]);
+  if (deepHealthCache.key === key && deepHealthCache.value && deepHealthCache.expiresAt > Date.now()) return deepHealthCache.value;
   const value = await buildDeepHealth(env);
-  deepHealthCache = { value, expiresAt: Date.now() + 60_000 };
+  deepHealthCache = { key, value, expiresAt: Date.now() + 60_000 };
   return value;
 }
 
@@ -81,7 +83,10 @@ export default {
     const headers = new Headers(response.headers);
     return new Response(JSON.stringify({
       ...body,
-      securityPatch: 'p0-20260907-1',
+      securityPatch: 'p0-20260907-2',
+      configured: body.configured && deep.ok === true && AUTH_BINDINGS.every(key => { try { strictBinding(env, key); return true; } catch (_) { return false; } }),
+      authorization: { enforced: true, mode: 'authoritative-fail-closed', nativeFeishuAclManaged: false,
+        bindings: Object.fromEntries(AUTH_BINDINGS.map(key => { try { strictBinding(env, key); return [key, true]; } catch (_) { return [key, false]; } })) },
       deepBaseReadOk: deep.ok === true,
       deepLocatorOk: deep.locator?.ok === true,
       deepAppMetadataOk: deep.appMetadata?.ok === true,

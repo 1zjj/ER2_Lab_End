@@ -1,3 +1,5 @@
+import { authority, identity as masterIdentity, strictBinding } from './authorization.js';
+import { resolveTableBinding } from './v2/bindings.js';
 /** Deterministic ER² professor digest. No model requests, inference or public storage. */
 const API = 'https://open.feishu.cn/open-apis';
 const encoder = new TextEncoder();
@@ -191,10 +193,10 @@ async function request(path, token, body, method = body ? 'POST' : 'GET') {
   return result;
 }
 function binding(env, key) {
-  return { appToken: env[key.replace(/_TABLE_ID$/, '_BASE_APP_TOKEN')] || env.FEISHU_BASE_APP_TOKEN || '',
-    wikiToken: env[key.replace(/_TABLE_ID$/, '_BASE_WIKI_TOKEN')] || env.FEISHU_BASE_WIKI_TOKEN || '',
-    tableId: env[key] || (key === 'LITERATURE_TABLE_ID' ? 'tblyHLZpybGVU364' : '') };
+  if (key === 'MEMBERS_TABLE_ID') return strictBinding(env, key);
+  return resolveTableBinding({ ...env, LITERATURE_TABLE_ID: env.LITERATURE_TABLE_ID || 'tblyHLZpybGVU364' }, key);
 }
+
 async function tablePath(env, token, key, required = false) {
   const item = binding(env, key);
   if (!item.tableId || (!item.appToken && !item.wikiToken)) {
@@ -213,7 +215,7 @@ async function list(path, token) {
   if (!path) return [];
   const all = [], seenPages = new Set(); let page = '';
   do {
-    const result = await request(path + '?page_size=500' + (page ? '&page_token=' + encodeURIComponent(page) : ''), token);
+    const result = await request(path + '?user_id_type=open_id&page_size=500' + (page ? '&page_token=' + encodeURIComponent(page) : ''), token);
     if (!Array.isArray(result.data?.items)) throw new Error('Invalid Feishu record list');
     all.push(...result.data.items);
     if (!result.data.has_more) break;
@@ -236,7 +238,7 @@ export async function runProfessorDigest(at, env) {
   if (!token) throw new Error('No Feishu tenant token');
   const [memberPath, weeklyPath, literaturePath, logPath] = await Promise.all([
     tablePath(env, token, 'MEMBERS_TABLE_ID', true), tablePath(env, token, 'WEEKLY_TABLE_ID', true),
-    tablePath(env, token, 'LITERATURE_TABLE_ID'), tablePath(env, token, 'AUTOMATION_LOGS_TABLE_ID')]);
+    tablePath(env, token, 'LITERATURE_TABLE_ID'), tablePath(env, token, 'AUTOMATION_LOGS_TABLE_ID', true)]);
   const logs = await list(logPath, token);
   const runKey = weekAt(at).id + '-professor-summary'; // Preserve the legacy weekly deduplication key.
   const success = (key) => logs.some((record) => read(record, '运行键') === key && read(record, '执行结果') === '成功');
@@ -245,8 +247,19 @@ export async function runProfessorDigest(at, env) {
     if (logPath) await request(logPath, token, { fields: { '运行键': key, '任务名称': '教授周报汇总（原文拼接）',
       '执行时间': new Date().toISOString(), '执行结果': result, '执行说明': detail } });
   };
-  const [members, reports, literature] = await Promise.all([list(memberPath, token), list(weeklyPath, token), list(literaturePath, token)]);
-  const digest = buildDigest({ members, reports, literature, at });
+  const [masterRecords, reports, literature] = await Promise.all([list(memberPath, token), list(weeklyPath, token), list(literaturePath, token)]);
+  const recipient = authority(masterRecords, [], [], env.PROFESSOR_OPEN_ID);
+  if (!recipient.duties.includes('教授周报接收')) throw new Error('Professor recipient has no current digest duty');
+  const members = masterRecords.flatMap(record => {
+    try {
+      const member = authority(masterRecords, [], [], masterIdentity(record));
+      if (member.roles.includes('teacher') || member.roles.includes('manager')) return [];
+      return [{ ...record, fields: { ...record.fields, '飞书OpenID': member.sub, '角色': ['学生'], '是否启用': true } }];
+    } catch (_) { return []; }
+  });
+  // Weekly reports are personal records. Project-labelled material requires separate project authorization.
+  const personalReports = reports.filter(record => !['统一项目编号', 'ProjectID', '项目编号', '关联项目'].some(key => record.fields?.[key]));
+  const digest = buildDigest({ members, reports: personalReports, literature, at });
   const cards = buildCards(digest, env.FRONTEND_URL, env.PROFESSOR_OPEN_ID);
   const snapshotId = await stableId(JSON.stringify(cards));
   const prefix = `${runKey}-${DIGEST_VERSION}-`;
@@ -259,6 +272,8 @@ export async function runProfessorDigest(at, env) {
       const partKey = `${prefix}${i + 1}`;
       if (success(partKey)) continue;
       const uuid = await stableId(`${partKey}:${env.PROFESSOR_OPEN_ID}:${snapshotId}`);
+      const currentRecipient = authority(await list(memberPath, token), [], [], env.PROFESSOR_OPEN_ID);
+      if (!currentRecipient.duties.includes('教授周报接收')) throw new Error('Professor digest duty was revoked');
       await request('/im/v1/messages?receive_id_type=open_id', token, messageBody(cards[i], env.PROFESSOR_OPEN_ID, uuid));
       await log(partKey, '成功', `${snapshotId}:${i + 1}/${cards.length}`);
     }

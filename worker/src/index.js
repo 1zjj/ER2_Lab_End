@@ -1,3 +1,5 @@
+import { authority, AUTH_BINDINGS, strictBinding, identity, canProject, requireProject, businessProjectId, visibleProjects } from './authorization.js';
+import { resolveTableBinding as resolveBinding } from './v2/bindings.js';
 const FEISHU_API = 'https://open.feishu.cn/open-apis';
 const FEISHU_AUTHORIZE = 'https://accounts.feishu.cn/open-apis/authen/v1/authorize';
 const wikiTokenCache = new Map();
@@ -33,7 +35,7 @@ export default {
     try {
       if (url.pathname === '/health') {
         const authConfigured = Boolean(env.FEISHU_APP_ID && env.FEISHU_APP_SECRET && env.SESSION_SECRET);
-        const membersBinding = resolveTableBinding(env, 'MEMBERS_TABLE_ID');
+        const membersBinding = resolveBinding(env, 'MEMBERS_TABLE_ID', { allowGlobalFallback: false });
         const weeklyBinding = resolveTableBinding(env, 'WEEKLY_TABLE_ID');
         const literatureBinding = resolveTableBinding(env, 'LITERATURE_TABLE_ID');
         const coursesBinding = resolveTableBinding(env, 'COURSES_TABLE_ID');
@@ -62,8 +64,9 @@ export default {
 
       let session = await requireSession(request, env);
       if (url.pathname.startsWith('/api/')) session = await requireActiveMember(env, session);
-      if (request.method === 'POST' && url.pathname.startsWith('/api/')) enforceWriteRateLimit(session.sub);
-      if (url.pathname === '/api/me' && request.method === 'GET') return json(request, env, { profile: session });
+      if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(request.method) && url.pathname.startsWith('/api/')) enforceWriteRateLimit(session.sub);
+      if (url.pathname === '/api/me' && request.method === 'GET') return json(request, env, { profile: { sub: session.sub, personId: session.personId, name: session.name, roles: session.roles } });
+      if (/^\/api\/projects(?:\/|$)/.test(url.pathname)) return await projectApi(request, env, session);
       if (url.pathname === '/api/dashboard' && request.method === 'GET') return await dashboard(request, env, session);
       if (url.pathname === '/api/reports' && request.method === 'POST') return await saveReport(request, env, session);
       if (url.pathname === '/api/literature' && request.method === 'GET') return await getLiterature(request, env, session);
@@ -125,15 +128,7 @@ async function authCallback(request, env) {
   const openId = user.open_id;
   if (!openId) throw httpError(401, '未能识别飞书用户');
 
-  const tenantToken = await getTenantToken(env);
-  const members = await listRecords(env, tenantToken, 'MEMBERS_TABLE_ID');
-  // Registration is an explicit administrative operation, never an OAuth side effect.
-  // Ignore retained bootstrap flags: display names are not authorization identities.
-  const memberRecord = uniqueMemberRecord(members, openId);
-  if (!memberRecord || !memberIsEnabled(memberRecord)) {
-    throw httpError(403, '你的账号尚未加入ER² Lab人员表，请联系管理员');
-  }
-  const member = normalizeMember(memberRecord, user);
+  const member = await requireActiveMember(env, { sub: openId });
   const sessionToken = await signToken({
     purpose: 'session',
     sub: openId,
@@ -163,19 +158,31 @@ async function dashboard(request, env, session) {
     listRecords(env, tenantToken, 'LITERATURE_TABLE_ID')
   ]);
   const currentWeek = weekInfo(new Date());
-  const members = memberRecords.map((record) => normalizeMember(record));
+  const members = memberRecords.flatMap(record => { try { const member = authority(memberRecords, [], [], identity(record)); return [{ ...member, openId: member.sub, enabled: true }]; } catch (_) { return []; } });
   const profile = {
+    sub: session.sub,
+    personId: session.personId,
     name: session.name,
     track: session.track || '',
     roles: session.roles
   };
-  const student = buildStudent(session, currentWeek, reportRecords, projectRecords, courseRecords, taskRecords, linkRecords);
-  const teacher = buildTeacher(session, currentWeek, members, reportRecords, courseRecords, env);
+  const permittedProjects = visibleProjects(session, projectRecords);
+  const allowedResource = record => {
+    const f = record.fields || {};
+    const hasProject = ['统一项目编号', 'ProjectID', '项目编号', '关联项目'].some(k => f[k]);
+    return !hasProject || canProject(session, businessProjectId(record));
+  };
+  const permittedReports = reportRecords.filter(allowedResource);
+  const permittedCourses = courseRecords.filter(allowedResource);
+  const permittedLinks = linkRecords.filter(allowedResource);
+  const student = buildStudent(session, currentWeek, permittedReports, permittedProjects, permittedCourses, taskRecords.filter(allowedResource), permittedLinks);
+  student.projects = permittedProjects.map(record => projectView(record, session));
+  const teacher = buildTeacher(session, currentWeek, members, permittedReports, permittedCourses, env);
   const manager = session.roles.includes('manager')
-    ? buildManager(members, projectRecords, courseRecords, env)
+    ? buildManager(members, permittedProjects, permittedCourses, env)
     : { stats: {}, automations: [] };
   const literature = buildLiterature(session, currentWeek, literatureRecords);
-  const catalog = buildCatalog(session, linkRecords);
+  const catalog = buildCatalog(session, permittedLinks);
   return json(request, env, { profile, week: currentWeek, student, teacher, manager, literature, catalog });
 }
 
@@ -273,7 +280,7 @@ async function saveLiterature(request, env, session) {
   const tenantToken = await getTenantToken(env);
   const existingRecords = await listRecords(env, tenantToken, 'LITERATURE_TABLE_ID');
   const duplicate = existingRecords.find((record) =>
-    clean(field(record, '请求ID')) === businessRequestId || (
+    (String(field(record, '提交人OpenID')) === String(session.sub) && clean(field(record, '请求ID')) === businessRequestId) || (
       String(field(record, '提交人OpenID')) === String(session.sub) &&
       String(field(record, '周次')) === currentWeek.id &&
       clean(field(record, '论文标题')).toLowerCase() === clean(body.title).toLowerCase() &&
@@ -315,6 +322,7 @@ async function saveLiterature(request, env, session) {
     '提交时间': new Date().toISOString()
   };
   if (year === '') delete fields['发表年份'];
+  await requireActiveMember(env, session);
   const created = await createRecord(env, tenantToken, 'LITERATURE_TABLE_ID', fields);
   const records = [created.data?.record || { record_id: created.data?.record?.record_id || '', fields }, ...existingRecords];
   return json(request, env, {
@@ -449,11 +457,11 @@ function buildTrackAStudentCourse(session, records) {
 }
 
 function isCourseReviewer(session, env) {
-  return Boolean(env.COURSE_REVIEWER_OPEN_ID) && String(session.sub) === String(env.COURSE_REVIEWER_OPEN_ID);
+  return session.duties?.includes('课程审核') === true;
 }
 
 function isCourseProfessor(session, env) {
-  return Boolean(env.PROFESSOR_OPEN_ID) && String(session.sub) === String(env.PROFESSOR_OPEN_ID);
+  return session.duties?.includes('教授周报接收') === true;
 }
 
 function buildCourseReview(session, members, records, env) {
@@ -537,9 +545,7 @@ function buildOnboarding(session, records) {
 function buildStudent(session, week, reports, projects, courses, tasks, links) {
   const mine = (record) => String(field(record, '飞书OpenID', '人员OpenID', 'OpenID')) === String(session.sub);
   const currentReport = reports.find((record) => mine(record) && String(field(record, '周次', 'WeekID')) === week.id);
-  const project = session.projectCode
-    ? projects.find((record) => String(field(record, '项目编号', '项目代码')) === String(session.projectCode)) || {}
-    : {};
+  const project = projects[0] || {};
   const projectFields = project.fields || {};
   const trackACourse = buildTrackAStudentCourse(session, courses);
   const activeTasks = tasks.filter((record) => mine(record) && !['完成', '已完成'].includes(field(record, '状态'))).slice(0, 5);
@@ -564,7 +570,7 @@ function buildStudent(session, week, reports, projects, courses, tasks, links) {
     },
     course: trackACourse,
     project: {
-      code: session.projectCode || field(project, '项目编号', '项目代码') || '—',
+      code: businessProjectId(project) || '—',
       title: field(project, '项目名称', '名称') || '暂未分配项目',
       milestone: field(project, '当前里程碑', '里程碑') || '请在飞书项目页维护',
       progress: Math.max(0, Math.min(100, projectProgress)),
@@ -656,6 +662,8 @@ async function saveOnboarding(request, env, session) {
     '状态': completed ? '已完成' : '进行中',
     '提交时间': new Date().toISOString()
   };
+  const current = await requireActiveMember(env, session);
+  if (existing) requireResource(current, existing, 'edit');
   if (existing) await updateRecord(env, tenantToken, 'COURSES_TABLE_ID', existing.record_id, fields);
   else await createRecord(env, tenantToken, 'COURSES_TABLE_ID', fields);
   return json(request, env, {
@@ -707,6 +715,8 @@ async function saveCourseSubmission(request, env, session) {
     '状态': '等待朱俊杰确认',
     '提交时间': new Date().toISOString()
   };
+  const current = await requireActiveMember(env, session);
+  if (existing) requireResource(current, existing, 'edit');
   if (existing) await updateRecord(env, tenantToken, 'COURSES_TABLE_ID', existing.record_id, fields);
   else await createRecord(env, tenantToken, 'COURSES_TABLE_ID', fields);
   return json(request, env, { ok: true, updated: Boolean(existing) });
@@ -730,6 +740,11 @@ async function confirmCourseSubmission(request, env, session) {
     const records = await listRecords(env, tenantToken, 'COURSES_TABLE_ID');
     const target = records.find((record) => record.record_id === body.recordId && courseLessonId(record));
     if (!target) throw httpError(404, '课程提交记录不存在');
+    if (String(field(target, '飞书OpenID', '人员OpenID', 'OpenID')) !== studentOpenId) throw httpError(409, '课程记录归属已变更，请刷新后重试');
+    const current = await requireActiveMember(env, session);
+    if (!isCourseReviewer(current, env)) throw httpError(403, '课程审核职责已撤销');
+    requireResource(current, target, 'edit');
+    await requireActiveMember(env, { sub: studentOpenId });
     const currentStatus = courseStatus(target);
     if (currentStatus === 'confirmed') {
       if (body.action === 'supplement') throw httpError(409, '本课已经确认；如需退回，请先由管理员在飞书后台解除确认');
@@ -804,15 +819,20 @@ async function completeTrackAIfReady(env, tenantToken, records, target) {
     return { completed: true, notified: notificationStatus === '已发送', notificationStatus };
   }
 
+  let professorAllowed = false;
+  if (env.PROFESSOR_OPEN_ID) {
+    const recipient = await requireActiveMember(env, { sub: env.PROFESSOR_OPEN_ID });
+    professorAllowed = recipient.duties.includes('教授周报接收');
+  }
   const completedAt = new Date().toISOString();
   const notificationAttemptId = await stableMessageUuid('track-a-completion:' + studentOpenId);
   await updateRecord(env, tenantToken, 'COURSES_TABLE_ID', finalRecord.record_id, {
     '结业状态': '已完成',
     '课程完成时间': completedAt,
-    '结业通知状态': env.PROFESSOR_OPEN_ID ? '发送中' : '待配置',
+    '结业通知状态': professorAllowed ? '发送中' : '待配置',
     '结业通知尝试ID': notificationAttemptId
   });
-  if (!env.PROFESSOR_OPEN_ID) return { completed: true, notified: false, warning: '教授接收账号尚未配置' };
+  if (!professorAllowed) return { completed: true, notified: false, warning: '教授接收账号尚未配置' };
 
   const latestRecords = await listRecords(env, tenantToken, 'COURSES_TABLE_ID');
   const latestFinalRecord = latestRecords.find((record) => record.record_id === finalRecord.record_id);
@@ -876,6 +896,8 @@ async function saveReport(request, env, session) {
     '提交状态': '已提交',
     '提交时间': new Date().toISOString()
   };
+  const current = await requireActiveMember(env, session);
+  if (existing) requireResource(current, existing, 'edit');
   if (existing) await updateRecord(env, tenantToken, 'WEEKLY_TABLE_ID', existing.record_id, fields);
   else await createRecord(env, tenantToken, 'WEEKLY_TABLE_ID', fields);
   return json(request, env, { ok: true, weekId: currentWeek.id, updated: Boolean(existing) });
@@ -891,10 +913,14 @@ async function saveTeacherReview(request, env, session) {
   const reports = await listRecords(env, tenantToken, 'WEEKLY_TABLE_ID');
   const targetReport = reports.find((record) => record.record_id === body.recordId);
   if (!targetReport) throw httpError(404, '周报记录不存在');
+  session = await requireActiveMember(env, session);
+  if (!session.roles.some(role => ['teacher', 'manager'].includes(role))) throw httpError(403, '教师职责已撤销');
+  requireResource(session, targetReport, 'edit');
   if (!session.roles.includes('manager')) {
     const targetOpenId = String(field(targetReport, '飞书OpenID', '人员OpenID', 'OpenID'));
     const members = await listRecords(env, tenantToken, 'MEMBERS_TABLE_ID');
-    const targetMember = members.map((record) => normalizeMember(record)).find((member) => String(member.openId) === targetOpenId);
+    const targetRecord = members.find(record => identity(record) === targetOpenId);
+    const targetMember = targetRecord ? authority(members, [], [], targetOpenId) : null;
     if (!targetMember || String(targetMember.teacherOpenId) !== String(session.sub)) {
       throw httpError(403, '只能反馈自己负责学生的周报');
     }
@@ -921,7 +947,7 @@ async function runScheduledTask(scheduledTime, env) {
     listRecords(env, tenantToken, 'WEEKLY_TABLE_ID'),
     listRecords(env, tenantToken, 'LITERATURE_TABLE_ID')
   ]);
-  const members = memberRecords.map((record) => normalizeMember(record)).filter((member) => member.enabled && member.roles.includes('student'));
+  const members = memberRecords.flatMap(record => { try { const member = authority(memberRecords, [], [], identity(record)); return member.roles.includes('manager') || member.roles.includes('teacher') ? [] : [{ ...member, openId: member.sub, enabled: true }]; } catch (_) { return []; } });
   const week = weekInfo(new Date(scheduledTime));
   const currentReports = reports.filter((record) => String(field(record, '周次', 'WeekID')) === week.id);
   const currentLiterature = literatureRecords.filter((record) => String(field(record, '周次')) === week.id);
@@ -977,13 +1003,8 @@ async function getTenantToken(env) {
 }
 
 function resolveTableBinding(env, tableBinding) {
-  const tokenBinding = String(tableBinding).replace(/_TABLE_ID$/, '_BASE_APP_TOKEN');
-  const wikiBinding = String(tableBinding).replace(/_TABLE_ID$/, '_BASE_WIKI_TOKEN');
-  return {
-    appToken: env[tokenBinding] || env.FEISHU_BASE_APP_TOKEN || '',
-    wikiToken: env[wikiBinding] || env.FEISHU_BASE_WIKI_TOKEN || '',
-    tableId: env[tableBinding] || (tableBinding === 'LITERATURE_TABLE_ID' ? LITERATURE_TABLE_FALLBACK : '')
-  };
+  if (AUTH_BINDINGS.includes(tableBinding)) return strictBinding(env, tableBinding);
+  return resolveBinding({ ...env, LITERATURE_TABLE_ID: env.LITERATURE_TABLE_ID || LITERATURE_TABLE_FALLBACK }, tableBinding);
 }
 
 async function resolveBitableAppToken(binding, token) {
@@ -1003,12 +1024,15 @@ async function listRecords(env, token, tableBinding) {
   const appToken = await resolveBitableAppToken(binding, token);
   const tableId = binding.tableId;
   let pageToken = '';
-  const records = [];
+  const records = [], pages = new Set();
   do {
     const suffix = pageToken ? '&page_token=' + encodeURIComponent(pageToken) : '';
-    const result = await feishuRequest('/bitable/v1/apps/' + appToken + '/tables/' + tableId + '/records?page_size=500' + suffix, { bearer: token });
-    records.push(...(result.data?.items || []));
+    const result = await feishuRequest('/bitable/v1/apps/' + appToken + '/tables/' + tableId + '/records?user_id_type=open_id&page_size=500' + suffix, { bearer: token });
+    if (!Array.isArray(result.data?.items)) throw httpError(502, '数据表返回格式异常');
+    records.push(...result.data.items);
     pageToken = result.data?.has_more ? result.data?.page_token : '';
+    if (result.data?.has_more && (!pageToken || pages.has(pageToken))) throw httpError(502, '数据表分页不完整');
+    if (pageToken) pages.add(pageToken);
   } while (pageToken);
   return records;
 }
@@ -1038,6 +1062,7 @@ async function updateRecord(env, token, tableBinding, recordId, fields) {
 }
 
 async function sendText(env, token, openId, text, uuid = '') {
+  await requireActiveMember(env, { sub: openId });
   if (!openId) return;
   return feishuRequest('/im/v1/messages?receive_id_type=open_id', {
     method: 'POST',
@@ -1113,37 +1138,6 @@ function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-function uniqueMemberRecord(records, openId) {
-  const matches = records.filter((record) => String(field(record, '飞书OpenID', 'OpenID', 'open_id')) === String(openId));
-  if (matches.length > 1) throw httpError(403, '人员表存在重复账号，请联系管理员核对');
-  return matches[0];
-}
-
-function memberIsEnabled(record) {
-  // Legacy tables do not have 人员状态. If present, it is an additional deny gate.
-  const fields = record?.fields || {};
-  const statusAllowed = !Object.hasOwn(fields, '人员状态') || field(record, '人员状态') === '在组';
-  return statusAllowed && field(record, '是否启用', '启用') !== false;
-}
-
-function normalizeMember(record, oauthUser = {}) {
-  const roles = arrayValue(field(record, '角色')).map((role) => {
-    const value = String(role).toLowerCase();
-    if (value.includes('管理')) return 'manager';
-    if (value.includes('教师') || value.includes('教授')) return 'teacher';
-    if (value.includes('学生')) return 'student';
-    return ['student', 'teacher', 'manager'].includes(value) ? value : '';
-  }).filter(Boolean);
-  return {
-    openId: field(record, '飞书OpenID', 'OpenID', 'open_id') || oauthUser.open_id || '',
-    name: field(record, '姓名', '人员姓名') || oauthUser.name || oauthUser.en_name || 'ER²成员',
-    roles: roles.length ? [...new Set(roles)] : ['student'],
-    teacherOpenId: field(record, '负责教师OpenID', '教师OpenID') || '',
-    projectCode: field(record, '项目编号', '项目代码') || '',
-    track: field(record, '课程方向', '培养方向') || '',
-    enabled: memberIsEnabled(record)
-  };
-}
 
 function field(record, ...names) {
   const fields = record?.fields || {};
@@ -1201,20 +1195,50 @@ async function requireSession(request, env) {
 }
 
 async function requireActiveMember(env, session) {
+  AUTH_BINDINGS.forEach(key => strictBinding(env, key));
   const tenantToken = await getTenantToken(env);
-  const records = await listRecords(env, tenantToken, 'MEMBERS_TABLE_ID');
-  const record = uniqueMemberRecord(records, session.sub);
-  if (!record) throw httpError(403, '你的账号已不在ER² Lab人员表中');
-  const member = normalizeMember(record);
-  if (!member.enabled) throw httpError(403, '你的ER² Lab账号已被停用');
-  return {
-    ...session,
-    name: member.name,
-    roles: member.roles,
-    teacherOpenId: member.teacherOpenId,
-    projectCode: member.projectCode,
-    track: member.track
-  };
+  const [people, projects, relations] = await Promise.all(AUTH_BINDINGS.map(key => listRecords(env, tenantToken, key)));
+  return { ...session, ...authority(people, projects, relations, session.sub) };
+}
+
+function requireResource(session, record, action = 'read') {
+  const f = record?.fields || {};
+  if (['统一项目编号', 'ProjectID', '项目编号', '关联项目'].some(k => f[k])) requireProject(session, businessProjectId(record), action);
+}
+
+function projectView(record, session) {
+  const id = businessProjectId(record);
+  return { projectId: id, code: id, title: field(record, '项目名称', '名称'),
+    milestone: field(record, '当前里程碑'), blocker: field(record, '最近阻塞'),
+    progress: Number(field(record, '进度')) || 0, permission: session.grants[id]?.level || 0 };
+}
+
+async function projectApi(request, env, session) {
+  const path = new URL(request.url).pathname;
+  if (!['GET', 'PATCH'].includes(request.method)) throw httpError(405, '不支持此操作');
+  const id = path === '/api/projects' ? '' : path.slice('/api/projects/'.length);
+  if (id) requireProject(session, id, request.method === 'PATCH' ? 'edit' : 'read');
+  else if (request.method !== 'GET') throw httpError(405, '不支持此操作');
+  strictBinding(env, 'PROJECTS_TABLE_ID');
+  const token = await getTenantToken(env);
+  const records = await listRecords(env, token, 'PROJECTS_TABLE_ID');
+  if (!id) return json(request, env, { projects: visibleProjects(session, records).map(r => projectView(r, session)) });
+  const matches = records.filter(r => businessProjectId(r) === id);
+  if (matches.length !== 1) throw httpError(409, '统一项目编号缺失或重复');
+  const record = matches[0];
+  if (request.method === 'GET') return json(request, env, { project: projectView(record, session) });
+  const body = await readJson(request);
+  const editable = { milestone: '当前里程碑', blocker: '最近阻塞' }, fields = {};
+  for (const key of Object.keys(body)) {
+    if (key === 'title') { requireProject(session, id, 'manage'); validateText(body[key], '项目名称', 1, 200); fields['项目名称'] = clean(body[key]); }
+    else if (Object.hasOwn(editable, key)) { validateText(body[key], key, 0, 3000); fields[editable[key]] = clean(body[key]); }
+    else throw httpError(400, '包含不允许修改的字段');
+  }
+  if (!Object.keys(fields).length) throw httpError(400, '没有可修改内容');
+  const current = await requireActiveMember(env, session);
+  requireProject(current, id, 'title' in body ? 'manage' : 'edit');
+  await updateRecord(env, token, 'PROJECTS_TABLE_ID', record.record_id, fields);
+  return json(request, env, { ok: true });
 }
 
 async function signToken(payload, secret) {
@@ -1226,14 +1250,21 @@ async function signToken(payload, secret) {
 }
 
 async function verifyToken(token, secret) {
+  if (!secret) throw httpError(503, '登录服务尚未配置');
+  try {
+  if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(String(token || '')) || String(token).length > 12000) throw httpError(401, '登录状态无效');
   const [encoded, signature] = String(token || '').split('.');
   if (!encoded || !signature) throw httpError(401, '登录状态无效');
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']);
   const valid = await crypto.subtle.verify('HMAC', key, base64UrlDecode(signature), new TextEncoder().encode(encoded));
   if (!valid) throw httpError(401, '登录状态无效');
   const payload = JSON.parse(new TextDecoder().decode(base64UrlDecode(encoded)));
-  if (!payload.exp || payload.exp < epoch()) throw httpError(401, '登录状态已过期');
+  if (!Number.isFinite(payload.exp) || payload.exp <= epoch()) throw httpError(401, '登录状态已过期');
   return payload;
+  } catch (error) {
+    if (error.status === 401) throw error;
+    throw httpError(401, '登录状态无效');
+  }
 }
 
 function base64Url(bytes) {

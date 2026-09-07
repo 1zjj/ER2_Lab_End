@@ -42,6 +42,10 @@ const multiBaseHealth = await service.fetch(new Request('https://api.example/hea
   FEISHU_APP_ID: 'cli_test',
   FEISHU_APP_SECRET: 'secret',
   SESSION_SECRET: '01234567890123456789012345678901',
+  AUTH_PROJECTS_BASE_APP_TOKEN: 'bas_authority',
+  AUTH_PROJECTS_TABLE_ID: 'tbl_authority',
+  PROJECT_MEMBERS_BASE_APP_TOKEN: 'bas_relations',
+  PROJECT_MEMBERS_TABLE_ID: 'tbl_relations',
   MEMBERS_BASE_APP_TOKEN: 'bas_members',
   MEMBERS_TABLE_ID: 'tbl_members',
   WEEKLY_BASE_APP_TOKEN: 'bas_weekly',
@@ -68,7 +72,7 @@ const wikiBaseHealth = await service.fetch(new Request('https://api.example/heal
   COURSE_REVIEWER_OPEN_ID: 'ou_junjie',
   PROFESSOR_OPEN_ID: 'ou_professor'
 });
-assert.equal((await wikiBaseHealth.json()).configured, true);
+assert.equal((await wikiBaseHealth.json()).configured, false);
 
 const preflight = await service.fetch(new Request('https://api.example/api/dashboard', {
   method: 'OPTIONS',
@@ -114,6 +118,15 @@ let postedMember = null;
 let postedReview = null;
 let postedCourse = null;
 let memberEnabled = true;
+let dutiesEnabled = true;
+function masterFixture(record, index) {
+  const f = record.fields || {}, id = f['飞书OpenID'];
+  return { ...record, fields: { '成员编号': 'P-' + String(index + 1).padStart(3, '0'),
+    '飞书成员': [{ id }], '人员边界': '团队内', '人员状态': '在组',
+    '成员类别': ['ou_teacher', 'ou_professor'].includes(id) ? 'PI' : '博士',
+    '直属负责人': [{ id: f['负责教师OpenID'] || '' }],
+    '系统职责': dutiesEnabled ? id === 'ou_junjie' ? ['管理员', '课程审核'] : id === 'ou_professor' ? ['教授周报接收'] : [] : [], ...f } };
+}
 let memberStatusFields = {};
 let extraMembers = [];
 let projectItems = [];
@@ -178,7 +191,7 @@ globalThis.fetch = async (url, options = {}) => {
       { record_id: 'rec_professor', fields: {
         '姓名': '陈铮一', '飞书OpenID': 'ou_professor', '角色': ['教师'], '是否启用': true
       } }, ...extraMembers
-    ] } });
+    ].map(masterFixture) } });
   }
   if (String(url).includes('/tables/tbl_links/records')) {
     return Response.json({ code: 0, data: { items: [{ record_id: 'rec_link', fields: {
@@ -208,6 +221,10 @@ const literatureEnv = {
   FEISHU_APP_ID: 'cli_test',
   FEISHU_APP_SECRET: 'secret',
   SESSION_SECRET: secret,
+  AUTH_PROJECTS_BASE_APP_TOKEN: 'bas_authority',
+  AUTH_PROJECTS_TABLE_ID: 'tbl_authority',
+  PROJECT_MEMBERS_BASE_APP_TOKEN: 'bas_relations',
+  PROJECT_MEMBERS_TABLE_ID: 'tbl_relations',
   MEMBERS_BASE_APP_TOKEN: 'bas_members',
   MEMBERS_TABLE_ID: 'tbl_members',
   WEEKLY_BASE_APP_TOKEN: 'bas_weekly',
@@ -351,6 +368,7 @@ assert.equal(teacherReview.status, 200);
 assert.equal(postedReview['教师反馈'], '请补充参数对照实验。');
 assert.equal(postedReview['反馈请求ID'], 'review-test-request');
 
+dutiesEnabled = false;
 const noCourseIdentityEnv = { ...literatureEnv, COURSE_REVIEWER_OPEN_ID: '', PROFESSOR_OPEN_ID: '' };
 const nameFallbackCannotConfirm = await service.fetch(new Request('https://api.example/api/courses/confirm', {
   method: 'POST',
@@ -363,6 +381,7 @@ const nameFallbackCannotView = await service.fetch(new Request('https://api.exam
 }), noCourseIdentityEnv);
 assert.equal((await nameFallbackCannotView.json()).teacher.courseReview.visible, false);
 
+dutiesEnabled = true;
 const onboardingInitial = await service.fetch(new Request('https://api.example/api/dashboard?role=student', {
   headers: { Authorization: 'Bearer ' + studentSession }
 }), literatureEnv);
@@ -520,12 +539,12 @@ const disabledPost = await service.fetch(new Request('https://api.example/api/li
   body: JSON.stringify({ title: '停用后提交', contribution: '不应写入', noteUrl: 'https://example.com/disabled' })
 }), literatureEnv);
 assert.equal(disabledPost.status, 403);
-assert.equal((await disabledPost.json()).message, '你的ER² Lab账号已被停用');
+assert.equal((await disabledPost.json()).message, '人员资料无效或账号已停用');
 const disabledGet = await service.fetch(new Request('https://api.example/api/literature', {
   headers: { Authorization: 'Bearer ' + session }
 }), literatureEnv);
 assert.equal(disabledGet.status, 403);
-assert.equal((await disabledGet.json()).message, '你的ER² Lab账号已被停用');
+assert.equal((await disabledGet.json()).message, '人员资料无效或账号已停用');
 memberEnabled = true;
 for (const status of ['离组', '已归档', '', '待入组']) {
   memberStatusFields = { '人员状态': status };
