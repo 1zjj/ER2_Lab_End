@@ -1,6 +1,7 @@
 window.ER2_CONFIG = Object.freeze({
   apiBase: 'https://er2-lab-api.zhujunjie418.workers.dev',
   demo: false,
+  feishuDocsOrigin: 'https://lcnywl4yrecr.feishu.cn',
   feishuWikiUrl: ''
 });
 
@@ -43,6 +44,10 @@ window.addEventListener('DOMContentLoaded', function () {
       const response = await fetch(API_BASE + '/api/dashboard?role=student', {
         headers: { Accept: 'application/json', Authorization: 'Bearer ' + token }
       });
+      if (response.status === 401 || response.status === 403) {
+        cachedHome = null;
+        window.dispatchEvent(new Event('er2-session-denied'));
+      }
       if (!response.ok) return null;
       const data = await response.json();
       cachedHome = data?.student?.home || null;
