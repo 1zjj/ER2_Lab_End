@@ -166,13 +166,23 @@ try {
     delete relations[0].fields['工作台授权确认'];
     assert.equal((await call(1, '/api/projects/PRJ-001')).status, 403);
   });
-  for (const mutation of ['student', 'self', 'left', 'external', 'duplicate', 'multiple']) await test('invalid approver ' + mutation, async () => {
+  for (const mutation of ['student', 'left', 'external', 'duplicate', 'multiple']) await test('invalid approver ' + mutation, async () => {
     if (mutation === 'student') people[2].fields['系统职责'] = [];
-    if (mutation === 'self') { people[0].fields['系统职责'] = ['管理员']; relations[0].fields['审批人'] = [{ id: 'ou_1' }]; }
     if (mutation === 'left') people[2].fields['人员状态'] = '离组';
     if (mutation === 'external') people[2].fields['人员边界'] = '团队外';
     if (mutation === 'duplicate') people.push(person(7, { '飞书成员': [{ id: 'ou_9' }] }));
     if (mutation === 'multiple') relations[0].fields['审批人'].push({ id: 'ou_8' });
+    assert.equal((await call(1, '/api/projects/PRJ-001')).status, 403);
+  });
+  await test('administrator may confirm own relationship but confirmation is still required', async () => {
+    people[0].fields['系统职责'] = ['管理员'];
+    relations[0].fields['审批人'] = [{ id: 'ou_1' }];
+    assert.equal((await call(1, '/api/projects/PRJ-001')).status, 200);
+    relations[0].fields['工作台授权确认'] = '待确认';
+    assert.equal((await call(1, '/api/projects/PRJ-001')).status, 403);
+  });
+  await test('ordinary member cannot confirm own relationship', async () => {
+    relations[0].fields['审批人'] = [{ id: 'ou_1' }];
     assert.equal((await call(1, '/api/projects/PRJ-001')).status, 403);
   });
   await test('clearance downgrade revokes old session', async () => {
