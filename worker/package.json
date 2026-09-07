@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "test": "node test.mjs && node digest.test.mjs && node v2.test.mjs && node oauth-retry.test.mjs && node student-home.test.mjs && node authorization.test.mjs && node weekly-write.test.mjs && node weekly-ui.test.mjs && node weekly-consolidation.test.mjs && node weekly-stability.test.mjs"
+    "test": "node test.mjs && node digest.test.mjs && node v2.test.mjs && node oauth-retry.test.mjs && node student-home.test.mjs && node authorization.test.mjs && node weekly-write.test.mjs && node weekly-ui.test.mjs && node weekly-consolidation.test.mjs && node weekly-stability.test.mjs && node weekly-automation-setup.test.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
