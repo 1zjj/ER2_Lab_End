@@ -115,8 +115,11 @@ await check('non-Friday cron cannot deliver a digest', async () => {
 
 const originalFetch = globalThis.fetch;
 const sent = [], logs = [];
+let recipientStatus = '在组';
+const runtimeMembers = members.slice(0, 5).map((r, i) => ({ ...r, fields: { ...r.fields, '飞书OpenID': 'ou_' + r.fields['飞书OpenID'], '飞书成员': [{ id: 'ou_' + r.fields['飞书OpenID'] }], '成员编号': 'P-' + String(i + 1).padStart(3, '0'), '人员边界': '团队内', '人员状态': '在组', '成员类别': i === 4 ? 'PI' : '博士', '系统职责': [] } }));
+const runtimeReports = reports.map(r => ({ ...r, fields: { ...r.fields, '飞书OpenID': 'ou_' + r.fields['飞书OpenID'] } }));
 const env = { FEISHU_APP_ID: 'test-app', FEISHU_APP_SECRET: 'test-secret', FEISHU_BASE_APP_TOKEN: 'test-base',
-  MEMBERS_TABLE_ID: 'members', WEEKLY_TABLE_ID: 'weekly', LITERATURE_TABLE_ID: 'literature', AUTOMATION_LOGS_TABLE_ID: 'logs',
+  MEMBERS_BASE_APP_TOKEN: 'test-base', MEMBERS_TABLE_ID: 'members', WEEKLY_TABLE_ID: 'weekly', LITERATURE_TABLE_ID: 'literature', AUTOMATION_LOGS_TABLE_ID: 'logs',
   PROFESSOR_OPEN_ID: 'ou_professor', FRONTEND_URL: 'https://example.com/workbench/' };
 globalThis.fetch = async (url, options = {}) => {
   const path = new URL(url).pathname;
@@ -126,7 +129,7 @@ globalThis.fetch = async (url, options = {}) => {
   if (path.endsWith('/im/v1/messages')) { sent.push(body); return result({ code: 0, data: { message_id: 'mock-' + sent.length } }); }
   const table = path.match(/\/tables\/([^/]+)\/records$/)?.[1];
   if (table === 'logs' && body) { logs.push({ fields: body.fields }); return result({ code: 0, data: {} }); }
-  if (table) return result({ code: 0, data: { items: { members, weekly: reports, literature: [], logs }[table] || [], has_more: false } });
+  if (table) return result({ code: 0, data: { items: { members: [...runtimeMembers, { record_id: 'recipient', fields: { '成员编号': 'P-099', '姓名': '模拟教授', '飞书成员': [{ id: 'ou_professor' }], '人员状态': recipientStatus, '人员边界': '团队内', '成员类别': 'PI', '系统职责': ['教授周报接收'] } }], weekly: runtimeReports, literature: [], logs }[table] || [], has_more: false } });
   throw new Error('Unexpected mocked URL: ' + path);
 };
 try {
@@ -139,6 +142,10 @@ try {
   await check('successful weekly digest is not resent', async () => {
     const count = sent.length;
     assert.equal((await runProfessorDigest(at, env)).skipped, 'already_sent'); assert.equal(sent.length, count);
+  });
+  await check('revoked professor cannot receive a new digest', async () => {
+    logs.length = 0; recipientStatus = '离组'; const before = sent.length;
+    await assert.rejects(() => runProfessorDigest(at, env)); assert.equal(sent.length, before); recipientStatus = '在组';
   });
   await check('missing professor configuration sends nothing', async () => {
     const count = sent.length;

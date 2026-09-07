@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export const SCHEMAS = Object.freeze({
   members: {
@@ -21,8 +21,13 @@ export const SCHEMAS = Object.freeze({
   },
   projectMembers: {
     tableBinding: 'PROJECT_MEMBERS_TABLE_ID',
-    required: ['ProjectID', 'PersonID'],
-    recommended: ['项目角色', '加入日期', '退出日期', '是否启用']
+    required: ['关联人员', '关联项目', '权限级别', '成员边界', '加入日期', '权限到期日', '授权状态', '审批人', '权限落实状态'],
+    recommended: ['关系编号', '项目角色']
+  },
+  authorityProjects: {
+    tableBinding: 'AUTH_PROJECTS_TABLE_ID',
+    required: ['项目编号', '项目名称', '项目阶段'],
+    recommended: []
   },
   trainingCatalog: {
     tableBinding: 'TRAINING_CATALOG_TABLE_ID',
@@ -55,6 +60,7 @@ export function validateSchema(schemaKey, fieldNames = []) {
   const schema = SCHEMAS[schemaKey];
   if (!schema) return { ok: false, schemaKey, error: 'unknown_schema', missingRequired: [], missingRecommended: [] };
   const available = new Set(fieldNames.map((name) => String(name || '').trim()).filter(Boolean));
+  if (schemaKey === 'members' && available.has('成员编号')) available.add('人员编号');
   const missingRequired = schema.required.filter((name) => !available.has(name));
   const missingRecommended = schema.recommended.filter((name) => !available.has(name));
   return {

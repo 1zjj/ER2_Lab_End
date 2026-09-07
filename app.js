@@ -89,6 +89,7 @@
     toast: document.getElementById('toast')
   };
 
+  const privateDrafts = window.ER2DraftStore.create(sessionStorage);
   const state = {
     session: readSession(),
     activeRole: 'student',
@@ -205,6 +206,7 @@
     const match = location.hash.match(/(?:^#|&)session=([^&]+)/);
     if (match) {
       const token = decodeURIComponent(match[1]);
+      privateDrafts.clear();
       sessionStorage.setItem('er2-session', token);
       history.replaceState(null, '', location.pathname + location.search);
       return token;
@@ -240,10 +242,10 @@
   }
 
   function pendingRequestId(key, prefix) {
-    const existing = sessionStorage.getItem(key);
+    const existing = privateDrafts.get(key, draftScope());
     if (existing) return existing;
     const created = createRequestId(prefix);
-    sessionStorage.setItem(key, created);
+    privateDrafts.set(key, draftScope(), created);
     return created;
   }
 
@@ -253,14 +255,16 @@
     return '<a class="' + escapeHtml(className || 'text-link') + '" href="' + safe + '">' + escapeHtml(label) + '</a>';
   }
 
+  function draftScope() { return state.dashboard?.week?.id || ''; }
+
   function saveDraft(form, key) {
     const values = Object.fromEntries(new FormData(form).entries());
-    sessionStorage.setItem(key, JSON.stringify(values));
+    privateDrafts.set(key, draftScope(), JSON.stringify(values));
   }
 
   function restoreDraft(form, key) {
     let values = {};
-    try { values = JSON.parse(sessionStorage.getItem(key) || '{}'); } catch (_) { values = {}; }
+    try { values = JSON.parse(privateDrafts.get(key, draftScope()) || '{}'); } catch (_) { values = {}; }
     setFormValues(form, values);
     return Object.keys(values).length > 0;
   }
@@ -273,7 +277,7 @@
   }
 
   function clearDraft(key) {
-    sessionStorage.removeItem(key);
+    privateDrafts.remove(key, draftScope());
   }
 
   function showToast(message) {
@@ -301,14 +305,31 @@
     elements.error.hidden = false;
   }
 
+  window.addEventListener('er2-session-denied', function () {
+    privateDrafts.clear();
+    state.dashboard = null;
+    document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
+    elements.app.hidden = true;
+    showError('访问权限需要重新核验', '请重新登录；若账号已停用，请联系管理员核对。');
+  });
+
+  async function authenticatedFetch(url, options) {
+    const response = await fetch(url, options);
+    if (response.status === 401 || response.status === 403) {
+      window.dispatchEvent(new Event('er2-session-denied'));
+    }
+    return response;
+  }
+
   async function request(path, options) {
-    const response = await fetch(API_BASE + path, Object.assign({
+    const response = await authenticatedFetch(API_BASE + path, Object.assign({
       headers: {
         'Accept': 'application/json',
         'Authorization': 'Bearer ' + state.session
       }
     }, options || {}));
     if (response.status === 401) {
+      privateDrafts.clear();
       sessionStorage.removeItem('er2-session');
       location.href = API_BASE + '/auth/launch?returnTo=' + encodeURIComponent(location.href);
       throw new Error('身份已过期，正在重新登录');
@@ -345,6 +366,7 @@
         }
         data = await request('/api/dashboard' + (role ? '?role=' + encodeURIComponent(role) : ''));
       }
+      privateDrafts.bind(DEMO_MODE ? 'demo' : data.profile.sub);
       state.dashboard = data;
       if (Array.isArray(data.catalog) && data.catalog.length) state.catalog = mergeCatalog(state.catalog, data.catalog);
       const roles = Array.isArray(data.profile.roles) ? data.profile.roles.filter(function (item) { return roleMeta[item]; }) : ['student'];
@@ -924,7 +946,7 @@
       closeDialog(elements.reportDialog);
       elements.reportForm.reset();
       clearDraft(draftKeys.report);
-      sessionStorage.removeItem('er2-request-report');
+      privateDrafts.remove('er2-request-report', draftScope());
       renderActiveView();
       showToast('本周工作记录已提交');
     } catch (error) {
@@ -977,7 +999,7 @@
       closeDialog(elements.literatureDialog);
       elements.literatureForm.reset();
       clearDraft(draftKeys.literature);
-      sessionStorage.removeItem('er2-request-literature');
+      privateDrafts.remove('er2-request-literature', draftScope());
       renderActiveView();
       showToast('文献阅读已提交，课题组成员现在可以查看');
     } catch (error) {
@@ -1016,7 +1038,7 @@
         });
       }
       clearDraft(courseDraftKey(fields.lessonId));
-      sessionStorage.removeItem(requestKey);
+      privateDrafts.remove(requestKey, draftScope());
       closeDialog(elements.courseDialog);
       if (DEMO_MODE) renderActiveView();
       else await loadDashboard(state.activeRole);
@@ -1062,7 +1084,7 @@
           body: JSON.stringify(fields)
         });
       }
-      sessionStorage.removeItem(requestKey);
+      privateDrafts.remove(requestKey, draftScope());
       closeDialog(elements.courseReviewDialog);
       if (!DEMO_MODE) await loadDashboard(state.activeRole);
       else renderActiveView();
@@ -1103,7 +1125,7 @@
         student.currentReport.feedback = fields.comment;
         student.currentReport.status = '已反馈';
       }
-      sessionStorage.removeItem(draftKeys.feedbackRequest);
+      privateDrafts.remove(draftKeys.feedbackRequest, draftScope());
       closeDialog(elements.studentDetailDialog);
       renderActiveView();
       showToast('教师反馈已保存');
@@ -1182,10 +1204,11 @@
   });
   elements.searchForm.addEventListener('submit', runSearch);
   elements.logoutButton.addEventListener('click', function () {
+    privateDrafts.clear();
     sessionStorage.removeItem('er2-session');
-    sessionStorage.removeItem('er2-request-report');
-    sessionStorage.removeItem('er2-request-literature');
-    sessionStorage.removeItem(draftKeys.feedbackRequest);
+    privateDrafts.remove('er2-request-report', draftScope());
+    privateDrafts.remove('er2-request-literature', draftScope());
+    privateDrafts.remove(draftKeys.feedbackRequest, draftScope());
     sessionStorage.removeItem(draftKeys.courseRequest);
     sessionStorage.removeItem(draftKeys.courseReviewRequest);
     state.session = '';

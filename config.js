@@ -43,6 +43,10 @@ window.addEventListener('DOMContentLoaded', function () {
       const response = await fetch(API_BASE + '/api/dashboard?role=student', {
         headers: { Accept: 'application/json', Authorization: 'Bearer ' + token }
       });
+      if (response.status === 401 || response.status === 403) {
+        cachedHome = null;
+        window.dispatchEvent(new Event('er2-session-denied'));
+      }
       if (!response.ok) return null;
       const data = await response.json();
       cachedHome = data?.student?.home || null;
