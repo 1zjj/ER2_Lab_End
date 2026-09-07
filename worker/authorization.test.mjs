@@ -1,3 +1,4 @@
+import { WEEKLY_FIELDS } from './src/weekly-write.js';
 import assert from 'node:assert/strict';
 import service from './src/runtime.js';
 import { authority, canProject, strictBinding, identity } from './src/authorization.js';
@@ -39,6 +40,7 @@ globalThis.fetch = async (input, options = {}) => {
   const url = new URL(input);
   assert.equal(url.hostname, 'open.feishu.cn', 'Tests must never call another host');
   if (url.pathname.endsWith('/tenant_access_token/internal')) return Response.json({ code: 0, tenant_access_token: 'mock-token' });
+  if (url.pathname.endsWith('/tables/weekly/fields')) return Response.json({ code: 0, data: { items: Object.entries(WEEKLY_FIELDS).map(([field_name, types]) => ({ field_name, type: field_name === '证据链接' ? 15 : types[0] })), has_more: false } });
   const m = url.pathname.match(/\/apps\/([^/]+)\/tables\/([^/]+)\/records(?:\/([^/]+))?$/);
   assert.ok(m, 'Unexpected API: ' + url.pathname);
   const [, base, table, recordId] = m;
@@ -68,6 +70,22 @@ async function call(id, path, method = 'GET', body, config = env) {
 let count = 0;
 async function test(name, fn) { reset(); await fn(); count++; console.log('PASS authorization:', name); }
 try {
+  await test('weekly report accepts webpage URL and encodes Feishu hyperlink', async () => {
+    const r = await call(1, '/api/reports', 'POST', { progress: '完成实验', nextPlan: '继续验证', evidence: ' https://example.com/result?q=1 ' });
+    assert.equal(r.status, 200);
+    assert.deepEqual(writes[0].fields['证据链接'], { text: 'https://example.com/result?q=1', link: 'https://example.com/result?q=1' });
+    assert.equal(writes[0].fields['飞书OpenID'], 'ou_1');
+    assert.equal(writes[0].fields['姓名'], '模拟人员1');
+    assert.equal('关联项目' in writes[0].fields, false);
+  });
+  await test('weekly empty evidence submits as null hyperlink', async () => {
+    const r = await call(1, '/api/reports', 'POST', { progress: '完成', nextPlan: '计划', evidence: '' });
+    assert.equal(r.status, 200); assert.equal(writes[0].fields['证据链接'], null);
+  });
+  await test('weekly unsafe link is rejected before write', async () => {
+    const r = await call(1, '/api/reports', 'POST', { progress: '完成', nextPlan: '计划', evidence: 'javascript:alert(1)' });
+    assert.equal(r.status, 400); assert.equal(writes.length, 0);
+  });
   await test('signed old manager role is replaced by current master duties', async () => {
     const r = await call(1, '/api/me'); assert.equal(r.status, 200); const data = await r.json();
     assert.deepEqual(data.profile.roles, ['student']); assert.equal(data.profile.personId, 'P-001');
