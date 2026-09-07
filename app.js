@@ -10,11 +10,16 @@
     manager: { label: '管理配置', short: '管' }
   };
   const onboardingSteps = [
-    { id: 'feishu-access', icon: '⌁', title: '确认飞书权限', detail: '确认可以打开工作台、学习中心和周报入口' },
-    { id: 'lab-rules', icon: '◇', title: '阅读实验室基本规则', detail: '了解安全、保密、设备和文件命名规范' },
-    { id: 'environment', icon: '▣', title: '完成基础环境准备', detail: '确认 Ubuntu、ROS 与课程代码包能够正常运行' },
-    { id: 'track-a', icon: '⌘', title: '确认当前学习方向', detail: '当前开放：Track A｜感知与语义导航' },
-    { id: 'test-submit', icon: '➤', title: '完成一次测试提交', detail: '确认本周记录能够正常保存' }
+    { id: 'workbench', icon: '⌁', title: '认识工作台', detail: '了解学习中心、周报和文献阅读入口。',
+      explanation: '学习中心查看课程安排；本周工作记录填写周报并查看历史；文献阅读记录论文学习。遇到无法访问的内容，请联系管理员核对账号权限。' },
+    { id: 'rules', icon: '◇', title: '阅读实验室规则', detail: '了解安全、保密、文件命名及基本规范。',
+      explanation: '请阅读实验室现行规则和相关 SOP，具体要求以正式发布的文档为准。涉及设备操作和保密资料时，仍须按规定完成培训和审批。' },
+    { id: 'environment', icon: '▣', title: '查看环境准备说明', detail: '了解 Ubuntu、ROS、代码及环境配置指引。',
+      explanation: '按对应课程的说明准备系统、软件版本和代码环境。遇到启动或运行问题，保留报错信息并联系课程负责人；此处确认只表示已了解准备方法。' },
+    { id: 'learning', icon: '⌘', title: '了解学习安排', detail: '查看当前课程、学习顺序和求助方式。',
+      explanation: '进入学习中心了解当前学习安排，再按课程说明逐项学习。课程提交和审核状态以实际记录为准；“我已了解”不会改变培训状态。' },
+    { id: 'weekly', icon: '➤', title: '了解周报填写方法', detail: '了解五项内容、提交时间、本人历史及教师反馈。',
+      explanation: '周报包括本周完成与结果、学习与方法、产出、当前问题与阻塞、下周计划。产出可填写说明及普通网页或飞书链接。按首页显示的周次和截止时间填写正式内容，提交后可查看历史；无需为阅读本指南生成测试周报。' }
   ];
 
   const elements = {
@@ -96,11 +101,14 @@
     activeStudentId: '',
     activeLessonId: '',
     activeCourseRecordId: '',
-    onboardingSaving: false,
+    learningCenterOpen: false,
     dashboard: null,
     catalog: [],
     toastTimer: null
   };
+
+  const memberGuide = window.ER2GuideStore.create({ storage: function () { return localStorage; },
+    namespace: API_BASE || 'demo', steps: onboardingSteps.map(function (step) { return step.id; }) });
 
   const draftKeys = {
     report: 'er2-draft-report',
@@ -311,6 +319,7 @@
 
   window.addEventListener('er2-session-denied', function (event) {
     if (event.detail?.status !== 401) privateDrafts.clear();
+    memberGuide.bind('');
     state.dashboard = null;
     document.getElementById('weekly-source-panel').hidden = true;
     document.getElementById('weekly-source-result').textContent = '';
@@ -383,6 +392,8 @@
         }
       }
       privateDrafts.bind(DEMO_MODE ? 'demo' : data.profile.sub);
+      memberGuide.bind(DEMO_MODE ? 'demo' : data.profile.sub);
+      state.learningCenterOpen = false;
       state.dashboard = data;
       if (Array.isArray(data.catalog) && data.catalog.length) state.catalog = mergeCatalog(state.catalog, data.catalog);
       const roles = Array.isArray(data.profile.roles) ? data.profile.roles.filter(function (item) { return roleMeta[item]; }) : ['student'];
@@ -505,104 +516,80 @@
       availableLink(wikiUrl(), '打开ER²知识库') + '</footer>';
   }
 
-  function onboardingData() {
-    const stored = state.dashboard && state.dashboard.student && state.dashboard.student.onboarding;
-    const completedSteps = Array.isArray(stored && stored.completedSteps) ? stored.completedSteps : [];
-    return {
-      version: 1,
-      completedSteps,
-      completedCount: completedSteps.length,
-      total: onboardingSteps.length,
-      completed: completedSteps.length === onboardingSteps.length
-    };
-  }
+  function onboardingData() { return memberGuide.read(); }
 
   function renderOnboardingEntry() {
-    const onboarding = onboardingData();
-    if (onboarding.completed) {
-      return '<section class="onboarding-shortcut" aria-label="入组资料与规则"><div class="onboarding-shortcut-copy"><span aria-hidden="true">✓</span><div><strong>入组资料与规则</strong><small>入组准备已完成，需要时可随时查看</small></div></div><button class="button button-ghost" type="button" data-open-onboarding>查看</button></section>';
+    const guide = onboardingData();
+    if (guide.completed || guide.skipped) {
+      return '<section class="onboarding-shortcut" aria-label="学习中心入口"><div class="onboarding-shortcut-copy"><span aria-hidden="true">⌘</span><div><strong>学习中心</strong><small>按当前学习安排继续学习，入组说明可随时查看。</small></div></div><div class="action-row"><button class="button button-primary" type="button" data-open-learning-center>进入学习中心</button><button class="button button-ghost" type="button" data-open-onboarding>入组说明</button></div></section>';
     }
-    const remaining = onboarding.total - onboarding.completedCount;
-    const progress = Math.round((onboarding.completedCount / onboarding.total) * 100);
-    return '<section class="onboarding-banner"><div class="onboarding-icon" aria-hidden="true">✦</div><div><h2>新生入组 · 还剩 ' + remaining + ' 项</h2><p>先完成必要的权限、规则、环境与测试确认；全部完成后自动缩小为“入组资料与规则”入口。</p><div class="onboarding-banner-progress"><div class="progress-track" role="progressbar" aria-label="入组进度" aria-valuemin="0" aria-valuemax="5" aria-valuenow="' + onboarding.completedCount + '"><span style="width:' + progress + '%"></span></div><strong>' + onboarding.completedCount + ' / ' + onboarding.total + '</strong></div></div><button class="button button-primary" type="button" data-open-onboarding>继续入组</button></section>';
+    const progress = Math.round(guide.completedCount / guide.total * 100);
+    return '<section class="onboarding-banner"><div class="onboarding-icon" aria-hidden="true">✦</div><div><h2>新成员使用指南</h2><p>了解工作台、规则、环境、学习安排及周报使用方法。也可直接进入学习中心。</p><div class="onboarding-banner-progress"><div class="progress-track" role="progressbar" aria-label="指南阅读进度" aria-valuemin="0" aria-valuemax="5" aria-valuenow="' + guide.completedCount + '"><span style="width:' + progress + '%"></span></div><strong>' + guide.completedCount + ' / ' + guide.total + ' 已了解</strong></div></div><div class="action-row"><button class="button button-primary" type="button" data-open-onboarding>查看指南</button><button class="button button-secondary" type="button" data-open-learning-center>进入学习中心</button></div></section>';
   }
 
   function renderOnboardingDialog() {
-    const onboarding = onboardingData();
-    const completed = new Set(onboarding.completedSteps);
-    const remaining = onboarding.total - onboarding.completedCount;
-    const progress = Math.round((onboarding.completedCount / onboarding.total) * 100);
-    elements.onboardingProgressLabel.textContent = onboarding.completedCount + ' / ' + onboarding.total + ' 已完成';
-    elements.onboardingProgressHint.textContent = onboarding.completed ? '入组准备已全部完成' : '还需完成 ' + remaining + ' 项';
-    elements.onboardingProgressTrack.setAttribute('aria-valuenow', String(onboarding.completedCount));
-    elements.onboardingProgressTrack.querySelector('span').style.width = progress + '%';
+    const guide = onboardingData();
+    const completed = new Set(guide.completedSteps);
+    elements.onboardingProgressLabel.textContent = guide.completedCount + ' / ' + guide.total + ' 已了解';
+    elements.onboardingProgressHint.textContent = guide.completed ? '五项说明均已了解' : (guide.skipped ? '已选择直接进入学习中心，可随时补看说明' : '可逐项查看，也可直接进入学习中心');
+    elements.onboardingProgressTrack.setAttribute('aria-valuenow', String(guide.completedCount));
+    elements.onboardingProgressTrack.querySelector('span').style.width = Math.round(guide.completedCount / guide.total * 100) + '%';
     elements.onboardingChecklist.innerHTML = onboardingSteps.map(function (step) {
       const done = completed.has(step.id);
-      return '<article class="onboarding-check-item ' + (done ? 'completed' : '') + '"><span class="onboarding-step-icon" aria-hidden="true">' + escapeHtml(done ? '✓' : step.icon) + '</span><div><strong>' + escapeHtml(step.title) + '</strong><small>' + escapeHtml(step.detail) + '</small></div><button class="button button-secondary onboarding-step-action" type="button" data-complete-onboarding="' + escapeHtml(step.id) + '"' + (done || state.onboardingSaving ? ' disabled' : '') + '>' + (done ? '已完成' : '标记完成') + '</button></article>';
+      return '<article class="onboarding-check-item ' + (done ? 'completed' : '') + '"><span class="onboarding-step-icon" aria-hidden="true">' + escapeHtml(done ? '✓' : step.icon) + '</span><div><strong>' + escapeHtml(step.title) + '</strong><small>' + escapeHtml(step.detail) + '</small><details class="guide-explanation"><summary>查看说明</summary><p>' + escapeHtml(step.explanation) + '</p>' + (step.id === 'weekly' ? '<button class="button button-ghost" type="button" data-guide-weekly>查看周报表单</button>' : '') + '</details></div><button class="button button-secondary onboarding-step-action" type="button" data-guide-step="' + escapeHtml(step.id) + '" aria-pressed="' + done + '" aria-label="' + escapeHtml(step.title + '：' + (done ? '撤销已了解' : '我已了解')) + '">' + (done ? '已了解 · 撤销' : '我已了解') + '</button></article>';
     }).join('');
-    elements.onboardingCourseEntry.innerHTML = onboarding.completed
-      ? availableLink(courseUrl(), '进入学习中心', 'button button-primary')
-      : '<button class="button button-secondary" type="button" disabled>完成 5 项后进入学习中心</button>';
-    elements.onboardingChecklist.querySelectorAll('[data-complete-onboarding]').forEach(function (button) {
-      button.addEventListener('click', function () { saveOnboardingStep(button.dataset.completeOnboarding); });
+    elements.onboardingCourseEntry.innerHTML = '<button class="button button-primary" type="button" data-guide-learning>进入学习中心</button>';
+    elements.onboardingSaveStatus.textContent = guide.persistent
+      ? '仅在本浏览器记住此账号的阅读进度；换设备或清除浏览器数据后可能重新出现。'
+      : '浏览器暂不能记住进度，本次查看仍可继续；刷新后可能重新显示指南。';
+    elements.onboardingSaveStatus.className = '';
+    elements.onboardingChecklist.querySelectorAll('[data-guide-step]').forEach(function (button) {
+      button.addEventListener('click', function () { acknowledgeGuideStep(button.dataset.guideStep); });
+    });
+    elements.onboardingChecklist.querySelectorAll('[data-guide-weekly]').forEach(function (button) {
+      button.addEventListener('click', function () { closeDialog(elements.onboardingDialog); openReportDialog(); });
+    });
+    elements.onboardingCourseEntry.querySelector('[data-guide-learning]').addEventListener('click', function () {
+      closeDialog(elements.onboardingDialog); openLearningCenter();
     });
   }
 
   function openOnboardingDialog() {
-    elements.onboardingSaveStatus.textContent = '每项完成后自动保存';
-    elements.onboardingSaveStatus.className = '';
+    if (!state.dashboard?.profile?.roles?.includes('student')) return;
     renderOnboardingDialog();
     showDialog(elements.onboardingDialog);
   }
 
-  async function saveOnboardingStep(stepId) {
-    if (state.onboardingSaving || !onboardingSteps.some(function (step) { return step.id === stepId; })) return;
+  function acknowledgeGuideStep(stepId) {
+    if (!state.dashboard?.profile?.roles?.includes('student')) return;
     const current = onboardingData();
-    if (current.completedSteps.includes(stepId)) return;
-    const completedSteps = current.completedSteps.concat(stepId);
-    state.onboardingSaving = true;
-    elements.onboardingSaveStatus.textContent = '正在保存…';
-    elements.onboardingSaveStatus.className = 'saving';
-    renderOnboardingDialog();
-    try {
-      let next = {
-        version: 1,
-        completedSteps,
-        completedCount: completedSteps.length,
-        total: onboardingSteps.length,
-        completed: completedSteps.length === onboardingSteps.length
-      };
-      if (!DEMO_MODE) {
-        const result = await request('/api/onboarding', {
-          method: 'POST',
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-            'X-Request-ID': createRequestId('onboarding'),
-            'Authorization': 'Bearer ' + state.session
-          },
-          body: JSON.stringify({ completedSteps })
-        });
-        next = result.onboarding;
-      }
-      state.dashboard.student.onboarding = next;
-      elements.onboardingSaveStatus.textContent = '已自动保存';
-      elements.onboardingSaveStatus.className = 'saved';
-      if (next.completed) {
-        closeDialog(elements.onboardingDialog);
-        renderActiveView();
-        showToast('入组准备已完成，入口已自动收起');
-      } else {
-        renderOnboardingDialog();
-      }
-    } catch (error) {
-      elements.onboardingSaveStatus.textContent = error.message || '保存失败，请重试';
-      elements.onboardingSaveStatus.className = '';
+    if (!memberGuide.setStep(stepId, !current.completedSteps.includes(stepId))) return;
+    const next = onboardingData();
+    renderActiveView();
+    if (next.completed) {
+      closeDialog(elements.onboardingDialog);
+      showToast('已了解全部说明，首页已显示学习中心入口');
+    } else {
       renderOnboardingDialog();
-    } finally {
-      state.onboardingSaving = false;
-      if (elements.onboardingDialog.open && !onboardingData().completed) renderOnboardingDialog();
+      const button = elements.onboardingChecklist.querySelector('[data-guide-step="' + stepId + '"]');
+      if (button) button.focus();
     }
+  }
+
+  function skipMemberGuide() {
+    if (!state.dashboard?.profile?.roles?.includes('student') || !memberGuide.skip()) return;
+    closeDialog(elements.onboardingDialog);
+    renderActiveView();
+    openLearningCenter();
+  }
+
+  function openLearningCenter() {
+    if (!state.dashboard?.profile?.roles?.includes('student') || state.activeRole !== 'student') return;
+    const center = elements.app.querySelector('.course-panel');
+    if (!center) { showToast('当前页面未加载学习中心，请返回主页后重试'); return; }
+    state.learningCenterOpen = true;
+    center.hidden = false;
+    center.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   function renderLiteratureSection() {
@@ -636,7 +623,7 @@
     const lessons = Array.isArray(course.lessons) ? course.lessons : [];
     const otherTracks = Array.isArray(course.otherTracks) ? course.otherTracks : [];
     return [
-      '<section class="panel course-panel"><div class="course-panel-head"><div><p class="kicker">TRACK A TRAINING</p><h2>' + escapeHtml(course.title || 'Track A｜感知与语义导航') + '</h2>',
+      '<section class="panel course-panel" id="learning-center"' + (state.learningCenterOpen ? '' : ' hidden') + '><div class="course-panel-head"><div><p class="kicker">TRACK A TRAINING</p><h2>' + escapeHtml(course.title || 'Track A｜感知与语义导航') + '</h2>',
       '<p>Lesson 01–10 每课提交一份文字学习记录，由朱俊杰确认。</p></div><div class="course-count"><strong>' + Number(course.completed || 0) + ' / ' + Number(course.total || 10) + '</strong><span>已确认课程</span></div></div>',
       '<div class="progress-track course-progress" role="progressbar" aria-label="Track A课程进度" aria-valuenow="' + Number(course.progress || 0) + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + Number(course.progress || 0) + '%"></span></div>',
       '<div class="course-list">',
@@ -696,12 +683,24 @@
     return '<section class="detail-wide"><h3>产出（若有阶段性成果，可以提交文档链接）</h3><p>' + content + '</p></section>';
   }
 
+  function studentHomeView(student) {
+    if (!student?.home) return null;
+    // A confirmed weekly save updates student.report before the next dashboard
+    // read. Do not let the older home summary overwrite that confirmed status.
+    const home = student.home;
+    const report = Object.assign({}, home.report, student.report);
+    return Object.assign({}, home, { report, todos: (home.todos || []).filter(function (item) {
+      return !(item.action === 'report' && report.status === 'submitted');
+    }) });
+  }
+
   function renderActiveView() {
     if (state.dashboard.weeklyOnly) { renderWeeklyOnly(); return; }
     if (state.activeRole === 'teacher') elements.app.innerHTML = renderTeacher();
     else if (state.activeRole === 'manager') elements.app.innerHTML = renderManager();
     else elements.app.innerHTML = renderStudent();
     bindViewActions();
+    window.dispatchEvent(new CustomEvent('er2-dashboard-rendered', { detail: { role: state.activeRole, home: studentHomeView(state.dashboard.student) } }));
   }
 
   function renderStudent() {
@@ -734,7 +733,7 @@
       '</div>',
       '<aside class="stack"><section class="panel"><div class="panel-title"><h2>继续学习</h2></div><p class="kicker">' + escapeHtml(data.course.title) + '</p>',
       '<h3>' + escapeHtml(data.course.next) + '</h3><div class="progress-track" role="progressbar" aria-label="课程进度" aria-valuenow="' + Number(data.course.progress || 0) + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + Number(data.course.progress || 0) + '%"></span></div>',
-      availableLink(courseUrl(), '进入课程', 'button button-secondary') + '</section>',
+      '<button class="button button-secondary" type="button" data-open-learning-center>进入学习中心</button></section>',
       '</aside></div>',
       renderCoursePanel(), renderLiteratureSection(), footer()
     ].join('');
@@ -786,6 +785,9 @@
   }
 
   function bindViewActions() {
+    elements.app.querySelectorAll('[data-open-learning-center]').forEach(function (button) {
+      button.addEventListener('click', openLearningCenter);
+    });
     elements.app.querySelectorAll('[data-open-onboarding]').forEach(function (button) {
       button.addEventListener('click', openOnboardingDialog);
     });
@@ -1266,6 +1268,12 @@
       if (event.target === dialog) closeDialog(dialog);
     });
   });
+  document.getElementById('guide-skip-button').addEventListener('click', skipMemberGuide);
+  window.addEventListener('storage', function (event) {
+    if (!state.dashboard || !memberGuide.ownsStorageKey(event.key)) return;
+    renderActiveView();
+    if (elements.onboardingDialog.open) renderOnboardingDialog();
+  });
   document.getElementById('weekly-source-button').addEventListener('click', async function () {
     const output = document.getElementById('weekly-source-result');
     output.textContent = '正在读取服务器实际配置…';
@@ -1298,6 +1306,7 @@
     privateDrafts.remove(draftKeys.feedbackRequest, draftScope());
     sessionStorage.removeItem(draftKeys.courseRequest);
     sessionStorage.removeItem(draftKeys.courseReviewRequest);
+    memberGuide.bind('');
     state.session = '';
     location.href = API_BASE + '/auth/launch?returnTo=' + encodeURIComponent(location.origin + location.pathname);
   });
