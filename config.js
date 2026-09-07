@@ -15,9 +15,6 @@ window.addEventListener('DOMContentLoaded', function () {
     if (!root || !API_BASE) return;
 
     let applying = false;
-    let lastFetchAt = 0;
-    let cachedHome = null;
-
     const style = document.createElement('style');
     style.textContent = `
       .home-v2-projects{display:grid;gap:12px;margin-top:12px}
@@ -32,27 +29,9 @@ window.addEventListener('DOMContentLoaded', function () {
     `;
     document.head.appendChild(style);
 
-    function sessionToken() { return sessionStorage.getItem('er2-session') || ''; }
     function isStudentView() {
       const kicker = root.querySelector('.welcome .kicker');
       return Boolean(kicker && /STUDENT WORKSPACE/.test(kicker.textContent || ''));
-    }
-    async function getHome() {
-      if (cachedHome && Date.now() - lastFetchAt < 20_000) return cachedHome;
-      const token = sessionToken();
-      if (!token) return null;
-      const response = await fetch(API_BASE + '/api/dashboard?role=student', {
-        headers: { Accept: 'application/json', Authorization: 'Bearer ' + token }
-      });
-      if (response.status === 401 || response.status === 403) {
-        cachedHome = null;
-        window.dispatchEvent(new Event('er2-session-denied'));
-      }
-      if (!response.ok) return null;
-      const data = await response.json();
-      cachedHome = data?.student?.home || null;
-      lastFetchAt = Date.now();
-      return cachedHome;
     }
     function panelByTitle(title) {
       return Array.from(root.querySelectorAll('.panel')).find(function (panel) {
@@ -78,6 +57,8 @@ window.addEventListener('DOMContentLoaded', function () {
       const list = panel.querySelector('.task-list');
       if (!list) return;
       const todos = Array.isArray(home.todos) ? home.todos : [];
+      const count = panel.querySelector('.panel-title span');
+      if (count) count.textContent = todos.length + '项';
       list.innerHTML = todos.length ? todos.map(function (item, index) {
         return '<li><span class="task-number">' + (index + 1) + '</span><div><strong>' + escapeHtml(item.title) + '</strong><small>' + escapeHtml(item.type + (item.detail ? ' · ' + item.detail : '')) + '</small></div><button type="button" class="button button-secondary home-v2-todo-action" data-home-action="' + escapeHtml(item.action) + '" data-home-target="' + escapeHtml(item.target || '') + '">' + actionLabel(item) + '</button></li>';
       }).join('') : '<li class="empty">本周暂无待办。</li>';
@@ -107,25 +88,11 @@ window.addEventListener('DOMContentLoaded', function () {
       const oldSummary = panelByTitle('继续学习');
       const coursePanel = root.querySelector('.course-panel');
       const training = home.training || {};
-      if (coursePanel) {
-        coursePanel.classList.add('home-v2-learning-center');
-        coursePanel.id = 'learning-center';
-        coursePanel.hidden = true;
-      }
+      if (coursePanel) coursePanel.classList.add('home-v2-learning-center');
       if (!oldSummary) return;
-      if (!home.modules?.training?.visible) {
-        oldSummary.hidden = true;
-        if (coursePanel) coursePanel.hidden = true;
-        return;
-      }
+      // The guide is a local reading preference, never a learning access gate.
       oldSummary.hidden = false;
-      oldSummary.innerHTML = '<div class="panel-title"><h2>学习与培训</h2><span>' + Number(training.completed || 0) + ' / ' + Number(training.total || 0) + '</span></div><div class="home-v2-training-summary"><p class="kicker">' + escapeHtml(training.title || '') + '</p><h3>' + escapeHtml(training.next || '继续当前培训') + '</h3><div class="home-v2-training-meta"><div class="progress-track" style="flex:1" role="progressbar" aria-valuenow="' + Number(training.progress || 0) + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + Number(training.progress || 0) + '%"></span></div><strong>' + Number(training.progress || 0) + '%</strong></div><button class="button button-primary" type="button" data-home-open-training>进入学习中心</button></div>';
-    }
-    function renderOnboarding(home) {
-      const completedShortcut = root.querySelector('.onboarding-shortcut');
-      const banner = root.querySelector('.onboarding-banner');
-      if (completedShortcut) completedShortcut.hidden = true;
-      if (banner && !home.modules?.onboarding?.visible) banner.hidden = true;
+      oldSummary.innerHTML = '<div class="panel-title"><h2>学习与培训</h2><span>' + Number(training.completed || 0) + ' / ' + Number(training.total || 0) + '</span></div><div class="home-v2-training-summary"><p class="kicker">' + escapeHtml(training.title || '') + '</p><h3>' + escapeHtml(training.next || '查看学习安排') + '</h3><div class="home-v2-training-meta"><div class="progress-track" style="flex:1" role="progressbar" aria-valuenow="' + Number(training.progress || 0) + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + Number(training.progress || 0) + '%"></span></div><strong>' + Number(training.progress || 0) + '%</strong></div><button class="button button-primary" type="button" data-home-open-training>进入学习中心</button></div>';
     }
     function reorderLiterature() {
       const literature = root.querySelector('.literature-panel');
@@ -146,10 +113,9 @@ window.addEventListener('DOMContentLoaded', function () {
           if (action === 'report') return triggerExisting('[data-open-report]');
           if (action === 'literature') return triggerExisting('[data-open-literature]');
           if (action === 'training') {
+            triggerExisting('[data-open-learning-center]');
             const center = root.querySelector('#learning-center');
             if (center) {
-              center.hidden = false;
-              center.scrollIntoView({ behavior:'smooth', block:'start' });
               if (target) setTimeout(function () {
                 const lesson = center.querySelector('[data-course-lesson="' + CSS.escape(target) + '"]');
                 if (lesson) lesson.focus();
@@ -165,10 +131,7 @@ window.addEventListener('DOMContentLoaded', function () {
       });
       const trainingButton = root.querySelector('[data-home-open-training]');
       if (trainingButton) trainingButton.onclick = function () {
-        const center = root.querySelector('#learning-center');
-        if (!center) return;
-        center.hidden = !center.hidden;
-        if (!center.hidden) center.scrollIntoView({ behavior:'smooth', block:'start' });
+        triggerExisting('[data-open-learning-center]');
       };
     }
     function normalizeUrlInput(input) {
@@ -192,31 +155,28 @@ window.addEventListener('DOMContentLoaded', function () {
         });
       }, true);
     }
-    async function apply() {
-      if (applying || !isStudentView()) return;
+    function apply(home) {
+      if (applying || !isStudentView() || !home || home.aiRequired !== false) return;
       applying = true;
       try {
-        const home = await getHome();
-        if (!home || home.aiRequired !== false) return;
         renderWeeklyStatus(home);
         renderTodos(home);
         renderProjects(home);
         renderTraining(home);
-        renderOnboarding(home);
         reorderLiterature();
         bindHomeActions();
         bindUrlNormalization();
         root.dataset.studentHomeV2 = 'active';
-      } catch (_) {
       } finally {
         applying = false;
       }
     }
 
-    const observer = new MutationObserver(function () { setTimeout(apply, 0); });
-    observer.observe(root, { childList:true, subtree:true });
-    window.addEventListener('hashchange', function () { cachedHome = null; setTimeout(apply, 50); });
-    setTimeout(apply, 400);
+    // Render once from the same authenticated dashboard as app.js. Observing our
+    // own DOM mutations previously caused repeated rendering and stale resets.
+    window.addEventListener('er2-dashboard-rendered', function (event) {
+      if (event.detail?.role === 'student') apply(event.detail.home);
+    });
     bindUrlNormalization();
   })();
 });
