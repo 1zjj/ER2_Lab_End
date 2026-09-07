@@ -24,7 +24,7 @@ const relation = (pid, prj, extra = {}) => ({ record_id: 'rec-rel' + pid + '-' +
   '权限级别': '编辑', '授权状态': '有效', '工作台授权确认': '已确认', '权限落实状态': '已落实', '成员边界': '团队内',
   '加入日期': '2020-01-01', '权限到期日': '2099-01-01', '审批人': [{ id: 'ou_9' }], ...extra
 } });
-let people, projects, relations, rows, writes, failRead;
+let people, projects, relations, rows, writes, failRead, recordResponses;
 function reset() {
   people = [person(1), person(2), person(9, { '系统职责': ['管理员'] }), person(8, { '系统职责': ['管理员'] })];
   projects = [project(1), project(2), project(3, { '项目阶段': '暂停' })];
@@ -32,7 +32,7 @@ function reset() {
   rows = {
     projects: [1, 2, 3].map(i => ({ record_id: 'business' + i, fields: { '项目编号': 'P0' + i, '统一项目编号': 'PRJ-00' + i, '项目名称': '业务项目' + i } })),
     weekly: [], courses: [], tasks: [], links: [], literature: []
-  }; writes = []; failRead = false;
+  }; writes = []; failRead = false; recordResponses = {};
 }
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (input, options = {}) => {
@@ -46,6 +46,7 @@ globalThis.fetch = async (input, options = {}) => {
   if (options.method === 'GET') {
     assert.equal(url.searchParams.get('user_id_type'), 'open_id');
     if (failRead && table === 'members') return Response.json({ code: 999, msg: 'mock-read-failure' });
+    if (Object.hasOwn(recordResponses, table)) return Response.json({ code: 0, data: recordResponses[table] });
     return Response.json({ code: 0, data: { items: ({ members: people, auth_projects: projects, project_members: relations })[table] || rows[table] || [], has_more: false } });
   }
   assert.ok(['POST', 'PUT'].includes(options.method));
@@ -196,6 +197,23 @@ try {
     assert.equal((await call(1, '/api/projects/PRJ-001')).status, 200);
     people[0].fields['保密等级'] = '普通';
     assert.equal((await call(1, '/api/projects/PRJ-001')).status, 403);
+  });
+  for (const items of [undefined, null]) await test('explicit empty business table does not break dashboard: ' + items, async () => {
+    recordResponses.literature = { total: 0, has_more: false, ...(items === null ? {items:null} : {}) };
+    const response = await call(1, '/api/dashboard');
+    assert.equal(response.status, 200);
+    const data = await response.json();
+    assert.deepEqual(data.literature.items, []);
+    assert.deepEqual(data.student.projects.map(p => p.code), ['PRJ-001']);
+  });
+  for (const data of [{}, {total:0}, {total:1,has_more:false}, {total:0,has_more:true}, {total:0,has_more:false,items:{}}, {total:0,has_more:false,page_token:'next'}]) await test('malformed empty page remains blocked: ' + JSON.stringify(data), async () => {
+    recordResponses.literature = data;
+    assert.equal((await call(1, '/api/dashboard')).status, 502);
+  });
+  await test('empty authority table cannot grant access', async () => {
+    recordResponses.members = {total:0,has_more:false};
+    assert.equal((await call(1, '/api/projects')).status, 403);
+    assert.equal(writes.length, 0);
   });
   const storage = new Map();
   const fakeStorage = { get length() { return storage.size; }, key(i) { return [...storage.keys()][i]; }, getItem(k) { return storage.get(k) ?? null; }, setItem(k,v) { storage.set(k,v); }, removeItem(k) { storage.delete(k); } };
