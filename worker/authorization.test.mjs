@@ -41,6 +41,8 @@ globalThis.fetch = async (input, options = {}) => {
   assert.equal(url.hostname, 'open.feishu.cn', 'Tests must never call another host');
   if (url.pathname.endsWith('/tenant_access_token/internal')) return Response.json({ code: 0, tenant_access_token: 'mock-token' });
   if (url.pathname.endsWith('/tables/weekly/fields')) return Response.json({ code: 0, data: { items: Object.entries(WEEKLY_FIELDS).map(([field_name, types]) => ({ field_name, type: field_name === '证据链接' ? 15 : types[0] })), has_more: false } });
+  if (url.pathname === '/open-apis/bitable/v1/apps/base-weekly') return Response.json({ code: 0, data: { app: { name: '测试旧后台', url: 'https://test.feishu.cn/base/base-weekly' } } });
+  if (url.pathname === '/open-apis/bitable/v1/apps/base-weekly/tables') return Response.json({ code: 0, data: { items: [{ table_id: 'weekly', name: '周报旧表' }], has_more: false } });
   const m = url.pathname.match(/\/apps\/([^/]+)\/tables\/([^/]+)\/records(?:\/([^/]+))?$/);
   assert.ok(m, 'Unexpected API: ' + url.pathname);
   const [, base, table, recordId] = m;
@@ -70,6 +72,22 @@ async function call(id, path, method = 'GET', body, config = env) {
 let count = 0;
 async function test(name, fn) { reset(); await fn(); count++; console.log('PASS authorization:', name); }
 try {
+  await test('weekly source locator is restricted to current managers', async () => {
+    assert.equal((await call(1, '/api/admin/weekly-source')).status, 403);
+    const response = await call(9, '/api/admin/weekly-source');
+    assert.equal(response.status, 200);
+    const data = await response.json();
+    assert.equal(data.tableName, '周报旧表');
+    assert.equal(data.tableUrl, 'https://test.feishu.cn/base/base-weekly?table=weekly');
+    assert.equal(data.recordsRead, false); assert.equal(writes.length, 0);
+    const direct = await (await call(9, '/api/admin/weekly-source?docsOrigin=https%3A%2F%2Flab.feishu.cn')).json();
+    assert.equal(direct.tableUrl, 'https://lab.feishu.cn/base/base-weekly?table=weekly');
+    const unsafe = await (await call(9, '/api/admin/weekly-source?docsOrigin=https%3A%2F%2Fevil.example')).json();
+    assert.equal(unsafe.tableUrl, '');
+    assert.equal(JSON.stringify(data).includes('mock-secret'), false);
+    people.find(p => p.record_id === 'rec-p9').fields['系统职责'] = [];
+    assert.equal((await call(9, '/api/admin/weekly-source')).status, 403);
+  });
   await test('weekly report accepts webpage URL and encodes Feishu hyperlink', async () => {
     const r = await call(1, '/api/reports', 'POST', { progress: '完成实验', nextPlan: '继续验证', evidence: ' https://example.com/result?q=1 ' });
     assert.equal(r.status, 200);
