@@ -81,3 +81,31 @@ handler({ detail: { status: 403 } });
 assert.equal(reloadedStore.get('report', '2026-W37'), null);
 console.log('PASS weekly UI: text/link escaping, preserve unconfirmed drafts, display confirmed server record');
 console.log('PASS weekly UI: expiry recovery, account isolation, denied-access cleanup, submit guard and teacher refresh');
+
+// Reproduce a report submitted on another device while this browser retains
+// an empty draft. Opening edit must display the saved record, not empty fields.
+const reportNames = ['progress', 'learning', 'evidence', 'blockers', 'nextPlan'];
+const savedReport = { progress: '服务器正文', learning: '已保存的学习内容', evidence: 'https://example.com/output', blockers: '', nextPlan: '服务器计划' };
+function reopenReport(rawDraft, saved = savedReport) {
+  const fields = Object.fromEntries(reportNames.map(name => [name, { value: '上次表单残留' }]));
+  const form = { reset: () => Object.values(fields).forEach(field => { field.value = ''; }),
+    elements: { namedItem: name => fields[name] } };
+  const context = vm.createContext({ privateDrafts: { get: () => rawDraft }, draftScope: () => '2026-W37', draftKeys: { report: 'report' },
+    elements: { reportForm: form, reportWeekLabel: {}, reportError: {}, reportDialog: {} },
+    state: { dashboard: { week: { label: '当前周' }, student: { report: { values: saved } } } }, showDialog() {} });
+  vm.runInContext(extract('  function restoreDraft(', '  function clearDraft('), context);
+  vm.runInContext(extract('  function openReportDialog(', '  function openReportHistory('), context);
+  context.openReportDialog();
+  return Object.fromEntries(reportNames.map(name => [name, fields[name].value]));
+}
+for (const raw of [null, '{}', 'null', '[]', 'broken JSON', JSON.stringify(Object.fromEntries(reportNames.map(name => [name, '']))),
+  JSON.stringify({ progress: ' \n ', requestId: 'irrelevant-old-metadata' })]) {
+  assert.deepEqual(reopenReport(raw), savedReport, 'Empty or unusable drafts must not hide the saved report');
+}
+const meaningfulDraft = { progress: '尚未提交的修改', learning: '', evidence: '', blockers: '', nextPlan: ' ' };
+assert.deepEqual(reopenReport(JSON.stringify(meaningfulDraft)), meaningfulDraft, 'A real draft must retain intentionally cleared fields');
+assert.deepEqual(reopenReport(JSON.stringify({ evidence: 'https://example.com/unsaved' })), {
+  progress: '', learning: '', evidence: 'https://example.com/unsaved', blockers: '', nextPlan: ''
+}, 'A partial draft cannot inherit fields from an earlier open dialog');
+assert.deepEqual(reopenReport(null, {}), Object.fromEntries(reportNames.map(name => [name, ''])), 'A fresh week has no stale dialog values');
+console.log('PASS weekly UI: empty drafts show saved reports; meaningful drafts and intentionally empty fields are preserved');

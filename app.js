@@ -263,9 +263,12 @@
     privateDrafts.set(key, draftScope(), JSON.stringify(values));
   }
 
-  function restoreDraft(form, key) {
+  function restoreDraft(form, key, contentFields) {
     let values = {};
     try { values = JSON.parse(privateDrafts.get(key, draftScope()) || '{}'); } catch (_) { values = {}; }
+    if (!values || typeof values !== 'object' || Array.isArray(values)) return false;
+    // A cleared or obsolete report draft must not hide a later saved report.
+    if (contentFields && !contentFields.some(name => typeof values[name] === 'string' && values[name].trim())) return false;
     setFormValues(form, values);
     return Object.keys(values).length > 0;
   }
@@ -826,7 +829,8 @@
   function openReportDialog() {
     elements.reportWeekLabel.textContent = state.dashboard.week.label;
     elements.reportError.hidden = true;
-    const hasDraft = restoreDraft(elements.reportForm, draftKeys.report);
+    elements.reportForm.reset();
+    const hasDraft = restoreDraft(elements.reportForm, draftKeys.report, ['progress', 'learning', 'evidence', 'blockers', 'nextPlan']);
     if (!hasDraft) setFormValues(elements.reportForm, (state.dashboard.student.report || {}).values || {});
     showDialog(elements.reportDialog);
   }
