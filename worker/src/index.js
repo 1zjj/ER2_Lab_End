@@ -127,27 +127,10 @@ async function authCallback(request, env) {
 
   const tenantToken = await getTenantToken(env);
   const members = await listRecords(env, tenantToken, 'MEMBERS_TABLE_ID');
-  let memberRecord = members.find((record) => String(field(record, '飞书OpenID', 'OpenID', 'open_id')) === String(openId));
-  const oauthNames = [clean(user.name), clean(user.en_name)].filter(Boolean);
-  const allowedPilotNames = arrayValue(env.PILOT_ALLOWED_NAMES || '朱俊杰,郑斯哲').map(clean);
-  const bootstrapAdminName = clean(env.BOOTSTRAP_ADMIN_NAME || '朱俊杰');
-  const pilotNameAllowed = !allowedPilotNames.length || allowedPilotNames.some((name) => oauthNames.includes(name));
-  const bootstrapAdmin = !memberRecord && env.BOOTSTRAP_FIRST_USER === 'true' &&
-    (bootstrapAdminName ? oauthNames.includes(bootstrapAdminName) : members.length === 0);
-  const bootstrapPilotStudent = !memberRecord && env.PILOT_AUTO_PROVISION === 'true' && pilotNameAllowed;
-  if (bootstrapAdmin || bootstrapPilotStudent) {
-    const bootstrapFields = {
-      '姓名': user.name || user.en_name || 'ER²管理员',
-      '飞书OpenID': openId,
-      '角色': bootstrapAdmin ? ['学生', '教师', '管理者'] : ['学生'],
-      '项目编号': '',
-      '课程方向': '',
-      '是否启用': true
-    };
-    const created = await createRecord(env, tenantToken, 'MEMBERS_TABLE_ID', bootstrapFields);
-    memberRecord = created.data?.record || { fields: bootstrapFields };
-  }
-  if (!memberRecord || field(memberRecord, '是否启用', '启用') === false) {
+  // Registration is an explicit administrative operation, never an OAuth side effect.
+  // Ignore retained bootstrap flags: display names are not authorization identities.
+  const memberRecord = uniqueMemberRecord(members, openId);
+  if (!memberRecord || !memberIsEnabled(memberRecord)) {
     throw httpError(403, '你的账号尚未加入ER² Lab人员表，请联系管理员');
   }
   const member = normalizeMember(memberRecord, user);
@@ -188,7 +171,9 @@ async function dashboard(request, env, session) {
   };
   const student = buildStudent(session, currentWeek, reportRecords, projectRecords, courseRecords, taskRecords, linkRecords);
   const teacher = buildTeacher(session, currentWeek, members, reportRecords, courseRecords, env);
-  const manager = buildManager(members, projectRecords, courseRecords, env);
+  const manager = session.roles.includes('manager')
+    ? buildManager(members, projectRecords, courseRecords, env)
+    : { stats: {}, automations: [] };
   const literature = buildLiterature(session, currentWeek, literatureRecords);
   const catalog = buildCatalog(session, linkRecords);
   return json(request, env, { profile, week: currentWeek, student, teacher, manager, literature, catalog });
@@ -552,7 +537,9 @@ function buildOnboarding(session, records) {
 function buildStudent(session, week, reports, projects, courses, tasks, links) {
   const mine = (record) => String(field(record, '飞书OpenID', '人员OpenID', 'OpenID')) === String(session.sub);
   const currentReport = reports.find((record) => mine(record) && String(field(record, '周次', 'WeekID')) === week.id);
-  const project = projects.find((record) => String(field(record, '项目编号', '项目代码')) === String(session.projectCode)) || {};
+  const project = session.projectCode
+    ? projects.find((record) => String(field(record, '项目编号', '项目代码')) === String(session.projectCode)) || {}
+    : {};
   const projectFields = project.fields || {};
   const trackACourse = buildTrackAStudentCourse(session, courses);
   const activeTasks = tasks.filter((record) => mine(record) && !['完成', '已完成'].includes(field(record, '状态'))).slice(0, 5);
@@ -598,7 +585,8 @@ function buildStudent(session, week, reports, projects, courses, tasks, links) {
 }
 
 function buildTeacher(session, week, members, reports, courses, env) {
-  const managed = members.filter((member) => session.roles.includes('manager') || String(member.teacherOpenId) === String(session.sub));
+  const managed = members.filter((member) => session.roles.includes('manager') ||
+    (session.roles.includes('teacher') && String(member.teacherOpenId) === String(session.sub)));
   const currentReports = reports.filter((record) => String(field(record, '周次', 'WeekID')) === week.id);
   const students = managed.filter((member) => member.roles.includes('student')).map((member) => {
     const memberReports = reports.filter((record) => String(field(record, '飞书OpenID', '人员OpenID', 'OpenID')) === String(member.openId));
@@ -1125,6 +1113,19 @@ function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+function uniqueMemberRecord(records, openId) {
+  const matches = records.filter((record) => String(field(record, '飞书OpenID', 'OpenID', 'open_id')) === String(openId));
+  if (matches.length > 1) throw httpError(403, '人员表存在重复账号，请联系管理员核对');
+  return matches[0];
+}
+
+function memberIsEnabled(record) {
+  // Legacy tables do not have 人员状态. If present, it is an additional deny gate.
+  const fields = record?.fields || {};
+  const statusAllowed = !Object.hasOwn(fields, '人员状态') || field(record, '人员状态') === '在组';
+  return statusAllowed && field(record, '是否启用', '启用') !== false;
+}
+
 function normalizeMember(record, oauthUser = {}) {
   const roles = arrayValue(field(record, '角色')).map((role) => {
     const value = String(role).toLowerCase();
@@ -1140,7 +1141,7 @@ function normalizeMember(record, oauthUser = {}) {
     teacherOpenId: field(record, '负责教师OpenID', '教师OpenID') || '',
     projectCode: field(record, '项目编号', '项目代码') || '',
     track: field(record, '课程方向', '培养方向') || '',
-    enabled: field(record, '是否启用', '启用') !== false
+    enabled: memberIsEnabled(record)
   };
 }
 
@@ -1202,7 +1203,7 @@ async function requireSession(request, env) {
 async function requireActiveMember(env, session) {
   const tenantToken = await getTenantToken(env);
   const records = await listRecords(env, tenantToken, 'MEMBERS_TABLE_ID');
-  const record = records.find((item) => String(field(item, '飞书OpenID', 'OpenID', 'open_id')) === String(session.sub));
+  const record = uniqueMemberRecord(records, session.sub);
   if (!record) throw httpError(403, '你的账号已不在ER² Lab人员表中');
   const member = normalizeMember(record);
   if (!member.enabled) throw httpError(403, '你的ER² Lab账号已被停用');
