@@ -1,4 +1,5 @@
 import { capabilitiesFromMemberFields } from './capabilities.js';
+import { personNumber } from '../authorization.js';
 
 export const PERSON_ID_PATTERN = /^P-\d{3}$/;
 export const MEMBER_BOUNDARIES = Object.freeze(['团队内', '团队外']);
@@ -12,7 +13,8 @@ export function normalizePersonRecord(record = {}) {
   if (looksNormalized(record)) return { ...record };
   const fields = record.fields || record;
   return {
-    personId: text(fields['人员编号']),
+    // Use the same canonical/legacy ID conflict checks as runtime authorization.
+    personId: personNumber({ fields }),
     name: text(fields['姓名']),
     feishuMember: fields['飞书成员'] || null,
     openId: extractOpenId(fields['飞书OpenID']) || extractOpenId(fields['飞书成员']),
