@@ -1028,8 +1028,21 @@ async function listRecords(env, token, tableBinding) {
   do {
     const suffix = pageToken ? '&page_token=' + encodeURIComponent(pageToken) : '';
     const result = await feishuRequest('/bitable/v1/apps/' + appToken + '/tables/' + tableId + '/records?user_id_type=open_id&page_size=500' + suffix, { bearer: token });
-    if (!Array.isArray(result.data?.items)) throw httpError(502, '数据表返回格式异常');
-    records.push(...result.data.items);
+    const data = result.data;
+    // Only accept an omitted/null items list when the first page explicitly
+    // reports zero records and no further page. Never hide malformed responses.
+    const explicitEmpty = result.code === 0 && data && data.total === 0 &&
+      data.has_more === false && data.items == null && !data.page_token && !pageToken && records.length === 0;
+    if (!Array.isArray(data?.items) && !explicitEmpty) {
+      console.error('ER2_RECORD_PAGE_INVALID', JSON.stringify({
+        binding: tableBinding, itemsType: data?.items === null ? 'null' : typeof data?.items,
+        total: typeof data?.total === 'number' ? data.total : null,
+        hasMore: typeof data?.has_more === 'boolean' ? data.has_more : null,
+        hasData: Boolean(data), subsequentPage: Boolean(pageToken)
+      }));
+      throw httpError(502, '数据表返回格式异常');
+    }
+    records.push(...(explicitEmpty ? [] : data.items));
     pageToken = result.data?.has_more ? result.data?.page_token : '';
     if (result.data?.has_more && (!pageToken || pages.has(pageToken))) throw httpError(502, '数据表分页不完整');
     if (pageToken) pages.add(pageToken);
