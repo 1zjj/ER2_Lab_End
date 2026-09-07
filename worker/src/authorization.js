@@ -7,14 +7,14 @@ export function confidentialityAllows(personLevel, projectLevel) {
   const matrix = { '普通': ['公开'], '受限': ['公开', '内部'], '内部': ['公开', '内部', '机密', '绝密'] };
   return Object.hasOwn(matrix, personLevel) && matrix[personLevel].includes(projectLevel);
 }
-function qualifiedApproval(people, value, applicant) {
+function qualifiedApproval(people, value) {
   const linked = refs(value);
   const raw = Array.isArray(value) ? value : [];
   const ids = raw.map(v => String(v?.open_id || v?.id || '')).filter(Boolean);
   const matches = people.filter(p => linked.includes(p.record_id) || ids.includes(identity(p)));
   if (matches.length !== 1 || (linked.length + ids.length) !== 1) return false;
   const p = matches[0], f = p.fields || {}, id = identity(p);
-  return Boolean(id && p.record_id !== applicant.record_id &&
+  return Boolean(id &&
     people.filter(other => claimsIdentity(other, id)).length === 1 &&
     /^P-\d{3,}$/.test(personNumber(p)) && people.filter(other => personNumber(other) === personNumber(p)).length === 1 &&
     f['人员状态'] === '在组' && f['人员边界'] === '团队内' && f['是否启用'] !== false && !f['离组时间'] &&
@@ -95,7 +95,7 @@ export function authority(people, projects, relations, openId, now = Date.now())
     if (!id) continue;
     counts.set(id, (counts.get(id) || 0) + 1);
     const start = date(rf['加入日期']), end = date(rf['权限到期日'], true);
-    const hasApprover = qualifiedApproval(people, rf['审批人'], record);
+    const hasApprover = qualifiedApproval(people, rf['审批人']);
     const level = ({ '只读': 1, '编辑': 2, '管理': 3 })[text(rf['权限级别'])] || 0;
     if (invalid.has(id) || !level || rf['授权状态'] !== '有效' || rf['工作台授权确认'] !== '已确认' || ['待变更', '待撤回', '已撤回'].includes(rf['权限落实状态']) || !hasApprover || rf['成员边界'] !== f['人员边界'] || !Number.isFinite(start) || !Number.isFinite(end) || end < start || now < start || now > end) continue;
     if (!confidentialityAllows(text(f['保密等级']), text(project?.fields?.['保密等级']))) continue;
