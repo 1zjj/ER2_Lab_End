@@ -81,6 +81,7 @@ export default {
     const headers = new Headers(response.headers);
     return new Response(JSON.stringify({
       ...body,
+      securityPatch: 'p0-20260907-1',
       deepBaseReadOk: deep.ok === true,
       deepLocatorOk: deep.locator?.ok === true,
       deepAppMetadataOk: deep.appMetadata?.ok === true,

@@ -114,6 +114,9 @@ let postedMember = null;
 let postedReview = null;
 let postedCourse = null;
 let memberEnabled = true;
+let memberStatusFields = {};
+let extraMembers = [];
+let projectItems = [];
 let weeklyItems = [];
 const courseItems = [];
 const sentMessages = [];
@@ -161,7 +164,7 @@ globalThis.fetch = async (url, options = {}) => {
   if (String(url).includes('/tables/tbl_members/records')) {
     return Response.json({ code: 0, data: { items: [
       { record_id: 'rec_member', fields: {
-        '姓名': '测试教师', '飞书OpenID': 'ou_teacher', '角色': ['教师'], '是否启用': memberEnabled
+        '姓名': '测试教师', '飞书OpenID': 'ou_teacher', '角色': ['教师'], '是否启用': memberEnabled, ...memberStatusFields
       } },
       { record_id: 'rec_student', fields: {
         '姓名': '测试学生', '飞书OpenID': 'ou_student', '角色': ['学生'], '负责教师OpenID': 'ou_teacher', '项目编号': 'P03', '课程方向': '语义导航', '是否启用': true
@@ -174,7 +177,7 @@ globalThis.fetch = async (url, options = {}) => {
       } },
       { record_id: 'rec_professor', fields: {
         '姓名': '陈铮一', '飞书OpenID': 'ou_professor', '角色': ['教师'], '是否启用': true
-      } }
+      } }, ...extraMembers
     ] } });
   }
   if (String(url).includes('/tables/tbl_links/records')) {
@@ -196,6 +199,7 @@ globalThis.fetch = async (url, options = {}) => {
     sentMessages.push(body);
     return Response.json({ code: 0, data: { message_id: 'om_test_completion' } });
   }
+  if (String(url).includes('/tables/tbl_projects/records')) return Response.json({ code: 0, data: { items: projectItems } });
   if (String(url).includes('/records')) return Response.json({ code: 0, data: { items: [] } });
   throw new Error('unexpected fetch ' + url);
 };
@@ -237,9 +241,13 @@ assert.equal(blockedPilot.status, 403);
 assert.equal(postedMember, null);
 oauthUser = { open_id: 'ou_zheng', name: '郑斯哲' };
 const allowedPilot = await service.fetch(new Request('https://api.example/auth/callback?code=test&state=' + encodeURIComponent(oauthState)), pilotEnv);
-assert.equal(allowedPilot.status, 302);
-assert.deepEqual(postedMember['角色'], ['学生']);
-assert.equal(postedMember['飞书OpenID'], 'ou_zheng');
+assert.equal(allowedPilot.status, 403);
+assert.equal(postedMember, null);
+oauthUser = { open_id: 'ou_unregistered_admin_name', name: '朱俊杰' };
+assert.equal((await service.fetch(new Request('https://api.example/auth/callback?code=test&state=' + encodeURIComponent(oauthState)), pilotEnv)).status, 403);
+assert.equal(postedMember, null, 'matching administrator name must never create an account');
+oauthUser = { open_id: 'ou_junjie', name: '已改名' };
+assert.equal((await service.fetch(new Request('https://api.example/auth/callback?code=test&state=' + encodeURIComponent(oauthState)), pilotEnv)).status, 302, 'registered identity can log in independently of display name');
 
 const literatureGet = await service.fetch(new Request('https://api.example/api/literature', {
   headers: { Authorization: 'Bearer ' + session }
@@ -518,6 +526,39 @@ const disabledGet = await service.fetch(new Request('https://api.example/api/lit
 }), literatureEnv);
 assert.equal(disabledGet.status, 403);
 assert.equal((await disabledGet.json()).message, '你的ER² Lab账号已被停用');
+memberEnabled = true;
+for (const status of ['离组', '已归档', '', '待入组']) {
+  memberStatusFields = { '人员状态': status };
+  const response = await service.fetch(new Request('https://api.example/api/me', {
+    headers: { Authorization: 'Bearer ' + session }
+  }), literatureEnv);
+  assert.equal(response.status, 403, 'inactive master status must deny an existing session');
+}
+memberStatusFields = { '人员状态': '在组' };
+assert.equal((await service.fetch(new Request('https://api.example/api/me', {
+  headers: { Authorization: 'Bearer ' + session }
+}), literatureEnv)).status, 200);
+extraMembers = [{ record_id: 'rec_duplicate', fields: { '飞书OpenID': 'ou_teacher', '是否启用': false } }];
+assert.equal((await service.fetch(new Request('https://api.example/api/me', {
+  headers: { Authorization: 'Bearer ' + session }
+}), literatureEnv)).status, 403, 'duplicate identity must deny even if one record is disabled');
+extraMembers = [{ record_id: 'rec_private', fields: {
+  '飞书OpenID': 'ou_private', '姓名': '不可向学生返回', '角色': ['学生'], '负责教师OpenID': 'ou_student'
+} }];
+const isolated = await service.fetch(new Request('https://api.example/api/dashboard?role=manager', {
+  headers: { Authorization: 'Bearer ' + studentSession }
+}), literatureEnv);
+const isolatedBody = await isolated.json();
+assert.equal(isolated.status, 200);
+assert.deepEqual(isolatedBody.teacher.students, []);
+assert.deepEqual(isolatedBody.manager, { stats: {}, automations: [] });
+extraMembers = [];
+projectItems = [{ record_id: 'rec_unassigned_project', fields: { '项目名称': '不得泄露的空编号项目' } }];
+const noProject = await service.fetch(new Request('https://api.example/api/dashboard', {
+  headers: { Authorization: 'Bearer ' + professorSession }
+}), { ...literatureEnv, PROJECTS_BASE_APP_TOKEN: 'bas_projects', PROJECTS_TABLE_ID: 'tbl_projects' });
+assert.equal(noProject.status, 200);
+assert.equal((await noProject.json()).student.project.title, '暂未分配项目');
 globalThis.fetch = originalFetch;
 
 console.log('worker smoke tests passed');
