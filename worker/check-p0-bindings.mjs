@@ -1,7 +1,7 @@
 // Read-only candidate-binding preflight. Never writes records, roles, workflow state or messages.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { authority, identity, strictBinding, businessProjectId } from './src/authorization.js';
+import { authority, identity, strictBinding, businessProjectId, personNumber } from './src/authorization.js';
 import { validateSchema } from './src/v2/schema.js';
 
 export async function checkBindings(env, fetchImpl = fetch) {
@@ -73,8 +73,10 @@ export async function checkBindings(env, fetchImpl = fetch) {
     }
     stage = 'data_validation'; table = '';
     let usable = 0, denied = 0, activeDenied = 0, grants = 0;
+    const accessByPerson = [];
     for (const person of datasets.MEMBERS) {
-      try { const ctx = authority(datasets.MEMBERS, datasets.AUTH_PROJECTS, datasets.PROJECT_MEMBERS, identity(person)); usable++; grants += Object.keys(ctx.grants).length; }
+      try { const ctx = authority(datasets.MEMBERS, datasets.AUTH_PROJECTS, datasets.PROJECT_MEMBERS, identity(person)); usable++; grants += Object.keys(ctx.grants).length;
+        accessByPerson.push({ personId: personNumber(person), projects: Object.entries(ctx.grants).map(([projectId, grant]) => ({ projectId, operations: grant.level === 3 ? '管理' : grant.level === 2 ? '编辑' : '只读' })) }); }
       catch (_) { denied++; if (person.fields?.['人员状态'] === '在组') activeDenied++; }
     }
     const ids = datasets.PROJECTS.map(businessProjectId);
@@ -84,6 +86,11 @@ export async function checkBindings(env, fetchImpl = fetch) {
     result.projectMappings = { invalid: invalidMappings };
     result.grantedProjectRelationships = grants;
     result.ready = usable > 0 && activeDenied === 0 && invalidMappings === 0 && Object.values(result.tables).every(t => t.missingRequired.length === 0);
+    result.bindingReady = result.ready;
+    result.authorizationReady = result.bindingReady && grants > 0;
+    result.accessByPerson = accessByPerson;
+    result.scope = 'project_authorization_preflight_only';
+    result.productionReady = false;
     result.nativeAclVerified = false;
     return result;
   } catch (error) {
