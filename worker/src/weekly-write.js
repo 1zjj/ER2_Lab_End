@@ -93,6 +93,30 @@ export function serializeWeekly(fields, values) {
       output[spec.field_name] = timestamp;
     } else output[spec.field_name] = value;
   }
+  // Existing Feishu teacher views use person and anchor columns. Populate those
+  // from the same server-owned identity/week; never derive them from form input.
+  for (const name of ['提交人/成员', '填报人']) {
+    const matches = fields.filter(f => f.field_name === name);
+    if (!matches.length || !Object.hasOwn(values, '飞书OpenID')) continue;
+    if (matches.length !== 1 || matches[0].type !== 11 || !/^ou_[A-Za-z0-9_-]+$/.test(values['飞书OpenID']))
+      throw Object.assign(new Error('周报提交人字段类型不匹配'), { status: 503, code: 'WEEKLY_SCHEMA_MISMATCH' });
+    output[name] = [{ id: values['飞书OpenID'] }];
+  }
+  for (const name of ['周锚点（选择该周任意一天）', '周锚点']) {
+    const matches = fields.filter(f => f.field_name === name);
+    if (!matches.length || !Object.hasOwn(values, '周起始')) continue;
+    const start = values['周起始'];
+    const timestamp = /^\d{4}-\d{2}-\d{2}$/.test(start) ? Date.parse(start + 'T00:00:00+08:00') : NaN;
+    if (matches.length !== 1 || matches[0].type !== 5 || !Number.isFinite(timestamp))
+      throw Object.assign(new Error('周报周锚点字段类型不匹配'), { status: 503, code: 'WEEKLY_SCHEMA_MISMATCH' });
+    output[name] = timestamp;
+  }
+  if (fields.some(f => f.field_name === '周期') && values['周次'] && values['姓名']) {
+    const matches = fields.filter(f => f.field_name === '周期');
+    if (matches.length !== 1 || matches[0].type !== 1)
+      throw Object.assign(new Error('周报标题字段类型不匹配'), { status: 503, code: 'WEEKLY_SCHEMA_MISMATCH' });
+    output['周期'] = values['周次'] + ' · ' + values['姓名'];
+  }
   return output;
 }
 

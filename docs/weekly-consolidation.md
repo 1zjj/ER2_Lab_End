@@ -61,3 +61,32 @@
 
 执行 `cd worker && npm test`。飞书读取、身份和写入使用模拟数据，覆盖完整五项读写、修改同条记录、历史/教师读取、账号隔离、周报独立加载、权限撤回和读回失败。
 本地通过不代表真实迁移或线上验收完成。
+
+## Empty-source consolidation helper
+
+`worker/prepare-weekly-consolidation.mjs` accepts the private release configuration
+and four explicitly supplied Feishu table URLs (active Worker source, selected
+weekly storage, edited questionnaire, project details), followed by `--plan` or
+`--apply`. Do not commit those private URLs or configuration.
+
+The helper snapshots every source and the prior configuration outside the checkout
+before any schema change. It proceeds only if every source has no human-entered
+content; computed cells and completely blank placeholder rows are retained in
+place. Real content stops this bootstrap path and requires a separate reviewed
+record migration. No row, view, workflow, permission, or message is changed.
+
+The selected storage receives the canonical five content names by renaming existing
+text columns, missing server metadata, and teacher feedback fields. Existing field
+IDs are preserved on rename. Formula, person, and linked-record columns are not
+converted or deleted. The backend populates existing teacher-view person columns,
+week anchors, and the period title from the server-owned identity and week.
+
+After schema mutation, all four sources are read again. Incomplete reads or new
+content prevent configuration cutover. Only verified schema writes the proposed
+weekly binding to the private release configuration; other runtime settings remain
+unchanged. Deployment is a separate command guarded by the helper's exit status.
+Partial schema changes are safe to resume by rerunning with a fresh backup.
+
+The helper does not certify native ACLs, disable duplicate entrypoints, or claim
+production readiness. Confirm one real submission with persisted readback and
+teacher visibility before retiring old forms or rewriting knowledge-base links.
