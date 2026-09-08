@@ -163,7 +163,7 @@ async function setup(request,env,storage,c,settings,serviceProvider){
   if(body.action==='inspect'){
     const inspection={time:new Date().toISOString(),scope:{equipmentTable:EQUIPMENT.table,sourceTable:SOURCE.table},errors:[]};
     for(const [name,fn]of Object.entries({privacy:()=>service.privateAcl(),source:()=>service.sourceSnapshot(),equipment:()=>service.snapshot(service.equipment.obj_token,EQUIPMENT.table),tables:()=>service.list(service.equipment.obj_token,'','/tables')})){
-      try{const value=await fn();if(['source','equipment'].includes(name)){await storage.put('inspection:'+name,value);inspection[name]={count:value.records.length,fields:value.fields,app:value.app,table:value.table};}else inspection[name]=value;}catch(e){inspection.errors.push({stage:name,code:e.code||'',message:e.message});}
+      try{const value=await fn();if(['source','equipment'].includes(name)){await storage.put('inspection:'+name,value);inspection[name]={count:value.records.length,fields:value.fields,app:value.app,table:value.table};}else inspection[name]=value;}catch(e){inspection.errors.push({stage:name,code:e.code||'',upstreamCode:e.upstreamCode,upstreamStatus:e.upstreamStatus,message:e.message,...(e.diagnostic?{diagnostic:e.diagnostic}:{})});}
     }
     // Read foreign schemas only. Never alter loan, maintenance or calibration data.
     inspection.references=[];
