@@ -1,10 +1,10 @@
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 5;
 
 export const SCHEMAS = Object.freeze({
   members: {
     tableBinding: 'MEMBERS_TABLE_ID',
     required: [
-      '人员编号', '姓名', '飞书成员', '人员边界', '成员类别', '人员状态',
+      '成员编号', '姓名', '飞书成员', '人员边界', '成员类别', '人员状态',
       '入组时间', '保密等级', '培训状态', '直属负责人', '关联项目', '系统职责'
     ],
     recommended: ['飞书OpenID', '离组时间', '联合培养/外部导师', '备注']
@@ -21,8 +21,13 @@ export const SCHEMAS = Object.freeze({
   },
   projectMembers: {
     tableBinding: 'PROJECT_MEMBERS_TABLE_ID',
-    required: ['ProjectID', 'PersonID'],
-    recommended: ['项目角色', '加入日期', '退出日期', '是否启用']
+    required: ['关联人员', '关联项目', '权限级别', '成员边界', '加入日期', '权限到期日', '授权状态', '审批人', '权限落实状态', '工作台授权确认'],
+    recommended: ['关系编号', '项目角色']
+  },
+  authorityProjects: {
+    tableBinding: 'AUTH_PROJECTS_TABLE_ID',
+    required: ['项目编号', '项目名称', '项目阶段', '保密等级'],
+    recommended: []
   },
   trainingCatalog: {
     tableBinding: 'TRAINING_CATALOG_TABLE_ID',
@@ -55,6 +60,7 @@ export function validateSchema(schemaKey, fieldNames = []) {
   const schema = SCHEMAS[schemaKey];
   if (!schema) return { ok: false, schemaKey, error: 'unknown_schema', missingRequired: [], missingRecommended: [] };
   const available = new Set(fieldNames.map((name) => String(name || '').trim()).filter(Boolean));
+  if (schemaKey === 'members' && available.has('人员编号')) available.add('成员编号');
   const missingRequired = schema.required.filter((name) => !available.has(name));
   const missingRecommended = schema.recommended.filter((name) => !available.has(name));
   return {

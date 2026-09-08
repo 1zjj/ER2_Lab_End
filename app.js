@@ -507,7 +507,7 @@
   }
 
   function courseUrl() {
-    return dashboardLink(['课程', '学习中心', '培训']) ||
+    return config.learningCenterUrl || dashboardLink(['课程', '学习中心', '培训']) ||
       (state.catalog.find(function (item) { return item.category === '课程' && safeUrl(item.url) !== '#'; }) || {}).url || wikiUrl();
   }
 
@@ -618,7 +618,16 @@
     return ({ confirmed: 'green', supplement: 'red', submitted: 'orange', learning: 'blue', pending: '' })[status] || '';
   }
 
+  function courseSubmissionAvailable() {
+    return DEMO_MODE || state.dashboard?.capabilities?.courses?.submissionEnabled === true;
+  }
+
   function renderCoursePanel() {
+    if (!courseSubmissionAvailable()) return '<section class="panel course-panel" id="learning-center"' +
+      (state.learningCenterOpen ? '' : ' hidden') + '><p class="kicker">LEARNING CENTER</p><h2>学习中心</h2>' +
+      '<p>按学习中心安排阅读教材和完成练习。本周学习进展统一填写在工作记录的“学习与方法”中。</p>' +
+      '<p>课程记录提交暂未开放；新成员指南的阅读进度不会影响入组状态或项目权限。</p>' +
+      availableLink(courseUrl(), '打开学习中心', 'button button-secondary') + '</section>';
     const course = state.dashboard.student.course || { lessons: [], otherTracks: [], completed: 0, total: 10, progress: 0 };
     const lessons = Array.isArray(course.lessons) ? course.lessons : [];
     const otherTracks = Array.isArray(course.otherTracks) ? course.otherTracks : [];
@@ -641,6 +650,7 @@
   }
 
   function renderCourseReviewPanel() {
+    if (!courseSubmissionAvailable()) return '';
     const review = state.dashboard.teacher && state.dashboard.teacher.courseReview;
     if (!review || !review.visible) return '';
     const submissions = Array.isArray(review.submissions) ? review.submissions : [];
@@ -882,6 +892,7 @@
   }
 
   function openCourseDialog(lessonId) {
+    if (!courseSubmissionAvailable()) return showToast('课程提交暂未开放，请在本周工作记录中填写学习与方法。');
     const course = state.dashboard.student.course || {};
     const lesson = (course.lessons || []).find(function (item) { return String(item.lessonId) === String(lessonId); });
     if (!lesson) return showToast('课程记录暂时不可用');
@@ -1092,6 +1103,7 @@
 
   async function submitCourse(event) {
     event.preventDefault();
+    if (!courseSubmissionAvailable()) return showToast('课程提交暂未开放，请在本周工作记录中填写学习与方法。');
     if (!elements.courseForm.reportValidity()) return;
     const fields = Object.fromEntries(new FormData(elements.courseForm).entries());
     const requestKey = draftKeys.courseRequest + '-' + fields.lessonId;
