@@ -17,10 +17,12 @@ export function buildStudentHome(dashboard = {}) {
   const projects = normalizeProjects(student);
   const training = normalizeTraining(student.course, onboarding.completed);
   const reading = normalizeLiterature(literature);
+  if (dashboard.moduleErrors?.literature) reading.unavailable = true;
   const todos = buildTodos({ student, report, training, reading, projects });
 
   return {
     version: 2,
+    moduleErrors: dashboard.moduleErrors || {},
     aiRequired: false,
     modules: {
       weeklyStatus: { visible: true, persistent: true },
@@ -115,7 +117,7 @@ function buildTodos({ student, report, training, reading }) {
   if (training.visible && training.next) {
     todos.push(todo('training-next', '培训', `完成 ${training.next}`, '按培训计划完成', 80, 'training', training.nextLessonId));
   }
-  if (!reading.completed) {
+  if (!reading.completed && !reading.unavailable) {
     todos.push(todo('literature-target', '文献', `本周还需完成 ${reading.remaining} 篇文献阅读`, `目标 ${reading.minimum} 篇`, 70, 'literature'));
   }
 

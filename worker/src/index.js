@@ -5,12 +5,14 @@ import { recordPage } from './feishu-record-page.js';
 import { authority, AUTH_BINDINGS, strictBinding, identity, canProject, requireProject, businessProjectId, visibleProjects, hasProjectScope } from './authorization.js';
 import { resolveTableBinding as resolveBinding } from './v2/bindings.js';
 import { courseCapabilities } from './capabilities.js';
+import { readScope, readOptions, measureRead, readHeaders } from './read-performance.js';
 const FEISHU_API = 'https://open.feishu.cn/open-apis';
 const FEISHU_AUTHORIZE = 'https://accounts.feishu.cn/open-apis/authen/v1/authorize';
 const wikiTokenCache = new Map();
 const requestIds = new WeakMap();
 const writeRateBuckets = new Map();
 const courseConfirmationLocks = new Map();
+const memberSnapshots = new WeakMap();
 let tenantTokenCache = { token: '', expiresAt: 0 };
 const LITERATURE_TABLE_FALLBACK = 'tblyHLZpybGVU364';
 const TRACK_A_ID = 'track-a';
@@ -33,6 +35,7 @@ const TRACK_A_LESSONS = [
 
 export default {
   async fetch(request, env) {
+    env = readScope(env, request);
     const url = new URL(request.url);
     requestIds.set(request, request.headers.get('X-Request-ID') || crypto.randomUUID());
     if (request.method === 'OPTIONS') return corsResponse(request, env, null, 204);
@@ -69,7 +72,9 @@ export default {
       if (url.pathname === '/auth/callback') return await authCallback(request, env);
 
       let session = await requireSession(request, env);
-      if (url.pathname.startsWith('/api/')) session = await requireActiveMember(env, session);
+      const personalRoutes = ['/api/me', '/api/weekly', '/api/reports/history', '/api/reports', '/api/admin/weekly-source'];
+      if (url.pathname.startsWith('/api/')) session = personalRoutes.includes(url.pathname)
+        ? await requireMemberIdentity(env, session) : await requireActiveMember(env, session);
       if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(request.method) && url.pathname.startsWith('/api/')) enforceWriteRateLimit(session.sub);
       if (url.pathname === '/api/me' && request.method === 'GET') return json(request, env, { profile: { sub: session.sub, personId: session.personId, name: session.name, roles: session.roles } });
       if (url.pathname.startsWith('/api/courses/') && request.method === 'POST' && !courseCapabilities(env).submissionEnabled)
@@ -92,7 +97,8 @@ export default {
       const messages = { WEEKLY_COORDINATOR_MISSING: '周报保存保护尚未就绪，请稍后重试', WEEKLY_WRITE_UNCERTAIN: '上次保存结果仍在核对，草稿已保留；请稍后重试，若持续出现请联系管理员', WEEKLY_SCHEMA_MISMATCH: '周报存储字段尚未统一，请联系管理员完成配置', WEEKLY_EVIDENCE_COLUMN_TYPE: '产出字段仍是旧的单链接类型，暂不能保存说明和多个链接', WEEKLY_BINDING_MISSING: '周报存储尚未配置', WEEKLY_READBACK_FAILED: '保存请求已处理，但尚未确认读回结果；请保留草稿后重试' };
       const message = status >= 500 ? (messages[error.code] || (error.binding ? '数据读取失败（' + error.binding.replace('_TABLE_ID', '') + '），请将下方诊断编号提供给管理员' : '服务暂时不可用，请稍后重试')) : error.message;
       if (status >= 500) console.error(error);
-      return json(request, env, { message, code: error.code || (error.binding ? 'TABLE_READ_FAILED' : 'REQUEST_FAILED'), requestId: requestIds.get(request) || '' }, status);
+      return json(request, env, { message, code: error.code || (error.binding ? 'TABLE_READ_FAILED' : 'REQUEST_FAILED'),
+        ...(error.binding ? { binding: error.binding } : {}), requestId: requestIds.get(request) || '' }, status);
     }
   },
 
@@ -140,7 +146,7 @@ async function authCallback(request, env) {
   const openId = user.open_id;
   if (!openId) throw httpError(401, '未能识别飞书用户');
 
-  const member = await requireActiveMember(env, { sub: openId });
+  const member = await requireMemberIdentity(env, { sub: openId });
   const sessionToken = await signToken({
     purpose: 'session',
     sub: openId,
@@ -160,14 +166,19 @@ async function dashboard(request, env, session) {
   const role = session.roles.includes(requestedRole) ? requestedRole : session.roles[0];
   if (!role) throw httpError(403, '账号没有可用角色');
   const tenantToken = await getTenantToken(env);
+  const moduleErrors = {};
+  const optional = async (name, binding) => {
+    try { return await listRecords(env, tenantToken, binding, { budgetMs: 6000 }); }
+    catch (_) { moduleErrors[name] = '暂时无法读取，请稍后重新载入'; return []; }
+  };
   const [memberRecords, reportRecords, projectRecords, courseRecords, taskRecords, linkRecords, literatureRecords] = await Promise.all([
-    listRecords(env, tenantToken, 'MEMBERS_TABLE_ID'),
+    memberSnapshots.get(session) || listRecords(env, tenantToken, 'MEMBERS_TABLE_ID'),
     listRecords(env, tenantToken, 'WEEKLY_TABLE_ID'),
-    listRecords(env, tenantToken, 'PROJECTS_TABLE_ID'),
-    courseCapabilities(env).enabled ? listRecords(env, tenantToken, 'COURSES_TABLE_ID') : Promise.resolve([]),
-    listRecords(env, tenantToken, 'TASKS_TABLE_ID'),
-    listRecords(env, tenantToken, 'LINKS_TABLE_ID'),
-    listRecords(env, tenantToken, 'LITERATURE_TABLE_ID')
+    optional('projects', 'PROJECTS_TABLE_ID'),
+    courseCapabilities(env).enabled ? optional('courses', 'COURSES_TABLE_ID') : Promise.resolve([]),
+    optional('tasks', 'TASKS_TABLE_ID'),
+    optional('links', 'LINKS_TABLE_ID'),
+    optional('literature', 'LITERATURE_TABLE_ID')
   ]);
   const currentWeek = weekInfo(new Date());
   const members = memberRecords.flatMap(record => { try { const member = authority(memberRecords, [], [], identity(record)); return [{ ...member, openId: member.sub, enabled: true }]; } catch (_) { return []; } });
@@ -189,11 +200,12 @@ async function dashboard(request, env, session) {
   const manager = session.roles.includes('manager')
     ? buildManager(members, permittedProjects, permittedCourses, env)
     : { stats: {}, automations: [] };
-  const literature = buildLiterature(session, currentWeek, literatureRecords);
+  const literature = moduleErrors.literature ? null : buildLiterature(session, currentWeek, literatureRecords);
   const catalog = buildCatalog(session, permittedLinks);
   const coursesCapability = courseCapabilities(env);
   if (!coursesCapability.enabled) teacher.courseReview = { visible: false, canConfirm: false, pending: 0, submissions: [] };
-  return json(request, env, { profile, week: currentWeek, student, teacher, manager, literature, catalog,
+  if (moduleErrors.projects) manager.stats.projects = null;
+  return json(request, env, { profile, week: currentWeek, student, teacher, manager, literature, catalog, moduleErrors,
     capabilities: { courses: coursesCapability } });
 }
 
@@ -284,9 +296,6 @@ async function saveLiterature(request, env, session) {
   validateHttps(body.paperUrl, '论文链接', false);
   validateHttps(body.attachmentUrl, '论文附件链接', false);
 
-  const configuredWeekly = resolveTableBinding(env, 'WEEKLY_TABLE_ID');
-  if (!configuredWeekly.tableId || (!configuredWeekly.appToken && !configuredWeekly.wikiToken))
-    throw Object.assign(httpError(503, '周报尚未配置'), { code: 'WEEKLY_BINDING_MISSING' });
   const currentWeek = weekInfo(new Date());
   if (body.weekId && body.weekId !== currentWeek.id) throw httpError(400, '只能提交当前周阅读记录');
   const year = body.year === '' || body.year == null ? '' : Number(body.year);
@@ -894,8 +903,9 @@ async function weeklyPage(request, env, session) {
     throw Object.assign(httpError(503, '周报尚未配置'), { code: 'WEEKLY_BINDING_MISSING' });
   const token = await getTenantToken(env);
   const [people, records] = await Promise.all([
-    listRecords(env, token, 'MEMBERS_TABLE_ID'), listRecords(env, token, 'WEEKLY_TABLE_ID')
+    memberSnapshots.get(session) || listRecords(env, token, 'MEMBERS_TABLE_ID'), listRecords(env, token, 'WEEKLY_TABLE_ID')
   ]);
+  session = await accessForRecords(env, session, records);
   const reports = records.filter(record => !hasProjectScope(record) || canProject(session, businessProjectId(record)));
   const members = people.flatMap(record => { try { const member = authority(people, [], [], identity(record)); return [{ ...member, openId: member.sub }]; } catch (_) { return []; } });
   const week = weekInfo(new Date());
@@ -954,9 +964,10 @@ async function coordinateWeeklySave(request, env, session) {
 
 // This function is called only by the bound coordinator, not by an HTTP route.
 export async function executeWeeklyRequest(request, env, storage) {
+  env = readScope(env, request);
   try {
     if (request.method !== 'POST' || new URL(request.url).pathname !== '/api/reports') throw httpError(404, '接口不存在');
-    const session = await requireActiveMember(env, await requireSession(request, env));
+    const session = await requireMemberIdentity(env, await requireSession(request, env));
     return await saveReport(request, env, session, storage);
   } catch (error) {
     // Preserve the existing public error handling without exposing Feishu data.
@@ -975,9 +986,10 @@ async function reportHistory(request, env, session) {
   if (!binding.tableId || !(binding.appToken || binding.wikiToken))
     throw Object.assign(httpError(503, '周报尚未配置'), { code: 'WEEKLY_BINDING_MISSING' });
   const records = await listRecords(env, await getTenantToken(env), 'WEEKLY_TABLE_ID');
-  const mine = records.filter(r => isWeeklySubmitted(r) &&
-    String(field(r, '飞书OpenID', '人员OpenID', 'OpenID')) === session.sub &&
-    (!hasProjectScope(r) || canProject(session, businessProjectId(r))));
+  const own = records.filter(r => isWeeklySubmitted(r) &&
+    String(field(r, '飞书OpenID', '人员OpenID', 'OpenID')) === session.sub);
+  session = await accessForRecords(env, session, own);
+  const mine = own.filter(r => !hasProjectScope(r) || canProject(session, businessProjectId(r)));
   const { records: page, ...pagination } = historyPage(mine, new URL(request.url).searchParams);
   return json(request, env, { ...pagination, reports: page.map(normalizeReport) });
 }
@@ -1014,6 +1026,7 @@ async function saveReport(request, env, session, storage) {
     String(field(record, '周次', 'WeekID')) === currentWeek.id);
   if (sameWeek.length > 1) throw httpError(409, '本周存在重复周报，请管理员先合并记录');
   const existing = sameWeek[0];
+  session = await accessForRecords(env, session, existing ? [existing] : []);
   if (existing) requireResource(session, existing, 'edit');
   const success = async (record, updated, deduplicated = false) => json(request, env, {
     ok: true, weekId: currentWeek.id, updated, deduplicated, readBackVerified: true,
@@ -1058,7 +1071,8 @@ async function saveReport(request, env, session, storage) {
   const appToken = await resolveBitableAppToken(binding, tenantToken);
   const schema = await weeklySchema(appToken, binding.tableId, tenantToken);
   const payload = serializeWeekly(schema, fields);
-  const current = await requireActiveMember(env, session);
+  let current = await requireMemberIdentity(env, session);
+  current = await accessForRecords(env, current, existing ? [existing] : []);
   if (!current.roles.includes('student')) throw httpError(403, '周报提交资格已撤销');
   if (existing) requireResource(current, existing, 'edit');
   // Journal before the non-transactional remote write; survives worker restarts.
@@ -1162,7 +1176,8 @@ export async function getTenantToken(env) {
     method: 'POST',
     body: { app_id: env.FEISHU_APP_ID, app_secret: env.FEISHU_APP_SECRET },
     rawAuth: true,
-    retryPost: true
+    retryPost: true,
+    ...readOptions(env)
   });
   const token = result.tenant_access_token || result.data?.tenant_access_token;
   if (!token) throw httpError(502, '未能取得飞书应用令牌');
@@ -1176,32 +1191,32 @@ function resolveTableBinding(env, tableBinding) {
   return resolveBinding({ ...env, LITERATURE_TABLE_ID: env.LITERATURE_TABLE_ID || LITERATURE_TABLE_FALLBACK }, tableBinding);
 }
 
-async function resolveBitableAppToken(binding, token) {
+async function resolveBitableAppToken(binding, token, options = {}) {
   if (binding.appToken) return binding.appToken;
   if (!binding.wikiToken) return '';
   if (wikiTokenCache.has(binding.wikiToken)) return wikiTokenCache.get(binding.wikiToken);
-  const result = await feishuRequest('/wiki/v2/spaces/get_node?token=' + encodeURIComponent(binding.wikiToken), { bearer: token });
+  const result = await feishuRequest('/wiki/v2/spaces/get_node?token=' + encodeURIComponent(binding.wikiToken), { bearer: token, ...options });
   const appToken = result.data?.node?.obj_token || '';
   if (!appToken) throw httpError(502, '未能解析飞书知识库中的多维表格标识');
   wikiTokenCache.set(binding.wikiToken, appToken);
   return appToken;
 }
 
-export async function listRecords(env, token, tableBinding) {
-  try { return await readTableRecords(env, token, tableBinding); }
+export async function listRecords(env, token, tableBinding, options = {}) {
+  try { return await measureRead(env, tableBinding, () => readTableRecords(env, token, tableBinding, readOptions(env, options.budgetMs))); }
   catch (error) { error.binding = tableBinding; throw error; }
 }
 
-async function readTableRecords(env, token, tableBinding) {
+async function readTableRecords(env, token, tableBinding, options = {}) {
   const binding = resolveTableBinding(env, tableBinding);
   if ((!binding.appToken && !binding.wikiToken) || !binding.tableId) return [];
-  const appToken = await resolveBitableAppToken(binding, token);
+  const appToken = await resolveBitableAppToken(binding, token, options);
   const tableId = binding.tableId;
   let pageToken = '';
   const records = [], pages = new Set();
   do {
     const suffix = pageToken ? '&page_token=' + encodeURIComponent(pageToken) : '';
-    const result = await feishuRequest('/bitable/v1/apps/' + appToken + '/tables/' + tableId + '/records?user_id_type=open_id&page_size=500' + suffix, { bearer: token });
+    const result = await feishuRequest('/bitable/v1/apps/' + appToken + '/tables/' + tableId + '/records?user_id_type=open_id&page_size=500' + suffix, { bearer: token, ...options });
     let parsed;
     try { parsed = recordPage(result, pageToken, records.length); }
     catch (error) {
@@ -1285,23 +1300,26 @@ export async function feishuRequest(path, options = {}) {
   const method = options.method || 'GET';
   const maxAttempts = options.strictWeeklyWrite ? 1 : (['GET', 'PUT'].includes(method) || options.retryPost === true ? 3 : 1);
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const remaining = options.readDeadline == null ? 10000 : Math.min(7000, options.readDeadline - Date.now());
+    if (remaining <= 0) throw Object.assign(httpError(504, '数据读取超时，请稍后重试'), { code: 'READ_TIMEOUT' });
     let response;
+    let result;
     try {
       response = await fetch(FEISHU_API + path, {
         method,
         headers,
         body: options.body ? JSON.stringify(options.body) : undefined,
-        signal: AbortSignal.timeout(10_000)
+        signal: AbortSignal.timeout(Math.max(1, Math.ceil(remaining)))
       });
+      result = await response.json();
     } catch (error) {
       if (attempt + 1 < maxAttempts) {
         await delay(250 * (attempt + 1));
         continue;
       }
       console.error('Feishu API network error', path, error?.name || 'Error');
-      throw httpError(502, '飞书数据接口暂时无响应');
+      throw Object.assign(httpError(502, '飞书数据接口暂时无响应'), { code: 'UPSTREAM_UNAVAILABLE' });
     }
-    const result = await response.json().catch(() => ({}));
     if (options.strictWeeklyWrite) {
       if (response.ok && result.code === 0 && result.data?.record?.record_id) return result;
       // Only explicit input/access rejection proves no write. Timeout/data-not-ready
@@ -1317,7 +1335,8 @@ export async function feishuRequest(path, options = {}) {
       continue;
     }
     console.error('Feishu API error', path, response.status, result.code, result.msg);
-    throw httpError(502, response.status === 429 ? '飞书接口请求较多，请稍后重试' : '飞书数据接口返回异常');
+    throw Object.assign(httpError(502, response.status === 429 ? '飞书接口请求较多，请稍后重试' : '飞书数据接口返回异常'),
+      { upstreamStatus: response.status, upstreamCode: typeof result.code === 'number' ? result.code : undefined });
   }
   throw httpError(502, '飞书数据接口返回异常');
 }
@@ -1386,7 +1405,29 @@ async function requireActiveMember(env, session) {
   AUTH_BINDINGS.forEach(key => strictBinding(env, key));
   const tenantToken = await getTenantToken(env);
   const [people, projects, relations] = await Promise.all(AUTH_BINDINGS.map(key => listRecords(env, tenantToken, key)));
-  return { ...session, ...authority(people, projects, relations, session.sub) };
+  const current = { ...session, ...authority(people, projects, relations, session.sub) };
+  memberSnapshots.set(current, people);
+  return current;
+}
+
+async function requireMemberIdentity(env, session) {
+  strictBinding(env, 'MEMBERS_TABLE_ID');
+  const people = await listRecords(env, await getTenantToken(env), 'MEMBERS_TABLE_ID');
+  const current = { ...session, ...authority(people, [], [], session.sub) };
+  memberSnapshots.set(current, people);
+  return current;
+}
+
+async function accessForRecords(env, session, records) {
+  if (!records.some(hasProjectScope)) return session;
+  const people = memberSnapshots.get(session);
+  if (!people) return requireActiveMember(env, session);
+  const token = await getTenantToken(env);
+  const [projects, relations] = await Promise.all(['AUTH_PROJECTS_TABLE_ID', 'PROJECT_MEMBERS_TABLE_ID']
+    .map(key => { strictBinding(env, key); return listRecords(env, token, key); }));
+  const current = { ...session, ...authority(people, projects, relations, session.sub) };
+  memberSnapshots.set(current, people);
+  return current;
 }
 
 function requireResource(session, record, action = 'read') {
@@ -1486,7 +1527,7 @@ function corsResponse(request, env, body, status) {
       'Access-Control-Allow-Origin': origin,
       'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Request-ID',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Expose-Headers': 'X-Request-ID',
+      'Access-Control-Expose-Headers': 'X-Request-ID, Server-Timing, X-ER2-Read-Version',
       'X-Request-ID': requestIds.get(request) || '',
       'Vary': 'Origin'
     }
@@ -1498,7 +1539,7 @@ export function json(request, env, value, status = 200) {
   response.headers.set('Content-Type', 'application/json; charset=utf-8');
   response.headers.set('Cache-Control', 'no-store');
   response.headers.set('X-Content-Type-Options', 'nosniff');
-  return response;
+  return readHeaders(env, response);
 }
 
 function requireConfig(env, names) {

@@ -164,10 +164,12 @@ try {
       assert.equal((await call(31, '/api/reports', 'POST', body)).status, 403);
     }
   });
-  await test('weekly-only page survives broken literature but never bypasses personnel checks', async () => {
+  await test('dashboard isolates broken literature and never bypasses personnel checks', async () => {
     recordResponses.literature = { items: null, total: 1, has_more: false };
-    const failed = await call(1, '/api/dashboard'); assert.equal(failed.status, 502);
-    const error = await failed.json(); assert.equal(error.code, 'TABLE_READ_FAILED'); assert.ok(error.message.includes('LITERATURE'));
+    const partial = await call(1, '/api/dashboard'); assert.equal(partial.status, 200);
+    const result = await partial.json(); assert.ok(result.moduleErrors.literature);
+    assert.equal(result.literature, null); assert.equal(result.student.report.status, 'pending');
+    assert.equal(result.student.home.todos.some(t => t.id === 'literature-target'), false);
     const weekly = await call(1, '/api/weekly'); assert.equal(weekly.status, 200);
     const data = await weekly.json(); assert.equal(data.weeklyOnly, true); assert.equal('literature' in data, false);
     people[0].fields['人员状态'] = '离组'; assert.equal((await call(1, '/api/weekly')).status, 403);
@@ -328,7 +330,12 @@ try {
   });
   for (const data of [{}, {total:0}, {total:1,has_more:false}, {total:0,has_more:true}, {total:0,has_more:false,items:{}}, {total:0,has_more:false,page_token:'next'}]) await test('malformed empty page remains blocked: ' + JSON.stringify(data), async () => {
     recordResponses.literature = data;
-    assert.equal((await call(1, '/api/dashboard')).status, 502);
+    const dashboard = await call(1, '/api/dashboard');
+    assert.equal(dashboard.status, 200);
+    const partial = await dashboard.json();
+    assert.equal(partial.literature, null);
+    assert.ok(partial.moduleErrors.literature, 'Malformed data must remain unavailable, not become empty records');
+    assert.equal((await call(1, '/api/literature')).status, 502, 'Direct module read still reports failure');
   });
   await test('empty authority table cannot grant access', async () => {
     recordResponses.members = {total:0,has_more:false};

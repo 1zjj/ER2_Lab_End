@@ -11,8 +11,12 @@ export class LearningRecords {
   fetch(request) {
     if (request.method === 'GET' && new URL(request.url).pathname === '/_learning-storage-check')
       return this.state.storage.get('health').then(() => Response.json({ ok: true, version: 'learning-text-v1' }));
-    return this.serial(() => executeLearning(request, this.env, this.state.storage)
-      .catch(error => learningError(request, this.env, error)));
+    const execute = () => executeLearning(request, this.env, this.state.storage)
+      .catch(error => learningError(request, this.env, error));
+    // Reads validate the current member independently and take a short storage
+    // snapshot. They never wait behind another user's remote Feishu request.
+    // Writes retain their existing serialization, idempotency and fresh checks.
+    return request.method === 'GET' ? execute() : this.serial(execute);
   }
   alarm() {
     // A slow notification must not hold the student-save queue.

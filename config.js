@@ -79,6 +79,11 @@ window.addEventListener('DOMContentLoaded', function () {
     function renderProjects(home) {
       const panel = panelByTitle('我的项目');
       if (!panel) return;
+      if (home.moduleErrors?.projects) {
+        panel.hidden = false;
+        panel.innerHTML = '<h2>我的项目</h2><p>项目暂时无法读取，分配情况尚未确认。</p>';
+        return;
+      }
       const projects = Array.isArray(home.projects) ? home.projects : [];
       if (!home.modules?.projects?.visible || !projects.length) { panel.hidden = true; return; }
       panel.hidden = false;
