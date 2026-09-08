@@ -8,7 +8,8 @@
   "triggers": {
     "crons": [
       "0 3 * * 5",
-      "0 10 * * 5"
+      "0 10 * * 5",
+      "0 2 1,20,27 * *"
     ]
   },
   "vars": {
@@ -23,7 +24,11 @@
     "LEGACY_GLOBAL_BASE_FALLBACK": "true",
     "LEARNING_RECORDS_ENABLED": "true",
     "LEARNING_REVIEWER_PERSON_ID": "P-002",
-    "LEARNING_PROFESSOR_PERSON_ID": "P-001"
+    "LEARNING_PROFESSOR_PERSON_ID": "P-001",
+    "FINANCE_ENABLED": "true",
+    "FINANCE_REVIEWER_PERSON_ID": "P-004",
+    "FINANCE_DELEGATE_PERSON_IDS": "P-002",
+    "FINANCE_PROFESSOR_PERSON_ID": "P-001"
   },
   "durable_objects": {
     "bindings": [
@@ -34,6 +39,10 @@
       {
         "name": "LEARNING_RECORDS",
         "class_name": "LearningRecords"
+      },
+      {
+        "name": "FINANCE_RECORDS",
+        "class_name": "FinanceRecords"
       }
     ]
   },
@@ -48,6 +57,12 @@
       "tag": "learning-text-v1",
       "new_sqlite_classes": [
         "LearningRecords"
+      ]
+    },
+    {
+      "tag": "finance-v1",
+      "new_sqlite_classes": [
+        "FinanceRecords"
       ]
     }
   ]

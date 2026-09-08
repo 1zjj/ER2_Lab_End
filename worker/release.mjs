@@ -3,6 +3,7 @@ import { spawnSync, execFileSync } from 'node:child_process';
 import { checkBindings, checkHealth, currentDeployment } from './release-checks.mjs';
 import { prepareWeeklyBootstrap } from './release-weekly-bootstrap.mjs';
 import { prepareLearningBootstrap } from './release-learning-bootstrap.mjs';
+import { prepareFinanceBootstrap } from './release-finance-bootstrap.mjs';
 
 const origin = 'https://er2-lab-api.zhujunjie418.workers.dev';
 const config = JSON.parse(readFileSync(new URL('./wrangler.jsonc', import.meta.url), 'utf8'));
@@ -105,6 +106,28 @@ if (config.vars.LEARNING_RECORDS_ENABLED === 'true') {
     } finally { bridge.cleanup(); }
   }
 }
+if (config.vars.FINANCE_ENABLED === 'true') {
+  const finance = ((await cf('/settings')).bindings || []).find(b => b.name === 'FINANCE_RECORDS');
+  if (finance && (finance.type !== 'durable_object_namespace' || finance.class_name !== 'FinanceRecords')) throw new Error('Unexpected finance binding');
+  if (!finance) {
+    const bridge = prepareFinanceBootstrap(originalHealth.release?.commit, config);
+    try {
+      const oldMerged = new Map((settings.bindings || []).map(b => [b.name, b]));
+      for (const [name, text] of Object.entries(bridge.config.vars || {})) oldMerged.set(name, { name, type: 'plain_text', text });
+      checkBindings([...oldMerged.values()]);
+      if (currentDeployment(await cf('/deployments')).id !== baseline.id) throw new Error('Production changed before finance migration');
+      const bridgeVersion = deployConfig(bridge.configPath);
+      const deployed = currentDeployment(await cf('/deployments'));
+      if (deployed.versions[0].version_id !== bridgeVersion) throw new Error('Production changed during finance migration');
+      baseline = deployed;
+      await verify(originalHealth.release.commit);
+      const bindings = (await cf('/settings')).bindings || [];
+      checkBindings(bindings);
+      if (!bindings.some(b => b.name === 'FINANCE_RECORDS' && b.type === 'durable_object_namespace' && b.class_name === 'FinanceRecords')) throw new Error('Finance namespace missing after migration');
+      console.log('Finance rollback-compatible baseline verified: ' + bridgeVersion);
+    } finally { bridge.cleanup(); }
+  }
+}
 if (currentDeployment(await cf('/deployments')).id !== baseline.id) throw new Error('Production changed before feature deployment');
 const buildPath = new URL('./src/build-info.js', import.meta.url);
 const original = readFileSync(buildPath, 'utf8');
@@ -122,6 +145,11 @@ try {
         for (const path of ['/api/learning', '/api/learning/inbox', '/api/learning/record?track=A&lesson=01']) {
           if ((await fetch(origin + path, { signal: AbortSignal.timeout(30000) })).status !== 401) throw new Error('Learning anonymous access must return 401');
         }
+      }
+      if (config.vars.FINANCE_ENABLED === 'true') {
+        if (h.capabilities?.finance?.version !== 'finance-v1' || h.capabilities.finance.configured !== true) throw new Error('Finance capability missing');
+        for (const path of ['/api/finance', '/api/finance/setup', '/api/finance/records?review=true', '/api/finance/attachment'])
+          if ((await fetch(origin + path, { signal: AbortSignal.timeout(30000) })).status !== 401) throw new Error('Finance anonymous access must return 401');
       }
       checkBindings((await cf('/settings')).bindings || []); passed = true; break; }
     catch (error) { failure = error; if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 5000)); }

@@ -8,10 +8,11 @@ import { CORE_BINDING_HASHES, bindingFingerprint } from './release-checks.mjs';
 const root = mkdtempSync(join(tmpdir(), 'er2-release-test-'));
 try {
   mkdirSync(join(root, 'src')); mkdirSync(join(root, 'bin'));
-  for (const name of ['release.mjs', 'release-checks.mjs', 'release-weekly-bootstrap.mjs', 'release-learning-bootstrap.mjs', 'wrangler.jsonc', 'src/build-info.js'])
+  for (const name of ['release.mjs', 'release-checks.mjs', 'release-weekly-bootstrap.mjs', 'release-learning-bootstrap.mjs', 'release-finance-bootstrap.mjs', 'wrangler.jsonc', 'src/build-info.js'])
     copyFileSync(new URL(name, import.meta.url), join(root, name));
   const fixtureConfig = JSON.parse(readFileSync(join(root, 'wrangler.jsonc'), 'utf8'));
   fixtureConfig.vars.LEARNING_RECORDS_ENABLED = 'false';
+  fixtureConfig.vars.FINANCE_ENABLED = 'false';
   writeFileSync(join(root, 'wrangler.jsonc'), JSON.stringify(fixtureConfig));
   const testHashes = Object.fromEntries(Object.keys(CORE_BINDING_HASHES).map(name => [name, bindingFingerprint(name, 'fixture-' + name)]));
   const checksPath = join(root, 'release-checks.mjs');

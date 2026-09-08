@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { JSDOM } from 'jsdom';
+const source=readFileSync(new URL('../finance.js',import.meta.url),'utf8');
+const dom=new JSDOM('<main id="root"></main><section id="weekly">周报原文</section>',{url:'https://example.test/',runScripts:'outside-only'}),w=dom.window;
+w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};w.HTMLDialogElement.prototype.close=function(){this.open=false;};w.confirm=()=>true;w.AbortSignal=AbortSignal;
+const requests=[];let fail=false,review=false;w.fetch=async(url,options)=>{requests.push({url,options});if(fail)throw Error('offline');return {ok:true,status:200,json:async()=>({ready:true,statuses:{draft:'草稿'},pending:2,access:{canSubmit:true,canReview:review,canConfigure:false}})};};
+w.eval(source);w.document.querySelector('#root').innerHTML=w.ER2Finance.card();const ui=w.ER2Finance.create({apiBase:'https://api.test',getSession:()=>'session',getProfile:()=>({personId:'P-003',name:'申报人'})});await ui.mount();
+assert.equal(w.document.querySelector('[data-finance="review"]'),null);
+w.document.querySelector('[data-finance="claim"]').click();let form=w.document.querySelector('[data-finance-form]');assert.deepEqual([...form.querySelectorAll('[data-line] input')].map(i=>i.name),['name','quantity','unitPrice','purchaseDate']);assert.equal(form.querySelectorAll('[data-line] input[required]').length,4);
+assert.doesNotMatch(form.textContent,/类型|主要参数|存放地点|联络人|父记录/);assert.ok(form.querySelector('[data-finance-upload]'));assert.equal(form.reportValidity(),false);
+w.document.querySelector('[data-finance="add-line"]').click();assert.equal(w.document.querySelectorAll('[data-line]').length,2);
+w.document.querySelector('[data-finance="close"]').click();review=true;await ui.mount();assert.match(w.document.querySelector('[data-finance="review"]').textContent,/审核 · 2/);
+fail=true;await ui.mount();assert.match(w.document.querySelector('#root').textContent,/暂时无法载入/);assert.equal(w.document.querySelector('#weekly').textContent,'周报原文');
+assert.ok(requests.every(r=>r.url.startsWith('https://api.test/api/finance')));dom.window.close();console.log('PASS finance form four required device fields, optional materials, reviewer-only button and failure isolation');
