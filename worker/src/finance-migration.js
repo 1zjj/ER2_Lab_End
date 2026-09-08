@@ -26,6 +26,8 @@ export function links(value){
     if(Array.isArray(value.link_record_ids))return links(value.link_record_ids);
     if(typeof value.record_id==='string')return links(value.record_id);
     if(typeof value.id==='string')return links(value.id);
+    // Feishu serializes a blank link cell as a typed text wrapper without IDs.
+    if(value.type==='text'&&/^tbl[A-Za-z0-9]+$/.test(value.table_id)&&Array.isArray(value.text_arr)&&value.text_arr.length===0&&(value.text==null||value.text==='')&&value.record_ids==null&&value.link_record_ids==null&&value.record_id==null&&value.id==null)return [];
   }
   throw authError(409,'父记录关联格式需要核对，未修改设备');
 }
@@ -33,7 +35,7 @@ export function fieldDefinition(f){
   if(![1,2,3,4,5,7,11,15,17,18].includes(f.type))throw authError(409,'暂不支持自动迁移此源字段类型：'+f.field_name);
   const property={};for(const k of ['formatter','date_formatter','multiple','currency_code'])if(f.property?.[k]!==undefined)property[k]=f.property[k];
   if(f.type===5)property.auto_fill=false;
-  if([3,4].includes(f.type))property.options=(f.property?.options||[]).map(o=>({name:o.name,...(o.color!==undefined?{color:o.color}:{})}));
+  if([3,4].includes(f.type))property.options=(f.property?.options||[]).filter(o=>typeof o.name==='string'&&o.name!=='').map(o=>({name:o.name,...(o.color!==undefined?{color:o.color}:{})}));
   if(f.type===18){if(f.property?.table_id!==SOURCE.table)throw authError(409,'源表关联了其他数据表，需先核对复制范围');property.table_id=EQUIPMENT.table;}
   return {field_name:f.field_name,type:f.type,...(f.ui_type?{ui_type:f.ui_type}:{}),...(Object.keys(property).length?{property}:{})};
 }
@@ -103,7 +105,7 @@ export async function migrationStep(service,storage){
       if(!found){await service.write(app,EQUIPMENT.table,'/fields','POST',fieldDefinition(f));if(++actions>=6)break;}
       else if(found.type!==f.type)throw authError(409,'设备字段在迁移中发生变化：'+f.field_name);
       else if([3,4].includes(f.type)){
-        const oldOptions=found.property?.options||[],missing=(f.property?.options||[]).filter(o=>!oldOptions.some(old=>old.name===o.name));
+        const oldOptions=found.property?.options||[],missing=(f.property?.options||[]).filter(o=>typeof o.name==='string'&&o.name!==''&&!oldOptions.some(old=>old.name===o.name));
         if(missing.length){await service.write(app,EQUIPMENT.table,'/fields/'+found.field_id,'PUT',{field_name:found.field_name,type:found.type,property:{...found.property,options:[...oldOptions,...missing.map(({name,color})=>({name,color}))]}});if(++actions>=6)break;}
       }
     }

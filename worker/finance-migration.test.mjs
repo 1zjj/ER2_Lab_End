@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { startMigration,migrationStep,links } from './src/finance-migration.js';
+import { startMigration,migrationStep,links,fieldDefinition } from './src/finance-migration.js';
 import { SOURCE,EQUIPMENT,DEVICE_FIELDS } from './src/finance-policy.js';
 class Storage{data=new Map();async get(k){return Array.isArray(k)?new Map(k.filter(k=>this.data.has(k)).map(k=>[k,structuredClone(this.data.get(k))])):structuredClone(this.data.get(k));}async put(k,v){this.data.set(k,structuredClone(v));}}
 const types=[1,3,3,1,17,1,2,1,18,5,3,1,11];
@@ -37,3 +37,15 @@ const orphan=fixture();orphan.service.sourceSnapshot=async()=>({...structuredClo
 await assert.rejects(startMigration(orphan.service,orphan.storage,{personId:'P-002'},{nativeDependenciesVerified:true}),e=>e.status===409&&e.message.includes('recOnly')&&e.message.includes('recMissing'));
 assert.equal(orphan.writes.length,0);assert.equal(await orphan.storage.get('migration'),undefined);
 console.log('PASS wrapped link record IDs, malformed-link denial and orphan diagnostics before any write');
+const emptyWrapper=[{table_id:SOURCE.table,text_arr:[],type:'text'}];assert.deepEqual(links(emptyWrapper),[]);
+assert.throws(()=>links([{table_id:SOURCE.table,text_arr:['unknown parent'],type:'text'}]),e=>e.status===409);
+assert.throws(()=>links([{table_id:SOURCE.table,text_arr:[],type:'text',record_ids:'malformed'}]),e=>e.status===409);
+assert.deepEqual(fieldDefinition({field_name:'类型',type:3,property:{options:[{name:'',id:'deletedOption'},{name:'硬件',color:1}]}}).property.options,[{name:'硬件',color:1}]);
+const typed=fixture();typed.target.fields[0].type=1005;
+typed.service.sourceSnapshot=async()=>{const s=structuredClone(source);s.records[0].fields['父记录']=emptyWrapper;s.records[1].fields['父记录']=[{table_id:SOURCE.table,record_ids:['recParent'],text_arr:['底盘'],type:'text'}];return s;};
+await startMigration(typed.service,typed.storage,{personId:'P-002'},{nativeDependenciesVerified:true});
+for(let n=0;n<20;n++){if((await migrationStep(typed.service,typed.storage)).status==='completed')break;}
+assert.equal((await typed.storage.get('migration')).status,'completed');assert.equal(typed.target.fields[0].type,1005);
+const typedParent=typed.target.records.find(r=>r.fields['文本']==='底盘'),typedChild=typed.target.records.find(r=>r.fields['文本']==='相机');
+assert.deepEqual(typedParent.fields['父记录'],[]);assert.deepEqual(typedChild.fields['父记录'],[typedParent.record_id]);
+console.log('PASS complete migration with typed empty and populated parent cells, live AutoNumber type and omitted nameless options');
