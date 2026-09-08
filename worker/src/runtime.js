@@ -11,6 +11,7 @@ import { enrichStudentDashboard } from './v2/student-home.js';
 import { AUTH_BINDINGS, strictBinding } from './authorization.js';
 import { BUILD_INFO } from './build-info.js';
 import { courseCapabilities } from './capabilities.js';
+import { READ_VERSION } from './read-performance.js';
 
 export const AI_STATUS = Object.freeze({ enabled: false, status: 'paused', configurationRetained: true });
 let deepHealthCache = { value: null, expiresAt: 0 };
@@ -115,6 +116,7 @@ export default {
         AUTH_BINDINGS.every(key => { try { strictBinding(env, key); return true; } catch (_) { return false; } }),
       securityPatch: 'p0-20260907-2',
       weeklyPatch: WEEKLY_VERSION,
+      readPatch: READ_VERSION,
       configured: body.configured && deep.ok === true && AUTH_BINDINGS.every(key => { try { strictBinding(env, key); return true; } catch (_) { return false; } }),
       authorization: { enforced: true, mode: 'authoritative-fail-closed', nativeFeishuAclManaged: false,
         bindings: Object.fromEntries(AUTH_BINDINGS.map(key => { try { strictBinding(env, key); return [key, true]; } catch (_) { return [key, false]; } })) },

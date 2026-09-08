@@ -347,26 +347,47 @@
   }
 
   async function request(path, options) {
-    const response = await authenticatedFetch(API_BASE + path, Object.assign({
-      headers: {
-        'Accept': 'application/json',
-        'Authorization': 'Bearer ' + state.session
+    const controller = new AbortController();
+    const writing = options && options.method && options.method !== 'GET';
+    const budget = Number.isFinite(options?.readTimeoutMs) ? Math.min(25000, options.readTimeoutMs) : (writing ? 45000 : 25000);
+    if (budget <= 0) { const error = new Error('读取时间过长，请稍后重新载入。'); error.status = 504; error.code = 'REQUEST_TIMEOUT'; throw error; }
+    const timer = setTimeout(function () { controller.abort(); }, budget);
+    try {
+      const fetchOptions = Object.assign({
+        headers: {
+          'Accept': 'application/json',
+          'Authorization': 'Bearer ' + state.session
+        }
+      }, options || {}, { signal: controller.signal });
+      delete fetchOptions.readTimeoutMs;
+      const response = await authenticatedFetch(API_BASE + path, fetchOptions);
+      if (response.status === 401) {
+        sessionStorage.removeItem('er2-session');
+        location.href = API_BASE + '/auth/launch?returnTo=' + encodeURIComponent(location.href);
+        throw new Error('身份已过期，正在重新登录');
       }
-    }, options || {}));
-    if (response.status === 401) {
-      sessionStorage.removeItem('er2-session');
-      location.href = API_BASE + '/auth/launch?returnTo=' + encodeURIComponent(location.href);
-      throw new Error('身份已过期，正在重新登录');
-    }
-    const payload = await response.json().catch(function () { return {}; });
-    if (!response.ok) {
-      const error = new Error((payload.message || '请求失败（' + response.status + '）') + (payload.requestId ? '；诊断编号：' + payload.requestId : ''));
-      error.status = response.status; error.code = payload.code; throw error;
-    }
-    return payload;
+      const payload = await response.json().catch(function () { return {}; });
+      if (controller.signal.aborted) throw new Error('Response body read was aborted');
+      if (!response.ok) {
+        const error = new Error((payload.message || '请求失败（' + response.status + '）') + (payload.requestId ? '；诊断编号：' + payload.requestId : ''));
+        error.status = response.status; error.code = payload.code; error.binding = payload.binding; throw error;
+      }
+      return payload;
+    } catch (error) {
+      if (controller.signal.aborted) {
+        const timeout = new Error(writing ? '等待保存结果超时，草稿已保留；请先查看记录或使用原请求重试，不要重复新建提交。' : '读取时间过长，请稍后重新载入。');
+        timeout.status = 504; timeout.code = 'REQUEST_TIMEOUT'; throw timeout;
+      }
+      throw error;
+    } finally { clearTimeout(timer); }
   }
 
   async function loadDashboard(role) {
+    const generation = state.loadGeneration = (state.loadGeneration || 0) + 1;
+    const session = state.session;
+    const current = function () { return generation === state.loadGeneration && session === state.session; };
+    const deadline = Date.now() + 25000;
+    const loadRead = function (path) { return request(path, { readTimeoutMs: deadline - Date.now() }); };
     setBusy(true);
     try {
       let data;
@@ -391,16 +412,17 @@
           location.href = API_BASE + '/auth/launch?returnTo=' + encodeURIComponent(location.href);
           return;
         }
-        if (new URLSearchParams(location.search).get('page') === 'weekly') data = await request('/api/weekly');
+        if (new URLSearchParams(location.search).get('page') === 'weekly') data = await loadRead('/api/weekly');
         else {
-          try { data = await request('/api/dashboard' + (role ? '?role=' + encodeURIComponent(role) : '')); }
+          try { data = await loadRead('/api/dashboard' + (role ? '?role=' + encodeURIComponent(role) : '')); }
           catch (error) {
-            if (!error.status || error.status < 500) throw error;
-            data = await request('/api/weekly');
+            if (!error.status || error.status < 500 || error.binding === 'MEMBERS_TABLE_ID' || error.code === 'REQUEST_TIMEOUT') throw error;
+            data = await loadRead('/api/weekly');
             data.dashboardUnavailable = true;
           }
         }
       }
+      if (!current()) return;
       privateDrafts.bind(DEMO_MODE ? 'demo' : data.profile.sub);
       memberGuide.bind(DEMO_MODE ? 'demo' : data.profile.sub);
       state.learningCenterOpen = false;
@@ -420,10 +442,12 @@
       if (!DEMO_MODE && window.ER2LearningCenter && ['learning', 'learning-inbox'].includes(learningPage))
         learningUI().open(learningPage === 'learning-inbox');
     } catch (error) {
+      if (!current()) return;
       elements.accountName.textContent = '身份或数据读取未完成';
       showError('工作台暂时无法载入', error.message || '请稍后重试');
-      if (state.session && error.status !== 401 && error.status !== 403) {
-        try { const me = await request('/api/me');
+      if (state.session && error.status !== 401 && error.status !== 403 && error.binding !== 'MEMBERS_TABLE_ID' && error.code !== 'REQUEST_TIMEOUT') {
+        try { const me = await loadRead('/api/me');
+          if (!current()) return;
           elements.accountName.textContent = me.profile.name;
           elements.accountRole.textContent = '已确认身份';
           elements.logoutButton.hidden = false;
@@ -615,6 +639,7 @@
   }
 
   function renderLiteratureSection() {
+    if (state.dashboard.moduleErrors?.literature) return '<section class="panel literature-panel"><h2>文献阅读</h2><p role="status">文献记录暂时无法读取，当前提交数量尚未确认。周报和学习中心可继续使用。</p><button class="button button-secondary" type="button" data-reload-dashboard>重新读取</button></section>';
     const literature = state.dashboard.literature || { mineCount: 0, minimum: 3, completed: false, items: [] };
     const items = Array.isArray(literature.items) ? literature.items : [];
     const progress = Math.min(100, Math.round((Number(literature.mineCount || 0) / Math.max(Number(literature.minimum || 3), 1)) * 100));
@@ -645,6 +670,7 @@
   }
 
   function renderCoursePanel() {
+    if (state.dashboard.moduleErrors?.courses) return '';
     if (!courseSubmissionAvailable()) return '';
     const course = state.dashboard.student.course || { lessons: [], otherTracks: [], completed: 0, total: 10, progress: 0 };
     const lessons = Array.isArray(course.lessons) ? course.lessons : [];
@@ -669,7 +695,7 @@
 
   function renderCourseReviewPanel() {
     if (!DEMO_MODE && window.ER2LearningCenter) return state.dashboard?.profile?.personId === 'P-002' ? '<section class="panel"><div class="panel-title"><h2>学生学习记录</h2></div><p>查看逐课原文并回复学生，回复不影响学习进度。</p><button class="button button-secondary" type="button" data-open-learning-inbox>查看学习记录</button></section>' : '';
-    if (!courseSubmissionAvailable()) return '';
+    if (state.dashboard.moduleErrors?.courses || !courseSubmissionAvailable()) return '';
     const review = state.dashboard.teacher && state.dashboard.teacher.courseReview;
     if (!review || !review.visible) return '';
     const submissions = Array.isArray(review.submissions) ? review.submissions : [];
@@ -730,6 +756,15 @@
     else elements.app.innerHTML = renderStudent();
     bindViewActions();
     window.dispatchEvent(new CustomEvent('er2-dashboard-rendered', { detail: { role: state.activeRole, home: studentHomeView(state.dashboard.student) } }));
+    const errors = state.dashboard.moduleErrors || {};
+    const labels = { projects: '项目', courses: '原课程记录', tasks: '待办', links: '知识库入口', literature: '文献阅读' };
+    const unavailable = Object.keys(labels).filter(function (key) { return errors[key]; });
+    if (unavailable.length) {
+      const notice = document.createElement('div');
+      notice.className = 'panel'; notice.setAttribute('role', 'status');
+      notice.textContent = unavailable.map(function (key) { return labels[key]; }).join('、') + '暂时无法读取，相关统计尚未确认；已读取的周报可正常使用。';
+      elements.app.prepend(notice);
+    }
   }
 
   function renderLearningCard() {
@@ -824,7 +859,7 @@
       '<section class="welcome"><div><p class="kicker">MANAGEMENT WORKSPACE</p><h1>管理配置</h1><p>人员、项目、课程和自动化的统一状态。</p></div>',
       '<a class="button button-primary" href="' + safeUrl(wikiUrl()) + '">进入飞书管理后台</a></section>',
       '<div class="metric-grid"><article class="metric-card"><span>启用成员</span><strong>' + data.stats.members + '</strong><small>来自飞书人员表</small></article>',
-      '<article class="metric-card"><span>进行中项目</span><strong>' + data.stats.projects + '</strong><small>具有负责人和成员</small></article>',
+      '<article class="metric-card"><span>进行中项目</span><strong>' + (data.stats.projects == null ? '暂未读到' : data.stats.projects) + '</strong><small>具有负责人和成员</small></article>',
       '<article class="metric-card"><span>正式课程</span><strong>' + data.stats.courses + '</strong><small>Lesson与培训资料</small></article></div>',
       '<section class="panel"><div class="panel-title"><h2>自动化运行状态</h2><span>接入后显示真实日志</span></div><div class="table-wrap"><table><thead><tr><th>自动化</th><th>触发条件</th><th>对象</th><th>状态</th></tr></thead><tbody>',
       data.automations.map(function (item) {
@@ -839,6 +874,9 @@
   }
 
   function bindViewActions() {
+    elements.app.querySelectorAll('[data-reload-dashboard]').forEach(function (button) {
+      button.addEventListener('click', function () { if (button.disabled) return; button.disabled = true; loadDashboard(state.activeRole); });
+    });
     elements.app.querySelectorAll('[data-open-learning-inbox]').forEach(button => button.addEventListener('click', () => learningUI()?.open(true)));
     const sourceButton = elements.app.querySelector('#weekly-source-button');
     if (sourceButton) sourceButton.addEventListener('click', showWeeklySource);
@@ -1467,12 +1505,13 @@
     location.href = API_BASE + '/auth/launch?returnTo=' + encodeURIComponent(location.origin + location.pathname);
   });
 
-  fetch('./data/catalog.json')
+  const catalogRequest = fetch('./data/catalog.json')
     .then(function (response) { return response.ok ? response.json() : []; })
     .then(function (data) {
-      state.catalog = Array.isArray(data) ? data : [];
+      state.catalog = mergeCatalog(Array.isArray(data) ? data : [], state.dashboard?.catalog || []);
       hydrateDemoLinks();
     })
-    .catch(function () { state.catalog = []; })
-    .finally(function () { loadDashboard(new URLSearchParams(location.search).get('view')); });
+    .catch(function () { /* Search metadata must not delay or clear live data. */ });
+  if (DEMO_MODE) catalogRequest.finally(function () { loadDashboard(new URLSearchParams(location.search).get('view')); });
+  else loadDashboard(new URLSearchParams(location.search).get('view'));
 }());

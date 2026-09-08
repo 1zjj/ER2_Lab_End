@@ -2,6 +2,7 @@ import { requireSession, getTenantToken, listRecords, feishuRequest, stableMessa
 import { strictBinding, authError } from './authorization.js';
 import { LEARNING_CATALOG, LEARNING_VERSION } from './learning-catalog.js';
 import { learningActor, learningRecipient, learningAccess, learningInput, learningRecordKey, eventKey, eventPrefix } from './learning-policy.js';
+import { readScope } from './read-performance.js';
 
 export const LEARNING_STORE_NAME = 'er2-learning-text-v1';
 export const learningEnabled = env => env.LEARNING_RECORDS_ENABLED === 'true' && Boolean(env.LEARNING_RECORDS);
@@ -59,8 +60,7 @@ function subjectFor(query, context, review = false) {
   return sub;
 }
 
-export async function executeLearning(request, env, storage, contextProvider = learningContext) {
-  const context = await contextProvider(request, env);
+async function readLearning(request, env, storage, context) {
   const { actor, access } = context;
   const url = new URL(request.url), path = url.pathname;
   if (request.method === 'GET' && path === '/api/learning') {
@@ -93,6 +93,15 @@ export async function executeLearning(request, env, storage, contextProvider = l
     const entries = [...rows.values()], page = entries.slice(0, 30);
     return json(request, env, { record: compactRecord(record), events: page.reverse(), next: entries.length > 30 ? page[0].seq : 0 });
   }
+  throw authError(404, '学习接口不存在');
+}
+
+export async function executeLearning(request, env, storage, contextProvider = learningContext) {
+  env = readScope(env, request);
+  const context = await contextProvider(request, env);
+  if (request.method === 'GET') return storage.transaction(tx => readLearning(request, env, tx, context));
+  const { actor, access } = context;
+  const path = new URL(request.url).pathname;
   const kind = ({ '/api/learning/submit': 'submit', '/api/learning/append': 'append', '/api/learning/reply': 'reply' })[path];
   if (request.method !== 'POST' || !kind) throw authError(404, '学习接口不存在');
   const raw = await request.text();
