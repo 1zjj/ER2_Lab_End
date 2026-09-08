@@ -21,5 +21,21 @@
     "V2_SHADOW_ENABLED": "true",
     "V2_WRITES_ENABLED": "false",
     "LEGACY_GLOBAL_BASE_FALLBACK": "true"
-  }
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "WEEKLY_WRITES",
+        "class_name": "WeeklyWriteCoordinator"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "weekly-save-v1",
+      "new_sqlite_classes": [
+        "WeeklyWriteCoordinator"
+      ]
+    }
+  ]
 }

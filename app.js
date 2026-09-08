@@ -39,9 +39,15 @@
     reportForm: document.getElementById('report-form'),
     reportSubmit: document.getElementById('report-submit'),
     reportError: document.getElementById('report-error'),
+    reportReload: document.getElementById('report-reload'),
     reportWeekLabel: document.getElementById('report-week-label'),
     reportHistoryDialog: document.getElementById('report-history-dialog'),
     reportHistoryBody: document.getElementById('report-history-body'),
+    reportHistoryStatus: document.getElementById('report-history-status'),
+    reportHistoryYear: document.getElementById('report-history-year'),
+    reportHistoryWeek: document.getElementById('report-history-week'),
+    reportHistoryPrev: document.getElementById('report-history-prev'),
+    reportHistoryNext: document.getElementById('report-history-next'),
     literatureDialog: document.getElementById('literature-dialog'),
     literatureForm: document.getElementById('literature-form'),
     literatureSubmit: document.getElementById('literature-submit'),
@@ -268,6 +274,7 @@
 
   function saveDraft(form, key) {
     const values = Object.fromEntries(new FormData(form).entries());
+    if (key === draftKeys.report) values._baseRevision = state.reportBaseRevision || '';
     privateDrafts.set(key, draftScope(), JSON.stringify(values));
   }
 
@@ -863,23 +870,76 @@
   function openReportDialog() {
     elements.reportWeekLabel.textContent = state.dashboard.week.label;
     elements.reportError.hidden = true;
+    elements.reportReload.hidden = true;
     elements.reportForm.reset();
     const hasDraft = restoreDraft(elements.reportForm, draftKeys.report, ['progress', 'learning', 'evidence', 'blockers', 'nextPlan']);
-    if (!hasDraft) setFormValues(elements.reportForm, (state.dashboard.student.report || {}).values || {});
+    const report = state.dashboard.student.report || {};
+    if (!hasDraft) setFormValues(elements.reportForm, report.values || {});
+    let draft = {};
+    try { draft = JSON.parse(privateDrafts.get(draftKeys.report, draftScope()) || '{}'); } catch (_) {}
+    // A draft must retain the version it started from; never silently rebase it.
+    state.reportBaseRevision = hasDraft ? (typeof draft?._baseRevision === 'string' ? draft._baseRevision : '') : (report.revision || '');
     showDialog(elements.reportDialog);
   }
 
-  function openReportHistory() {
-    const history = state.dashboard.student.history || state.dashboard.student.submissions || [];
-    elements.reportHistoryBody.innerHTML = history.length ? history.map(function (report) {
+  function historyMarkup(history) {
+    return history.length ? history.map(function (report) {
       const values = report.values || {};
       const evidence = evidenceMarkup(values.evidence);
-      return '<article class="history-record"><div class="history-record-head"><div><strong>' + escapeHtml(report.title || report.weekId || (report.weekNumber ? ('第' + report.weekNumber + '周') : '历史周报')) + '</strong><small>' + escapeHtml(report.submittedAt || report.date || '') + '</small></div>' + tag(report.status || '已提交', report.feedback ? 'green' : '') + '</div><div class="literature-detail-grid">' +
+      return '<article class="history-record"><div class="history-record-head"><div><strong>' + escapeHtml(report.weekLabel || report.title || report.weekId || '历史周报') + '</strong><small>最近保存：' + escapeHtml(report.savedAt || report.submittedAt || report.date || '时间未记录') + '</small></div>' + tag(report.status || '已提交', report.feedback ? 'green' : '') + '</div><div class="literature-detail-grid">' +
         detailSection('本周完成与结果', values.progress, true) + detailSection('学习与方法', values.learning, true) +
         detailSection('当前问题与阻塞', values.blockers, true) + detailSection('下周计划', values.nextPlan, true) +
         detailSection('教师反馈', report.feedback, true) + '</div>' + evidence + '</article>';
-    }).join('') : '<div class="empty">还没有历史周报。</div>';
+    }).join('') : '<div class="empty">所选范围内还没有已提交的周报。</div>';
+  }
+
+  function openReportHistory() {
+    state.reportHistory = { page: 1, pages: 1, loading: false, generation: 0 };
+    elements.reportHistoryYear.value = '';
+    elements.reportHistoryWeek.value = '';
+    elements.reportHistoryBody.innerHTML = '';
     showDialog(elements.reportHistoryDialog);
+    loadReportHistory(1);
+  }
+
+  async function loadReportHistory(page) {
+    const view = state.reportHistory;
+    if (!view) return;
+    const generation = ++view.generation, owner = state.dashboard?.profile?.sub, session = state.session;
+    const valid = () => state.reportHistory === view && generation === view.generation &&
+      state.session === session && state.dashboard?.profile?.sub === owner && elements.reportHistoryDialog.open;
+    view.loading = true;
+    elements.reportHistoryPrev.disabled = elements.reportHistoryNext.disabled = true;
+    elements.reportHistoryStatus.textContent = '正在读取历史记录…';
+    try {
+      const year = elements.reportHistoryYear.value, week = elements.reportHistoryWeek.value;
+      const query = new URLSearchParams({ page: String(page), year, week });
+      let result;
+      if (DEMO_MODE) {
+        const reports = state.dashboard.student.history || [];
+        result = { reports, total: reports.length, page: 1, pages: 1, years: [] };
+      } else result = await request('/api/reports/history?' + query);
+      if (!valid()) return;
+      if (!Array.isArray(result.reports) || !Number.isInteger(result.total) || !Number.isInteger(result.page) || !Number.isInteger(result.pages))
+        throw new Error('历史记录返回不完整，请重新查询');
+      const years = [...new Set([year].concat(result.years || []).filter(y => /^\d{4}$/.test(y)))].sort().reverse();
+      elements.reportHistoryYear.innerHTML = '<option value="">全部年份</option>' + years.map(y =>
+        '<option value="' + y + '">' + y + '年</option>').join('');
+      elements.reportHistoryYear.value = year;
+      view.page = result.page; view.pages = result.pages;
+      elements.reportHistoryBody.innerHTML = historyMarkup(result.reports);
+      elements.reportHistoryBody.scrollTop = 0;
+      elements.reportHistoryStatus.textContent = '共 ' + result.total + ' 条 · 第 ' + result.page + ' / ' + result.pages + ' 页';
+    } catch (error) {
+      if (!valid()) return;
+      elements.reportHistoryStatus.textContent = '读取失败：' + (error.message || '请稍后重试') + '。可点击“查询”重试；下方如有内容，为上次读取结果。';
+    } finally {
+      if (valid()) {
+        view.loading = false;
+        elements.reportHistoryPrev.disabled = view.page <= 1;
+        elements.reportHistoryNext.disabled = view.page >= view.pages;
+      }
+    }
   }
 
   function openLiteratureDialog() {
@@ -994,6 +1054,12 @@
     if (elements.reportSubmit.disabled) return;
     if (!elements.reportForm.reportValidity()) return;
     const fields = Object.fromEntries(new FormData(elements.reportForm).entries());
+    fields.baseRevision = state.reportBaseRevision || '';
+    const intent = JSON.stringify(fields);
+    if (privateDrafts.get('er2-report-intent', draftScope()) !== intent) {
+      privateDrafts.remove('er2-request-report', draftScope());
+      privateDrafts.set('er2-report-intent', draftScope(), intent);
+    }
     fields.requestId = pendingRequestId('er2-request-report', 'weekly');
     elements.reportSubmit.disabled = true;
     elements.reportSubmit.textContent = '正在提交…';
@@ -1038,6 +1104,8 @@
       if (saved && saved.report) {
         state.dashboard.student.report.values = saved.report.values;
         state.dashboard.student.report.submittedAt = saved.report.submittedAt;
+        state.dashboard.student.report.revision = saved.report.revision || '';
+        state.reportBaseRevision = saved.report.revision || '';
       }
       const previousHistory = state.dashboard.student.history || [];
       state.dashboard.student.history = [historyEntry].concat(previousHistory.filter(function (item) {
@@ -1047,6 +1115,7 @@
       elements.reportForm.reset();
       clearDraft(draftKeys.report);
       privateDrafts.remove('er2-request-report', draftScope());
+      privateDrafts.remove('er2-report-intent', draftScope());
       renderActiveView();
       showToast('本周工作记录已提交');
       // Refresh the same source for dual-role users. Never turn a confirmed
@@ -1064,10 +1133,32 @@
     } catch (error) {
       elements.reportError.textContent = error.message || '提交失败，请稍后重试';
       elements.reportError.hidden = false;
+      elements.reportReload.hidden = error.status !== 409;
     } finally {
       elements.reportSubmit.disabled = false;
       elements.reportSubmit.textContent = '提交本周记录';
     }
+  }
+
+  async function reloadSavedReport() {
+    const session = state.session, weekId = state.dashboard?.week?.id;
+    elements.reportReload.disabled = true;
+    try {
+      const fresh = await request('/api/weekly');
+      if (state.session !== session || !elements.reportDialog.open) return;
+      if (fresh.week?.id !== weekId || !fresh.student?.report)
+        throw new Error('当前周已变化或读取不完整，请先保留草稿，再重新打开工作台');
+      if (!window.confirm('载入已保存记录将替换当前表单中的草稿。请先复制需要保留的文字。确定载入吗？')) return;
+      clearDraft(draftKeys.report);
+      privateDrafts.remove('er2-request-report', draftScope());
+      privateDrafts.remove('er2-report-intent', draftScope());
+      state.dashboard.student.report = fresh.student.report;
+      openReportDialog();
+    } catch (error) {
+      if (state.session !== session || !elements.reportDialog.open) return;
+      elements.reportError.textContent = error.message || '读取失败，草稿已保留';
+      elements.reportError.hidden = false;
+    } finally { elements.reportReload.disabled = false; }
   }
 
   async function submitLiterature(event) {
@@ -1329,11 +1420,15 @@
   }
   document.getElementById('retry-button').addEventListener('click', function () { loadDashboard(state.activeRole); });
   elements.reportForm.addEventListener('submit', submitReport);
+  elements.reportReload.addEventListener('click', reloadSavedReport);
   elements.literatureForm.addEventListener('submit', submitLiterature);
   elements.courseForm.addEventListener('submit', submitCourse);
   elements.courseConfirmForm.addEventListener('submit', function (event) { event.preventDefault(); submitCourseReview('confirm'); });
   elements.courseSupplementButton.addEventListener('click', function () { submitCourseReview('supplement'); });
   elements.feedbackForm.addEventListener('submit', submitTeacherFeedback);
+  document.getElementById('report-history-filter').addEventListener('submit', function (event) { event.preventDefault(); loadReportHistory(1); });
+  elements.reportHistoryPrev.addEventListener('click', function () { if (!state.reportHistory?.loading) loadReportHistory(state.reportHistory.page - 1); });
+  elements.reportHistoryNext.addEventListener('click', function () { if (!state.reportHistory?.loading) loadReportHistory(state.reportHistory.page + 1); });
   elements.reportForm.addEventListener('input', function () { saveDraft(elements.reportForm, draftKeys.report); });
   elements.literatureForm.addEventListener('input', function () { saveDraft(elements.literatureForm, draftKeys.literature); });
   elements.courseForm.addEventListener('input', function () {

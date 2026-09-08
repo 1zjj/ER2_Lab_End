@@ -1,3 +1,4 @@
+import { mockWeeklyCoordinator } from './test-weekly-coordinator.mjs';
 import assert from 'node:assert/strict';
 import service from './src/runtime.js';
 import { WEEKLY_FIELDS, weeklyValues } from './src/weekly-write.js';
@@ -17,6 +18,7 @@ const person = (n, id, kind, duties = []) => ({ record_id: 'person-' + n, fields
 const at = Date.parse('2026-09-11T10:00:00Z');
 let people, reports, logs, sends, writes, reads, failures, emptyPages, revokeBeforeWrite;
 function reset() {
+  env.WEEKLY_WRITES = mockWeeklyCoordinator(env);
   people = [person(1, 'ou_pi', 'PI', ['教授周报接收']), person(2, 'ou_ra', 'RA', ['管理员', '课程审核']), person(3, 'ou_student', '博士')];
   reports = []; logs = []; sends = []; writes = []; reads = []; failures = new Set(); emptyPages = new Set(); revokeBeforeWrite = false;
 }

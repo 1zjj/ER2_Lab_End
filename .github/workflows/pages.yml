@@ -44,6 +44,9 @@ jobs:
         uses: actions/configure-pages@v5
         with:
           enablement: true
+      - name: Wait for compatible weekly backend
+        timeout-minutes: 8
+        run: node scripts/check-weekly-backend.mjs
       - name: Prepare static site
         run: |
           mkdir _site

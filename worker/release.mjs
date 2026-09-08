@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { checkBindings, checkHealth, currentDeployment } from './release-checks.mjs';
+import { prepareWeeklyBootstrap } from './release-weekly-bootstrap.mjs';
 
 const origin = 'https://er2-lab-api.zhujunjie418.workers.dev';
 const config = JSON.parse(readFileSync(new URL('./wrangler.jsonc', import.meta.url), 'utf8'));
@@ -30,37 +31,69 @@ async function health(expectedCommit = '') {
 }
 async function verify(expectedCommit) {
   const h = await health(expectedCommit);
-  for (const path of ['/api/dashboard', '/api/admin/weekly-source']) {
+  for (const path of ['/api/dashboard', '/api/admin/weekly-source', '/api/reports/history']) {
     const response = await fetch(origin + path, { signal: AbortSignal.timeout(30000), redirect: 'error' });
     if (response.status !== 401) throw new Error('Anonymous access must return 401: ' + path);
   }
   console.log(JSON.stringify({ verifiedCommit: h.release?.commit || null, coreReady: true,
-    courseConfigured: h.courseConfigured, aiPaused: h.ai.enabled === false }));
+    courseConfigured: h.courseConfigured, aiPaused: h.ai.enabled === false, weekly: h.capabilities?.weekly || null }));
+  return h;
 }
 
-const baseline = currentDeployment(await cf('/deployments'));
+let baseline = currentDeployment(await cf('/deployments'));
 const settings = await cf('/settings');
 checkBindings(settings.bindings || []);
 const merged = new Map((settings.bindings || []).map(b => [b.name, b]));
 for (const [name, text] of Object.entries(config.vars || {})) merged.set(name, { name, type: 'plain_text', text });
 checkBindings([...merged.values()]);
-await verify('');
+const originalHealth = await verify('');
 if (!apply) { console.log('Read-only preflight passed; no deployment performed.'); process.exit(0); }
 if (currentDeployment(await cf('/deployments')).id !== baseline.id) throw new Error('Production changed during preflight; no deployment performed');
+function deployConfig(configPath) {
+  const deploy = spawnSync('npx', ['--no-install', 'wrangler', 'deploy', '--config', configPath, '--keep-vars'],
+    { encoding: 'utf8', timeout: 240000, maxBuffer: 4 * 1024 * 1024 });
+  const version = deploy.stdout?.match(/Current Version ID:\s*([a-f0-9-]{36})/)?.[1] || '';
+  if (deploy.status !== 0 || !version) throw new Error('Wrangler deployment failed or did not return a version ID');
+  return version;
+}
+const coordinator = (settings.bindings || []).find(b => b.name === 'WEEKLY_WRITES');
+if (coordinator && (coordinator.type !== 'durable_object_namespace' || coordinator.class_name !== 'WeeklyWriteCoordinator'))
+  throw new Error('Unexpected weekly coordinator binding; no deployment performed');
+if (!coordinator) {
+  const bridge = prepareWeeklyBootstrap(originalHealth.release?.commit, config);
+  try {
+    const oldMerged = new Map((settings.bindings || []).map(b => [b.name, b]));
+    for (const [name, text] of Object.entries(bridge.config.vars || {})) oldMerged.set(name, { name, type: 'plain_text', text });
+    checkBindings([...oldMerged.values()]);
+    console.log('Preparing rollback-compatible weekly storage baseline with unchanged production business code.');
+    const bridgeVersion = deployConfig(bridge.configPath);
+    const deployed = currentDeployment(await cf('/deployments'));
+    if (deployed.versions[0].version_id !== bridgeVersion) throw new Error('Production changed during compatibility baseline deployment');
+    baseline = deployed;
+    await verify(originalHealth.release.commit);
+    const bindings = (await cf('/settings')).bindings || [];
+    checkBindings(bindings);
+    if (!bindings.some(b => b.name === 'WEEKLY_WRITES' && b.type === 'durable_object_namespace' && b.class_name === 'WeeklyWriteCoordinator'))
+      throw new Error('Compatibility baseline did not establish the weekly namespace');
+    console.log('Compatible rollback baseline verified: ' + bridgeVersion);
+  } catch (error) {
+    // Do not roll across a DO lifecycle migration or continue with new behavior.
+    throw new Error('Weekly compatibility baseline needs review; feature deployment stopped: ' + error.message);
+  } finally { bridge.cleanup(); }
+}
+if (currentDeployment(await cf('/deployments')).id !== baseline.id) throw new Error('Production changed before feature deployment');
 const buildPath = new URL('./src/build-info.js', import.meta.url);
 const original = readFileSync(buildPath, 'utf8');
 let newVersion = '';
 try {
   writeFileSync(buildPath, 'export const BUILD_INFO = Object.freeze(' + JSON.stringify({ commit, builtAt: new Date().toISOString() }) + ');\n');
-  const deploy = spawnSync('npx', ['--no-install', 'wrangler', 'deploy', '--config', 'wrangler.jsonc', '--keep-vars'],
-    { encoding: 'utf8', timeout: 240000, maxBuffer: 4 * 1024 * 1024 });
-  // Never print runtime bindings or raw CLI logs into the release summary.
-  newVersion = deploy.stdout?.match(/Current Version ID:\s*([a-f0-9-]{36})/)?.[1] || '';
-  if (deploy.status !== 0 || !newVersion) throw new Error('Wrangler deployment failed or did not return a version ID');
+  newVersion = deployConfig('wrangler.jsonc');
   console.log('Uploaded version: ' + newVersion);
   let passed = false, failure;
   for (let attempt = 0; attempt < 3; attempt++) {
-    try { await verify(commit); checkBindings((await cf('/settings')).bindings || []); passed = true; break; }
+    try { const h = await verify(commit);
+      if (h.capabilities?.weekly?.coordinatedWrites !== true || h.capabilities?.weekly?.historyPagination !== true || h.capabilities?.weekly?.version !== 'weekly-save-history-v1') throw new Error('Weekly save/history capability check failed');
+      checkBindings((await cf('/settings')).bindings || []); passed = true; break; }
     catch (error) { failure = error; if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 5000)); }
   }
   if (!passed) throw failure;

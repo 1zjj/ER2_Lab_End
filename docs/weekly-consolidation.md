@@ -95,3 +95,47 @@ It snapshots sources outside the checkout and stops when human-entered content
 requires a reviewed migration. It prepares compatible fields and a proposed
 binding; it does not retire native forms, workflows, views or knowledge-base
 entrypoints. Deployment remains a separate action.
+
+## Save/history phase 1 (2026-09-08)
+
+The existing five inputs and `WEEKLY_TABLE_ID` stay authoritative. This phase
+adds no questionnaire, Feishu table, role, project grant, or feedback workflow.
+It does not change the onboarding guide, course capabilities, finance actions,
+weekly reminder recipients or scheduled digest logic.
+
+- A SQLite Durable Object (`WEEKLY_WRITES`) serializes workbench saves for each
+  table/person. Week-scoped receipts contain request IDs, content hashes and
+  record IDs, never report text. Feishu remains the content store.
+- Identical retries return the verified existing record. A differing save must
+  present the revision that the editor originally loaded. A stale draft returns
+  409 and stays in the browser; explicitly loading the saved record asks before
+  replacing that draft. Existing clients without revision metadata can make
+  first submissions but must refresh before editing a saved report.
+- A remote timeout is ambiguous. The pending receipt survives runtime restart.
+  A retry first reads the original request ID/content back; it never blindly
+  creates another row. If the remote result remains unknown, submission stays
+  blocked for that person's week and the draft remains available. Resolve the
+  upstream outcome before any manual recovery; never delete a pending receipt
+  merely because a timeout elapsed. This is not an exactly-once guarantee for
+  direct native Feishu edits or externally created duplicate rows.
+- `GET /api/reports/history` retrieves every source page, filters by the current
+  identity and existing project policy, then returns 20 records per page with
+  optional `year` and `week` filters. Counts and year options are filtered too.
+  It does not read retired sources. The dashboard's 12-record preview and the
+  teacher page's 8-record preview are unchanged.
+- History shows the ISO week year, Monday–Sunday dates and latest saved time in
+  Asia/Shanghai. It preserves the five content fields and existing feedback.
+  This is a history of weekly records, not an archive of every same-week edit.
+
+The first namespace migration establishes a rollback-compatible deployment of
+the **currently deployed business code** plus an unused class export. Only after
+that baseline passes core checks does `release.mjs` activate the new save path.
+Later failures roll back to that compatible baseline, not across the class
+migration. The Pages build waits for `weekly-save-history-v1` and a successful
+coordinator storage probe. Reviewed Feishu bindings are fingerprint-checked
+before and after deployment. Never remove the DO class/migration to roll back.
+
+Tests cover concurrent first saves, stale edits, request replays, ambiguous
+responses, durable-journal recovery, pagination and identity isolation, timezone
+boundaries, draft recovery choices, and the actual workerd/SQLite binding. These
+use synthetic local data; real-account submission acceptance remains separate.
