@@ -668,6 +668,67 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
 .guide-explanation p { line-height: 1.7; margin: 8px 0 0; }
 .onboarding-banner .action-row, .onboarding-shortcut .action-row { flex-wrap: wrap; }
 .course-panel[hidden] { display: none; }
+
+/* Student homepage: one place for each routine action. Dialog styles stay separate. */
+.student-welcome { align-items: center; }
+.welcome-tools { display: flex; flex-direction: column; align-items: flex-end; gap: 9px; }
+.guide-help-link { min-height: 32px; padding: 0 8px; font-size: 13px; }
+.student-home-layout { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(300px, 1fr); gap: 24px; align-items: start; }
+.student-main, .student-side { min-width: 0; gap: 24px; }
+.student-home-layout .panel { padding: 25px; }
+.student-home-layout .panel-title { align-items: center; }
+.student-home-layout .panel-title h2 { font-size: 21px; }
+.weekly-home-card { grid-template-columns: 1fr; margin: 0; padding: 30px; }
+.weekly-home-card h2 { font-size: 26px; }
+.weekly-home-card p:not(.kicker) { margin-bottom: 16px; font-size: 13px; }
+.weekly-home-status { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin: 0 0 23px; }
+.weekly-home-status > span:last-child { color: var(--muted); font-size: 12px; }
+.student-main .literature-panel { margin-top: 0; }
+.student-main .literature-head { display: block; }
+.student-main .literature-head h2 { font-size: 23px; }
+.student-main .literature-actions { justify-content: space-between; margin-top: 20px; }
+.student-main .literature-count { align-items: flex-start; }
+.learning-card { border-top: 3px solid #6995fa; }
+.learning-card .panel-title { margin-bottom: 15px; }
+.learning-direction { font-weight: 650; color: var(--ink) !important; }
+.learning-card p:not(.kicker) { color: var(--muted); font-size: 13px; line-height: 1.8; }
+.learning-card .button { margin-top: 7px; width: 100%; }
+.empty-link-note { padding: 10px 12px; border-radius: 9px; background: var(--page); }
+.finance-card .tag { color: var(--muted); background: var(--page); }
+.finance-overview > div { display: flex; gap: 12px; padding: 15px 0; border-top: 1px solid var(--line); }
+.finance-overview > div > span { color: #8897ad; font-size: 12px; padding-top: 3px; }
+.finance-overview h3 { margin: 0 0 5px; font-size: 15px; }
+.finance-overview p, .finance-notice { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.finance-notice { padding: 12px; background: var(--page); border-radius: 10px; }
+.project-home-card h3 { font-size: 15px; line-height: 1.6; }
+.project-home-card p { color: var(--muted); font-size: 12px; line-height: 1.7; }
+.project-home-card .home-v2-project-head { align-items: flex-start; flex-wrap: wrap; }
+.project-home-card .home-v2-project { padding: 12px; }
+.home-todos > summary { cursor: pointer; font-size: 15px; font-weight: 700; }
+.home-todos > .panel-title { margin-top: 20px; }
+.student-home-layout h3, .student-home-layout p, .student-home-layout small { overflow-wrap: anywhere; }
+@media (max-width: 860px) {
+  .student-home-layout { grid-template-columns: minmax(0, 1fr); }
+  .student-main, .student-side { display: contents; }
+  .student-home-layout .weekly-home-card { order: 1; }
+  .student-home-layout .learning-card { order: 2; }
+  .student-home-layout .course-panel { order: 3; }
+  .student-home-layout .literature-panel { order: 4; }
+  .student-home-layout .finance-card { order: 5; }
+  .student-home-layout .project-home-card { order: 6; }
+  .student-home-layout .home-todos { order: 7; }
+}
+@media (max-width: 680px) {
+  .student-welcome { flex-direction: row; flex-wrap: wrap; align-items: flex-start; gap: 10px; }
+  .student-welcome h1 { font-size: 27px; }
+  .welcome-tools { flex-direction: row; justify-content: space-between; align-items: center; width: 100%; }
+  .student-home-layout { gap: 18px; }
+  .student-home-layout .panel, .weekly-home-card { padding: 21px; }
+  .weekly-home-card h2 { font-size: 22px; }
+  .student-main .literature-actions { flex-wrap: wrap; gap: 12px; }
+  .home-todos .task-list li { grid-template-columns: 26px minmax(0, 1fr); }
+  .home-todos .task-list li > button { grid-column: 2; justify-self: start; margin: 0; }
+}
 @media (max-width: 680px) {
   .onboarding-banner > .action-row { grid-column: 1 / -1; }
   .onboarding-shortcut { flex-wrap: wrap; gap: 12px; }

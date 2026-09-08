@@ -66,7 +66,7 @@ const snapshot = JSON.stringify(dashboard);
 const ui = vm.createContext({ memberGuide: uiStore, state: { dashboard, activeRole: 'student', learningCenterOpen: false },
   elements: { onboardingDialog: { open: true }, onboardingChecklist: element(), onboardingProgressLabel: element(),
     onboardingProgressHint: element(), onboardingProgressTrack: element(), onboardingCourseEntry: element(),
-    onboardingSaveStatus: element(), app: { querySelector: () => coursePanel } },
+    onboardingSaveStatus: element(), app: { querySelector: selector => selector === '.course-panel' ? coursePanel : null } },
   escapeHtml: value => String(value), renderActiveView() { effects.push('render'); },
   closeDialog(dialog) { dialog.open = false; }, showDialog(dialog) { dialog.open = true; }, showToast() {}, openReportDialog() {},
   request() { throw new Error('Guide must not send any backend request'); } });
@@ -82,15 +82,14 @@ assert.equal((ui.elements.onboardingChecklist.innerHTML.match(/aria-pressed="fal
 assert.ok(!ui.elements.onboardingChecklist.innerHTML.includes('disabled'));
 ui.skipMemberGuide();
 assert.equal(ui.onboardingData().completedCount, 1);
-assert.match(ui.renderOnboardingEntry(), /入组说明/);
-assert.match(ui.renderOnboardingEntry(), /onboarding-shortcut/);
+assert.equal(ui.renderOnboardingEntry(), '', 'Skipped guide no longer adds a duplicate homepage learning entry');
 ui.acknowledgeGuideStep('rules');
 assert.equal(ui.onboardingData().completedCount, 0);
 assert.match(ui.renderOnboardingEntry(), /查看指南/);
 for (const step of steps) ui.acknowledgeGuideStep(step);
 assert.equal(ui.onboardingData().completed, true);
 assert.equal(ui.elements.onboardingDialog.open, false);
-assert.match(ui.renderOnboardingEntry(), /入组说明/);
+assert.equal(ui.renderOnboardingEntry(), '', 'Completed guide leaves the permanent header help entry');
 assert.equal(JSON.stringify(dashboard), snapshot, 'Acknowledgements cannot mutate personnel, training or server state');
 ui.state.activeRole = 'teacher'; coursePanel.hidden = true; ui.openLearningCenter();
 assert.equal(coursePanel.hidden, true, 'Guide cannot switch role or bypass access');
