@@ -6,7 +6,7 @@ const ui = vm.createContext({ DEMO_MODE: false, state: { dashboard: { student: {
   availableLink: () => '<a>打开学习中心</a>', courseUrl: () => 'https://docs.example/learning' });
 vm.runInContext(app.slice(app.indexOf('  function courseSubmissionAvailable('), app.indexOf('  function renderCourseReviewPanel(')), ui);
 assert.equal(ui.courseSubmissionAvailable(), false, 'An old backend without capabilities must fail closed');
-assert.match(ui.renderCoursePanel(), /课程记录提交暂未开放/);
+assert.equal(ui.renderCoursePanel(), '', 'No second learning panel when courses are not configured');
 assert.doesNotMatch(ui.renderCoursePanel(), /data-course-lesson/);
 ui.state.dashboard.capabilities = { courses: { submissionEnabled: false } };
 assert.equal(ui.courseSubmissionAvailable(), false);

@@ -520,11 +520,9 @@
 
   function renderOnboardingEntry() {
     const guide = onboardingData();
-    if (guide.completed || guide.skipped) {
-      return '<section class="onboarding-shortcut" aria-label="学习中心入口"><div class="onboarding-shortcut-copy"><span aria-hidden="true">⌘</span><div><strong>学习中心</strong><small>按当前学习安排继续学习，入组说明可随时查看。</small></div></div><div class="action-row"><button class="button button-primary" type="button" data-open-learning-center>进入学习中心</button><button class="button button-ghost" type="button" data-open-onboarding>入组说明</button></div></section>';
-    }
+    if (guide.completed || guide.skipped) return '';
     const progress = Math.round(guide.completedCount / guide.total * 100);
-    return '<section class="onboarding-banner"><div class="onboarding-icon" aria-hidden="true">✦</div><div><h2>新成员使用指南</h2><p>了解工作台、规则、环境、学习安排及周报使用方法。也可直接进入学习中心。</p><div class="onboarding-banner-progress"><div class="progress-track" role="progressbar" aria-label="指南阅读进度" aria-valuemin="0" aria-valuemax="5" aria-valuenow="' + guide.completedCount + '"><span style="width:' + progress + '%"></span></div><strong>' + guide.completedCount + ' / ' + guide.total + ' 已了解</strong></div></div><div class="action-row"><button class="button button-primary" type="button" data-open-onboarding>查看指南</button><button class="button button-secondary" type="button" data-open-learning-center>进入学习中心</button></div></section>';
+    return '<section class="onboarding-banner"><div class="onboarding-icon" aria-hidden="true">✦</div><div><h2>新成员使用指南</h2><p>了解工作台、规则、环境、学习安排及周报使用方法。也可直接进入学习中心。</p><div class="onboarding-banner-progress"><div class="progress-track" role="progressbar" aria-label="指南阅读进度" aria-valuemin="0" aria-valuemax="5" aria-valuenow="' + guide.completedCount + '"><span style="width:' + progress + '%"></span></div><strong>' + guide.completedCount + ' / ' + guide.total + ' 已了解</strong></div></div><div class="action-row"><button class="button button-primary" type="button" data-open-onboarding>查看指南</button></div></section>';
   }
 
   function renderOnboardingDialog() {
@@ -568,7 +566,7 @@
     renderActiveView();
     if (next.completed) {
       closeDialog(elements.onboardingDialog);
-      showToast('已了解全部说明，首页已显示学习中心入口');
+      showToast('已了解全部说明，可随时从右上角重新查看');
     } else {
       renderOnboardingDialog();
       const button = elements.onboardingChecklist.querySelector('[data-guide-step="' + stepId + '"]');
@@ -585,6 +583,8 @@
 
   function openLearningCenter() {
     if (!state.dashboard?.profile?.roles?.includes('student') || state.activeRole !== 'student') return;
+    const materials = elements.app.querySelector('.learning-material-link');
+    if (materials) { materials.click(); return; }
     const center = elements.app.querySelector('.course-panel');
     if (!center) { showToast('当前页面未加载学习中心，请返回主页后重试'); return; }
     state.learningCenterOpen = true;
@@ -623,11 +623,7 @@
   }
 
   function renderCoursePanel() {
-    if (!courseSubmissionAvailable()) return '<section class="panel course-panel" id="learning-center"' +
-      (state.learningCenterOpen ? '' : ' hidden') + '><p class="kicker">LEARNING CENTER</p><h2>学习中心</h2>' +
-      '<p>按学习中心安排阅读教材和完成练习。本周学习进展统一填写在工作记录的“学习与方法”中。</p>' +
-      '<p>课程记录提交暂未开放；新成员指南的阅读进度不会影响入组状态或项目权限。</p>' +
-      availableLink(courseUrl(), '打开学习中心', 'button button-secondary') + '</section>';
+    if (!courseSubmissionAvailable()) return '';
     const course = state.dashboard.student.course || { lessons: [], otherTracks: [], completed: 0, total: 10, progress: 0 };
     const lessons = Array.isArray(course.lessons) ? course.lessons : [];
     const otherTracks = Array.isArray(course.otherTracks) ? course.otherTracks : [];
@@ -713,39 +709,55 @@
     window.dispatchEvent(new CustomEvent('er2-dashboard-rendered', { detail: { role: state.activeRole, home: studentHomeView(state.dashboard.student) } }));
   }
 
+  function renderLearningCard() {
+    const course = state.dashboard.student.course || {};
+    const enabled = courseSubmissionAvailable();
+    const materials = safeUrl(courseUrl());
+    const action = enabled
+      ? '<button class="button button-primary" type="button" data-open-learning-center>进入学习中心</button>'
+      : (materials !== '#' ? availableLink(materials, '进入学习中心', 'button button-primary learning-material-link')
+        : '<p class="empty-link-note">学习资料入口待配置，请联系管理员。</p>');
+    return '<section class="panel learning-card" data-courses-enabled="' + enabled + '"><p class="kicker">LEARNING</p><div class="panel-title"><h2>学习中心</h2></div>' +
+      '<p class="learning-direction">' + escapeHtml(course.title || '查看当前学习安排') + '</p>' +
+      (enabled ? '<p>' + escapeHtml(course.next || '查看课程安排与记录') + '</p>' : '<p>阅读教材，完成练习。<br>本周学习进展写入周报的“学习与方法”。</p>') +
+      action + '</section>';
+  }
+
+  function renderFinancePlaceholder() {
+    return '<section class="panel finance-card" aria-labelledby="finance-title"><p class="kicker">APPLICATIONS</p>' +
+      '<div class="panel-title"><h2 id="finance-title">预算与报销</h2>' + tag('筹备中') + '</div>' +
+      '<div class="finance-overview"><div><span aria-hidden="true">01</span><div><h3>预算申请</h3><p>费用发生前，说明用途与预计金额。</p></div></div>' +
+      '<div><span aria-hidden="true">02</span><div><h3>费用报销</h3><p>费用发生后，整理实际支出与凭证。</p></div></div></div>' +
+      '<p class="finance-notice">在线办理暂未开放，后续在这里统一查看申请进度。</p></section>';
+  }
+
   function renderStudent() {
     const profile = state.dashboard.profile;
     const week = state.dashboard.week;
     const data = state.dashboard.student;
     const submitted = data.report.status === 'submitted';
     return [
-      '<section class="welcome"><div><p class="kicker">STUDENT WORKSPACE</p><h1>' + greeting() + '，' + escapeHtml(profile.name) + '</h1>',
-      '<p>这里只展示与你有关的任务、课程、项目和记录。</p></div>',
-      '<div class="deadline">◷ ' + escapeHtml(week.dueLabel) + '</div></section>',
+      '<section class="welcome student-welcome"><div><p class="kicker">STUDENT WORKSPACE</p><h1>' + greeting() + '，' + escapeHtml(profile.name) + '</h1>',
+      '<p>记录本周工作，继续学习与协作。</p></div><div class="welcome-tools">',
+      '<button class="button button-ghost guide-help-link" type="button" data-open-onboarding>入组说明</button>',
+      '<div class="deadline">◷ ' + escapeHtml(week.dueLabel) + '</div></div></section>',
       renderOnboardingEntry(),
-      '<section class="hero-card"><div><p class="kicker">本周唯一提交</p><h2>' + (submitted ? '本周工作记录已提交' : '完成本周工作记录') + '</h2>',
-      '<p>项目进度、培训学习、产出证据、问题和下一步统一记录，预计5–8分钟。</p><div class="action-row">',
-      '<button class="button button-primary" type="button" data-open-report>' + (submitted ? '修改本周记录' : '立即填写') + '</button>',
-      '<button class="button button-secondary" type="button" data-open-report-history>查看历史记录</button></div></div>',
-      '<div class="status-panel"><div><span>本周周报</span><strong>' + escapeHtml(data.report.label) + '</strong></div>',
-      '<div><span>当前项目</span><strong>' + escapeHtml(data.project.code + ' ' + data.project.title) + '</strong></div>',
-      '<div><span>课程进度</span><strong>' + escapeHtml(data.course.completed + ' / ' + data.course.total) + '</strong></div></div></section>',
-      '<div class="dashboard-grid"><div class="stack">',
-      '<section class="panel"><div class="panel-title"><h2>本周待办</h2>' + tag(data.tasks.length + '项') + '</div><ol class="task-list">',
+      '<div class="student-home-layout"><div class="stack student-main">',
+      '<section class="hero-card weekly-home-card"><div><p class="kicker">本周工作记录</p><h2>' + (submitted ? '本周工作记录已提交' : '记录这一周的进展') + '</h2>',
+      '<p>' + escapeHtml(week.label || '') + '</p><div class="weekly-home-status">' + tag(data.report.label, submitted ? 'green' : 'orange') + '<span>项目进展、学习收获与下周计划</span></div><div class="action-row">',
+      '<button class="button button-primary" type="button" data-open-report>' + (submitted ? '修改本周记录' : '填写本周记录') + '</button>',
+      '<button class="button button-secondary" type="button" data-open-report-history>查看历史记录</button></div></div></section>',
+      renderLiteratureSection(),
+      '<details class="panel home-todos"><summary>本周待办</summary><div class="panel-title"><h2>本周待办</h2>' + tag(data.tasks.length + '项') + '</div><ol class="task-list">',
       data.tasks.map(function (item, index) {
-        return '<li><span class="task-number">' + (index + 1) + '</span><div><strong>' + escapeHtml(item.title) +
-          '</strong><small>' + escapeHtml(item.detail) + '</small></div>' + tag(item.type) + '</li>';
-      }).join(''), '</ol></section>',
-      '<section class="panel"><div class="panel-title"><h2>我的项目</h2>' + availableLink(data.project.url, '打开项目页') + '</div>',
+        return '<li><span class="task-number">' + (index + 1) + '</span><div><strong>' + escapeHtml(item.title) + '</strong><small>' + escapeHtml(item.detail) + '</small></div>' + tag(item.type) + '</li>';
+      }).join(''), '</ol></details>',
+      renderCoursePanel(), '</div><aside class="stack student-side" aria-label="学习、申请与项目">',
+      renderLearningCard(), renderFinancePlaceholder(),
+      '<section class="panel project-home-card"><div class="panel-title"><h2>我的项目</h2>' + availableLink(data.project.url, '打开项目页') + '</div>',
       '<h3>' + escapeHtml(data.project.code + ' ' + data.project.title) + '</h3><p>' + escapeHtml(data.project.milestone) + '</p>',
-      '<div class="progress-track" role="progressbar" aria-label="项目进度" aria-valuenow="' + Number(data.project.progress || 0) + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + Math.max(0, Math.min(100, Number(data.project.progress || 0))) + '%"></span></div>',
       '<p class="project-note"><strong>最近阻塞：</strong>' + escapeHtml(data.project.blocker) + '</p></section>',
-      '</div>',
-      '<aside class="stack"><section class="panel"><div class="panel-title"><h2>继续学习</h2></div><p class="kicker">' + escapeHtml(data.course.title) + '</p>',
-      '<h3>' + escapeHtml(data.course.next) + '</h3><div class="progress-track" role="progressbar" aria-label="课程进度" aria-valuenow="' + Number(data.course.progress || 0) + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + Number(data.course.progress || 0) + '%"></span></div>',
-      '<button class="button button-secondary" type="button" data-open-learning-center>进入学习中心</button></section>',
-      '</aside></div>',
-      renderCoursePanel(), renderLiteratureSection(), footer()
+      '</aside></div>', footer()
     ].join('');
   }
 

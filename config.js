@@ -56,7 +56,9 @@ window.addEventListener('DOMContentLoaded', function () {
       if (!panel) return;
       const list = panel.querySelector('.task-list');
       if (!list) return;
-      const todos = Array.isArray(home.todos) ? home.todos : [];
+      const source = Array.isArray(home.todos) ? home.todos : [];
+      const learning = root.querySelector('.learning-card');
+      const todos = learning?.dataset.coursesEnabled === 'false' ? source.filter(item => item.action !== 'training') : source;
       const count = panel.querySelector('.panel-title span');
       if (count) count.textContent = todos.length + '项';
       list.innerHTML = todos.length ? todos.map(function (item, index) {
@@ -69,7 +71,7 @@ window.addEventListener('DOMContentLoaded', function () {
       const kicker = hero.querySelector('.kicker');
       const title = hero.querySelector('h2');
       const description = hero.querySelector('p:not(.kicker)');
-      if (kicker) kicker.textContent = '本周状态';
+      if (kicker) kicker.textContent = '本周工作记录';
       if (title) title.textContent = home.report?.status === 'submitted' ? '本周工作记录已提交' : '本周工作记录待提交';
       if (description) description.textContent = [home.report?.weekLabel, home.report?.dueLabel].filter(Boolean).join(' · ');
     }
@@ -85,6 +87,8 @@ window.addEventListener('DOMContentLoaded', function () {
       }).join('') + '</div>';
     }
     function renderTraining(home) {
+      // The current layout owns the single learning entry; do not recreate the legacy card.
+      if (root.querySelector('.learning-card')) return;
       const oldSummary = panelByTitle('继续学习');
       const coursePanel = root.querySelector('.course-panel');
       const training = home.training || {};
@@ -113,7 +117,7 @@ window.addEventListener('DOMContentLoaded', function () {
           if (action === 'report') return triggerExisting('[data-open-report]');
           if (action === 'literature') return triggerExisting('[data-open-literature]');
           if (action === 'training') {
-            triggerExisting('[data-open-learning-center]');
+            triggerExisting('.learning-card .button, [data-open-learning-center]');
             const center = root.querySelector('#learning-center');
             if (center) {
               if (target) setTimeout(function () {
@@ -131,7 +135,7 @@ window.addEventListener('DOMContentLoaded', function () {
       });
       const trainingButton = root.querySelector('[data-home-open-training]');
       if (trainingButton) trainingButton.onclick = function () {
-        triggerExisting('[data-open-learning-center]');
+        triggerExisting('.learning-card .button, [data-open-learning-center]');
       };
     }
     function normalizeUrlInput(input) {
