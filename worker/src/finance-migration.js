@@ -17,7 +17,18 @@ async function saveSnapshot(storage,key,snapshot){
   const saved=await readSnapshot(storage,key);if(await snapshotHash(saved)!==digest)throw authError(409,'备份回读校验失败，未修改设备');
 }
 async function readSnapshot(storage,key){const h=await storage.get(key);if(!h)throw authError(409,'迁移备份不存在');const rows=await storage.get(h.recordIds.map(id=>key+':record:'+id));const records=h.recordIds.map(id=>rows.get(key+':record:'+id));if(records.some(r=>!r))throw authError(409,'迁移备份不完整');return {...h,records};}
-function links(value){if(value==null)return [];const list=Array.isArray(value)?value:value.record_ids||value.link_record_ids;if(!Array.isArray(list))throw authError(409,'父记录关联格式需要核对');return list.map(v=>typeof v==='string'?v:v.record_id||v.id);}
+export function links(value){
+  if(value==null)return [];
+  if(Array.isArray(value))return value.flatMap(links);
+  if(typeof value==='string'&&/^rec[A-Za-z0-9]+$/.test(value))return [value];
+  if(typeof value==='object'){
+    if(Array.isArray(value.record_ids))return links(value.record_ids);
+    if(Array.isArray(value.link_record_ids))return links(value.link_record_ids);
+    if(typeof value.record_id==='string')return links(value.record_id);
+    if(typeof value.id==='string')return links(value.id);
+  }
+  throw authError(409,'父记录关联格式需要核对，未修改设备');
+}
 export function fieldDefinition(f){
   if(![1,2,3,4,5,7,11,15,17,18].includes(f.type))throw authError(409,'暂不支持自动迁移此源字段类型：'+f.field_name);
   const property={};for(const k of ['formatter','date_formatter','multiple','currency_code'])if(f.property?.[k]!==undefined)property[k]=f.property[k];
@@ -53,7 +64,7 @@ export async function startMigration(service,storage,actor,{nativeDependenciesVe
     if(existing&&(existing.type!==f.type||f.type===18&&existing.property?.table_id!==EQUIPMENT.table))throw authError(409,'同名字段与原有设备功能不兼容，未修改字段：'+f.field_name);
   }
   const sourceIds=new Set(source.records.map(r=>r.record_id));
-  for(const r of source.records)for(const f of source.fields.filter(f=>f.type===18))for(const id of links(r.fields[f.field_name]))if(!sourceIds.has(id))throw authError(409,'父记录指向源表之外，未进行替换');
+  for(const r of source.records)for(const f of source.fields.filter(f=>f.type===18))for(const id of links(r.fields[f.field_name]))if(!sourceIds.has(id))throw authError(409,'父记录指向源表之外，未进行替换；源记录 '+r.record_id+'，父记录 '+id);
   const other=[];for(const t of await service.list(service.equipment.obj_token,'','/tables')){
     if(t.table_id===EQUIPMENT.table||t.table_id==='tblo6LU7jHulq1gu')continue;
     const s=await service.snapshot(service.equipment.obj_token,t.table_id);

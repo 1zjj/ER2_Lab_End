@@ -66,7 +66,9 @@ export async function executeFinance(request,env,storage,contextProvider=finance
     }
     if(path==='/setup'){
       if(!access.canConfigure)throw authError(403,'仅管理员可配置预算与报销');
-      return json(request,env,{settings,access,inspection:await storage.get('inspection'),migration:await storage.get('migration'),jobs:(await financeEntries(storage,'job:')).map(([key,j])=>({key,attempts:j.attempts,error:j.error||'',next:j.next}))});
+      const source=await storage.get('inspection:source');
+      const sourceParentLinks=source?.records.filter(r=>r.fields['父记录']!=null).map(r=>({recordId:r.record_id,parent:r.fields['父记录']}));
+      return json(request,env,{settings,access,inspection:await storage.get('inspection'),sourceParentLinks,migration:await storage.get('migration'),jobs:(await financeEntries(storage,'job:')).map(([key,j])=>({key,attempts:j.attempts,error:j.error||'',next:j.next}))});
     }
     throw authError(404,'财务接口不存在');
   }
