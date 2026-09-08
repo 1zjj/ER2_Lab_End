@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { checkBindings, checkHealth, currentDeployment } from './release-checks.mjs';
 import { prepareWeeklyBootstrap } from './release-weekly-bootstrap.mjs';
+import { prepareLearningBootstrap } from './release-learning-bootstrap.mjs';
 
 const origin = 'https://er2-lab-api.zhujunjie418.workers.dev';
 const config = JSON.parse(readFileSync(new URL('./wrangler.jsonc', import.meta.url), 'utf8'));
@@ -59,6 +60,7 @@ function deployConfig(configPath) {
 const coordinator = (settings.bindings || []).find(b => b.name === 'WEEKLY_WRITES');
 if (coordinator && (coordinator.type !== 'durable_object_namespace' || coordinator.class_name !== 'WeeklyWriteCoordinator'))
   throw new Error('Unexpected weekly coordinator binding; no deployment performed');
+if (!coordinator && config.vars.LEARNING_RECORDS_ENABLED === 'true') throw new Error('Working weekly storage is required before adding learning storage');
 if (!coordinator) {
   const bridge = prepareWeeklyBootstrap(originalHealth.release?.commit, config);
   try {
@@ -81,6 +83,28 @@ if (!coordinator) {
     throw new Error('Weekly compatibility baseline needs review; feature deployment stopped: ' + error.message);
   } finally { bridge.cleanup(); }
 }
+if (config.vars.LEARNING_RECORDS_ENABLED === 'true') {
+  const learning = ((await cf('/settings')).bindings || []).find(b => b.name === 'LEARNING_RECORDS');
+  if (learning && (learning.type !== 'durable_object_namespace' || learning.class_name !== 'LearningRecords')) throw new Error('Unexpected learning binding');
+  if (!learning) {
+    const bridge = prepareLearningBootstrap(originalHealth.release?.commit, config);
+    try {
+      const oldMerged = new Map((settings.bindings || []).map(b => [b.name, b]));
+      for (const [name, text] of Object.entries(bridge.config.vars || {})) oldMerged.set(name, { name, type: 'plain_text', text });
+      checkBindings([...oldMerged.values()]);
+      if (currentDeployment(await cf('/deployments')).id !== baseline.id) throw new Error('Production changed before learning migration');
+      const bridgeVersion = deployConfig(bridge.configPath);
+      const deployed = currentDeployment(await cf('/deployments'));
+      if (deployed.versions[0].version_id !== bridgeVersion) throw new Error('Production changed during learning migration');
+      baseline = deployed;
+      await verify(originalHealth.release.commit);
+      const bindings = (await cf('/settings')).bindings || [];
+      checkBindings(bindings);
+      if (!bindings.some(b => b.name === 'LEARNING_RECORDS' && b.type === 'durable_object_namespace' && b.class_name === 'LearningRecords')) throw new Error('Learning namespace missing after migration');
+      console.log('Learning rollback-compatible baseline verified: ' + bridgeVersion);
+    } finally { bridge.cleanup(); }
+  }
+}
 if (currentDeployment(await cf('/deployments')).id !== baseline.id) throw new Error('Production changed before feature deployment');
 const buildPath = new URL('./src/build-info.js', import.meta.url);
 const original = readFileSync(buildPath, 'utf8');
@@ -93,6 +117,12 @@ try {
   for (let attempt = 0; attempt < 3; attempt++) {
     try { const h = await verify(commit);
       if (h.capabilities?.weekly?.coordinatedWrites !== true || h.capabilities?.weekly?.historyPagination !== true || h.capabilities?.weekly?.version !== 'weekly-save-history-v1') throw new Error('Weekly save/history capability check failed');
+      if (config.vars.LEARNING_RECORDS_ENABLED === 'true') {
+        if (h.capabilities?.learning?.storageReady !== true || h.capabilities.learning.recipientsReady !== true || h.capabilities.learning.version !== 'learning-text-v1') throw new Error('Learning storage or recipient verification failed');
+        for (const path of ['/api/learning', '/api/learning/inbox', '/api/learning/record?track=A&lesson=01']) {
+          if ((await fetch(origin + path, { signal: AbortSignal.timeout(30000) })).status !== 401) throw new Error('Learning anonymous access must return 401');
+        }
+      }
       checkBindings((await cf('/settings')).bindings || []); passed = true; break; }
     catch (error) { failure = error; if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 5000)); }
   }

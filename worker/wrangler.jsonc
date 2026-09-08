@@ -20,13 +20,20 @@
     "AI_ENABLED": "false",
     "V2_SHADOW_ENABLED": "true",
     "V2_WRITES_ENABLED": "false",
-    "LEGACY_GLOBAL_BASE_FALLBACK": "true"
+    "LEGACY_GLOBAL_BASE_FALLBACK": "true",
+    "LEARNING_RECORDS_ENABLED": "true",
+    "LEARNING_REVIEWER_PERSON_ID": "P-002",
+    "LEARNING_PROFESSOR_PERSON_ID": "P-001"
   },
   "durable_objects": {
     "bindings": [
       {
         "name": "WEEKLY_WRITES",
         "class_name": "WeeklyWriteCoordinator"
+      },
+      {
+        "name": "LEARNING_RECORDS",
+        "class_name": "LearningRecords"
       }
     ]
   },
@@ -35,6 +42,12 @@
       "tag": "weekly-save-v1",
       "new_sqlite_classes": [
         "WeeklyWriteCoordinator"
+      ]
+    },
+    {
+      "tag": "learning-text-v1",
+      "new_sqlite_classes": [
+        "LearningRecords"
       ]
     }
   ]

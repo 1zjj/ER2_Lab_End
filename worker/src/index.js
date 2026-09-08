@@ -1155,7 +1155,7 @@ async function runScheduledTask(scheduledTime, env) {
   if (failed) throw httpError(502, '部分周报提醒发送失败，已发送人员不会重复提醒');
 }
 
-async function getTenantToken(env) {
+export async function getTenantToken(env) {
   requireConfig(env, ['FEISHU_APP_ID', 'FEISHU_APP_SECRET']);
   if (tenantTokenCache.token && tenantTokenCache.expiresAt > Date.now() + 60_000) return tenantTokenCache.token;
   const result = await feishuRequest('/auth/v3/tenant_access_token/internal', {
@@ -1187,7 +1187,7 @@ async function resolveBitableAppToken(binding, token) {
   return appToken;
 }
 
-async function listRecords(env, token, tableBinding) {
+export async function listRecords(env, token, tableBinding) {
   try { return await readTableRecords(env, token, tableBinding); }
   catch (error) { error.binding = tableBinding; throw error; }
 }
@@ -1263,7 +1263,7 @@ async function sendText(env, token, openId, text, uuid = '') {
   });
 }
 
-async function stableMessageUuid(value) {
+export async function stableMessageUuid(value) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(value)));
   return [...new Uint8Array(digest)].slice(0, 16).map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
@@ -1279,7 +1279,7 @@ async function writeAutomationLog(env, token, runKey, name, result, detail) {
   });
 }
 
-async function feishuRequest(path, options = {}) {
+export async function feishuRequest(path, options = {}) {
   const headers = { 'Content-Type': 'application/json; charset=utf-8' };
   if (options.bearer) headers.Authorization = 'Bearer ' + options.bearer;
   const method = options.method || 'GET';
@@ -1374,7 +1374,7 @@ function weekInfo(date) {
   };
 }
 
-async function requireSession(request, env) {
+export async function requireSession(request, env) {
   const header = request.headers.get('Authorization') || '';
   if (!header.startsWith('Bearer ')) throw httpError(401, '需要飞书登录');
   const session = await verifyToken(header.slice(7), env.SESSION_SECRET);
@@ -1493,7 +1493,7 @@ function corsResponse(request, env, body, status) {
   });
 }
 
-function json(request, env, value, status = 200) {
+export function json(request, env, value, status = 200) {
   const response = corsResponse(request, env, JSON.stringify(value), status);
   response.headers.set('Content-Type', 'application/json; charset=utf-8');
   response.headers.set('Cache-Control', 'no-store');

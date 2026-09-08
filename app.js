@@ -325,6 +325,7 @@
   }
 
   window.addEventListener('er2-session-denied', function (event) {
+    learningUIInstance?.reset();
     if (event.detail?.status !== 401) privateDrafts.clear();
     memberGuide.bind('');
     state.dashboard = null;
@@ -415,6 +416,9 @@
       elements.loading.hidden = true;
       elements.app.hidden = false;
       if (new URLSearchParams(location.search).get('page') === 'weekly' && roles.includes('student')) openReportDialog();
+      const learningPage = new URLSearchParams(location.search).get('page');
+      if (!DEMO_MODE && window.ER2LearningCenter && ['learning', 'learning-inbox'].includes(learningPage))
+        learningUI().open(learningPage === 'learning-inbox');
     } catch (error) {
       elements.accountName.textContent = '身份或数据读取未完成';
       showError('工作台暂时无法载入', error.message || '请稍后重试');
@@ -486,6 +490,7 @@
         button.addEventListener('click', function () {
           const role = button.dataset.role;
           if (!roles.includes(role)) return;
+          learningUIInstance?.reset();
           state.activeRole = role;
           renderAccount();
           renderRoleNavigation(roles);
@@ -588,8 +593,18 @@
     openLearningCenter();
   }
 
+  let learningUIInstance;
+  function learningUI() {
+    if (!learningUIInstance && window.ER2LearningCenter) learningUIInstance = window.ER2LearningCenter.create({
+      apiBase: API_BASE, getSession: () => state.session, getProfile: () => state.dashboard?.profile,
+      drafts: privateDrafts, onUnauthorized: () => window.dispatchEvent(new CustomEvent('er2-session-denied', { detail: { status: 401 } }))
+    });
+    return learningUIInstance;
+  }
+
   function openLearningCenter() {
     if (!state.dashboard?.profile?.roles?.includes('student') || state.activeRole !== 'student') return;
+    if (!DEMO_MODE && window.ER2LearningCenter) { learningUI().open(false); return; }
     const materials = elements.app.querySelector('.learning-material-link');
     if (materials) { materials.click(); return; }
     const center = elements.app.querySelector('.course-panel');
@@ -653,6 +668,7 @@
   }
 
   function renderCourseReviewPanel() {
+    if (!DEMO_MODE && window.ER2LearningCenter) return state.dashboard?.profile?.personId === 'P-002' ? '<section class="panel"><div class="panel-title"><h2>学生学习记录</h2></div><p>查看逐课原文并回复学生，回复不影响学习进度。</p><button class="button button-secondary" type="button" data-open-learning-inbox>查看学习记录</button></section>' : '';
     if (!courseSubmissionAvailable()) return '';
     const review = state.dashboard.teacher && state.dashboard.teacher.courseReview;
     if (!review || !review.visible) return '';
@@ -717,6 +733,7 @@
   }
 
   function renderLearningCard() {
+    if (!DEMO_MODE && window.ER2LearningCenter) return '<section class="panel learning-card" data-courses-enabled="false"><p class="kicker">LEARNING</p><div class="panel-title"><h2>学习中心</h2></div><p class="learning-direction">Track A｜感知与语义导航</p><p>阅读教材，逐课记录学习收获。<br>查看回复，按自己的进度继续学习。</p><button class="button button-primary" type="button" data-open-learning-center>进入学习中心</button></section>';
     const course = state.dashboard.student.course || {};
     const enabled = courseSubmissionAvailable();
     const materials = safeUrl(courseUrl());
@@ -822,6 +839,7 @@
   }
 
   function bindViewActions() {
+    elements.app.querySelectorAll('[data-open-learning-inbox]').forEach(button => button.addEventListener('click', () => learningUI()?.open(true)));
     const sourceButton = elements.app.querySelector('#weekly-source-button');
     if (sourceButton) sourceButton.addEventListener('click', showWeeklySource);
     elements.app.querySelectorAll('[data-open-learning-center]').forEach(function (button) {
