@@ -23,7 +23,16 @@ export async function financeService(env, injected={}) {
     if(app===finance.obj_token&&!table&&result.data?.table_id){financeTables=null;}
     return result;
   }
-  async function list(app,table,suffix){const items=[],seen=new Set();let page='';do{const r=await call(path(app,table,suffix)+'?page_size=100&user_id_type=open_id'+(page?'&page_token='+enc(page):''));const d=r.data;if(!d||!Array.isArray(d.items))throw authError(503,'飞书返回的数据不完整');items.push(...d.items);if(!d.has_more)break;page=d.page_token;if(!page||seen.has(page))throw authError(503,'飞书分页不完整');seen.add(page);}while(true);return items;}
+  async function list(app,table,suffix){const items=[],seen=new Set();let page='';do{
+    const r=await call(path(app,table,suffix)+'?page_size=100&user_id_type=open_id'+(page?'&page_token='+enc(page):'')),d=r.data;
+    // Empty record tables can omit items. Require explicit empty pagination;
+    // never interpret an absent payload or failed page as zero equipment.
+    const empty=suffix==='/records'&&!page&&d?.items==null&&d.total===0&&d.has_more===false;
+    if(!d||!Array.isArray(d.items)&&!empty)throw Object.assign(authError(503,'飞书返回的数据不完整'),{code:'FINANCE_LIST_INCOMPLETE',diagnostic:{resource:suffix,keys:Object.keys(d||{}),itemsType:d?.items===null?'null':typeof d?.items,total:d?.total,hasMore:d?.has_more}});
+    items.push(...(d.items||[]));if(d.has_more===false)break;
+    if(d.has_more!==true)throw authError(503,'飞书分页状态不完整');
+    page=d.page_token;if(!page||seen.has(page))throw authError(503,'飞书分页不完整');seen.add(page);
+  }while(true);return items;}
   async function uuid(key){const hex=await stableMessageUuid(key);return hex.slice(0,8)+'-'+hex.slice(8,12)+'-4'+hex.slice(13,16)+'-a'+hex.slice(17,20)+'-'+hex.slice(20);}
   async function putRecord(app,table,fields,id,op){const r=await write(app,table,'/records'+(id?'/'+enc(id):'')+'?user_id_type=open_id'+(!id?'&client_token='+await uuid(op):''),id?'PUT':'POST',{fields});const record=r.data?.record;if(!record?.record_id)throw authError(503,'飞书写入结果未确认');return record;}
   async function snapshot(app,table){return {app,table,fields:await list(app,table,'/fields'),records:await list(app,table,'/records')};}
@@ -36,7 +45,8 @@ export async function financeService(env, injected={}) {
     }).map(r=>({id:r.record_id,reimbursed:r.fields['已报销']===true||text(r.fields['已报销'])==='是'}))}));
   }
   async function privateAcl(){
-    const r=await call('/drive/v1/permissions/'+finance.obj_token+'/public?type=bitable');
+    // Sharing belongs to the wiki node; use its matching token/type pair.
+    const r=await call('/drive/v2/permissions/'+enc(FINANCE_WIKI)+'/public?type=wiki');
     const p=r.data?.permission_public || r.data?.permission || r.data;
     return {externalAccess:p?.external_access,linkSharing:p?.link_share_entity,raw:p};
   }

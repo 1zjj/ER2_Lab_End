@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { financeService } from './src/finance-feishu.js';
-import { SOURCE,EQUIPMENT,F,devicePayload } from './src/finance-policy.js';
+import { SOURCE,EQUIPMENT,FINANCE_WIKI,F,devicePayload } from './src/finance-policy.js';
 class Storage {
  data=new Map();async get(k){return Array.isArray(k)?new Map(k.filter(x=>this.data.has(x)).map(x=>[x,structuredClone(this.data.get(x))])):structuredClone(this.data.get(k));}
  async put(k,v){this.data.set(k,structuredClone(v));}async delete(k){return this.data.delete(k);}async list({prefix=''}){return new Map([...this.data].filter(([k])=>k.startsWith(prefix)).map(([k,v])=>[k,structuredClone(v)]));}
@@ -38,3 +38,21 @@ assert.equal(archive.data.get('finance:tblclaim').size,1);assert.equal(archive.d
 // An old ambiguous archive retry adopts the unique receipt rather than creating again.
 await archive.storage.delete('mirror:'+d.id);await archive.storage.put('archive-intent:mirror:'+d.id,{startedAt:Date.now()-46*60000});await archive.service.mirror(d,archive.bindings,archive.storage,logs);assert.equal(archive.data.get('finance:tblclaim').size,1);assert.ok(archive.calls.some(c=>c.path.includes('/records/search')));
 console.log('PASS finance adapter bounded 50-item batches, exact inventory readback, interrupted-write recovery, existing-asset preservation, expired-create protection and archive recovery');
+
+// Explicit empty pagination is valid; incomplete reads must still block migration.
+let listReply={data:{total:0,has_more:false}},readCalls=[];
+const emptyService=await financeService({}, {getTenantToken:async()=>'mock',call:async(path)=>{
+ readCalls.push(path);
+ if(path.startsWith('/wiki/'))return {data:{node:{obj_type:'bitable',obj_token:path.includes(EQUIPMENT.wiki)?'equipment':'finance',space_id:'er2'}}};
+ if(path.startsWith('/drive/'))return {data:{permission_public:{external_access:false,link_share_entity:'closed'}}};
+ return listReply;
+}});
+assert.deepEqual(await emptyService.list('equipment',EQUIPMENT.table,'/records'),[]);
+listReply={data:{items:null,total:0,has_more:false}};assert.deepEqual(await emptyService.list('equipment',EQUIPMENT.table,'/records'),[]);
+for(const data of [{},{has_more:false},{total:1,has_more:false},{items:[],has_more:true},{items:[]},{items:null,total:0,has_more:true}]){
+ listReply={data};await assert.rejects(emptyService.list('equipment',EQUIPMENT.table,'/records'));
+}
+listReply={data:{total:0,has_more:false}};await assert.rejects(emptyService.list('equipment',EQUIPMENT.table,'/fields'));
+assert.deepEqual(await emptyService.privateAcl(),{externalAccess:false,linkSharing:'closed',raw:{external_access:false,link_share_entity:'closed'}});
+assert.ok(readCalls.includes('/drive/v2/permissions/'+FINANCE_WIKI+'/public?type=wiki'));
+console.log('PASS explicit empty record pagination and wiki-node permission lookup; incomplete reads remain blocked');
