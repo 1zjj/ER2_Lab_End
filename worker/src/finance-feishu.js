@@ -4,16 +4,18 @@ import { SOURCE, EQUIPMENT, FINANCE_WIKI, F, devicePayload, legacyDeviceName } f
 
 const enc=encodeURIComponent;
 export async function financeService(env, injected={}) {
+  const target=env.FINANCE_EQUIPMENT_BINDING || EQUIPMENT;
+  if(!/^[A-Za-z0-9]+$/.test(target.wiki||'')||!/^tbl[A-Za-z0-9]+$/.test(target.table||''))throw authError(503,'设备绑定无效');
   const token=await (injected.getTenantToken||getTenantToken)(env);
   const call=injected.call || ((path,method='GET',body)=>feishuRequest(path,{method,bearer:token,body,strictWeeklyWrite:method==='POST'&&/\/records(?:\?|$)/.test(path)}));
   async function node(wiki){const r=await call('/wiki/v2/spaces/get_node?token='+enc(wiki));const n=r.data?.node;if(n?.obj_type!=='bitable'||!n.obj_token)throw authError(503,'目标不是可访问的多维表格');return n;}
-  const finance=await node(FINANCE_WIKI),equipment=await node(EQUIPMENT.wiki);
+  const finance=await node(FINANCE_WIKI),equipment=await node(target.wiki);
   if(finance.obj_token===equipment.obj_token||finance.space_id!==equipment.space_id)throw authError(503,'预算报销与设备目标绑定不匹配');
   const allowed=new Set([finance.obj_token,equipment.obj_token]);
   function path(app,table='',suffix=''){if(!/^[A-Za-z0-9]+$/.test(app)||table&&!/^tbl[A-Za-z0-9]+$/.test(table))throw authError(503,'数据绑定无效');return '/bitable/v1/apps/'+app+(table?'/tables/'+table:'')+suffix;}
   let financeTables;
   async function write(app,table,suffix,method,body){
-    if(!allowed.has(app)||app===equipment.obj_token&&table!==EQUIPMENT.table)throw authError(403,'禁止修改ER2预算报销范围之外的数据');
+    if(!allowed.has(app)||app===equipment.obj_token&&(!env.FINANCE_EQUIPMENT_BINDING||table!==target.table))throw authError(403,'禁止修改ER2预算报销范围之外的数据');
     if(app===finance.obj_token){
       const names=new Set(Object.values(F).map(s=>s.name));
       if(!table){if(suffix!=='/tables'||method!=='POST'||!names.has(body?.table?.name))throw authError(403,'只能创建指定财务表');}
@@ -38,7 +40,7 @@ export async function financeService(env, injected={}) {
   async function snapshot(app,table){return {app,table,fields:await list(app,table,'/fields'),records:await list(app,table,'/records')};}
   async function getRecord(app,table,id){const r=await call(path(app,table,'/records/'+enc(id))+'?user_id_type=open_id');if(!r.data?.record?.record_id)throw authError(503,'设备读取结果不完整');return r.data.record;}
   async function equipmentMatches(doc){
-    const rows=await list(equipment.obj_token,EQUIPMENT.table,'/records');
+    const rows=await list(equipment.obj_token,target.table,'/records');
     const text=v=>Array.isArray(v)?v.map(x=>x.text||'').join(''):String(v??'');
     return doc.lines.map((line,index)=>({index,name:line.name,records:rows.filter(r=>{
       const f=r.fields||{};return text(f['文本']).trim()===line.name.trim()&&Number(text(f['数量']))===Number(line.quantity)&&Number(text(f['采购价格（单价）']))===Number(line.unitPrice)&&Number(f['采购日期'])===Date.parse(line.purchaseDate+'T00:00:00+08:00');
@@ -48,7 +50,11 @@ export async function financeService(env, injected={}) {
     // Sharing belongs to the wiki node; use its matching token/type pair.
     const r=await call('/drive/v2/permissions/'+enc(FINANCE_WIKI)+'/public?type=wiki');
     const p=r.data?.permission_public || r.data?.permission || r.data;
-    return {externalAccess:p?.external_access,linkSharing:p?.link_share_entity,raw:p};
+    // Drive v2 uses an enum; unknown or conflicting values must remain blocked.
+    const entity=p?.external_access_entity;
+    const externalAccess=entity==='open'||p?.external_access===true?true:
+      entity==='closed'||(entity===undefined&&p?.external_access===false)?false:undefined;
+    return {externalAccess,linkSharing:p?.link_share_entity,raw:p};
   }
   async function ensureFinanceTables(storage){
     const tables=await list(finance.obj_token,'','/tables');const bindings={};
@@ -101,30 +107,32 @@ export async function financeService(env, injected={}) {
     return true;
   }
   async function inventory(doc,storage,limit=4){
-    const fields=await list(equipment.obj_token,EQUIPMENT.table,'/fields');let processed=0;
+    if(!['approved','sync_error'].includes(doc.status)||!doc.approvedBy||!doc.approvedAt)throw authError(409,'设备入库需要已确认的财务审核记录');
+    const fields=await list(equipment.obj_token,target.table,'/fields');let processed=0;
     for(let i=0;i<doc.lines.length;i++){
-      const key='asset:'+doc.id+':'+i;let saved=await storage.get(key);if(saved?.verified)continue;if(processed++>=limit)return false;
+      const key='asset:'+doc.id+':'+i;let saved=await storage.get(key);if(saved?.target && (saved.target.wiki!==target.wiki||saved.target.table!==target.table))throw authError(409,'设备目标与已有入库记录不一致，已停止处理');if(saved?.verified)continue;if(processed++>=limit)return false;
       const fieldsToWrite={...devicePayload(doc.lines[i],doc.owner,fields),...legacyDeviceName(doc.lines[i].name,fields)};
       const intent='intent:'+key;let operation=await storage.get(intent);
-      if(!operation){operation={uuid:await uuid(key),startedAt:Date.now(),payload:fieldsToWrite};await storage.put(intent,operation);}
+      if(operation?.target && (operation.target.wiki!==target.wiki||operation.target.table!==target.table))throw authError(409,'设备目标与原写入意图不一致，已停止处理');
+      if(!operation){operation={target,uuid:await uuid(key),startedAt:Date.now(),payload:fieldsToWrite};await storage.put(intent,operation);}
       // Never repeat an ambiguous create outside Feishu's short deduplication window.
       if(!saved){
         if(Date.now()-operation.startedAt>45*60000)throw authError(409,'设备写入结果需要人工核对，系统已停止重复创建');
-        const result=await putRecord(equipment.obj_token,EQUIPMENT.table,operation.payload,'',key);
-        saved={recordId:result.record_id,createdAt:new Date().toISOString(),verified:false};await storage.put(key,saved);
+        const result=await putRecord(equipment.obj_token,target.table,operation.payload,'',key);
+        saved={target,recordId:result.record_id,createdAt:new Date().toISOString(),verified:false};await storage.put(key,saved);
       }
       if(saved.needsUpdate){
         const candidate=(await equipmentMatches({lines:[doc.lines[i]]}))[0].records.find(r=>r.id===saved.recordId);
         if(!candidate)throw authError(409,'待关联设备的采购信息已经变化，已停止自动更新');
         if(candidate.reimbursed&&!saved.updateStarted)throw authError(409,'待关联设备已经报销，请核对是否重复');
         saved.updateStarted=true;await storage.put(key,saved);
-        await putRecord(equipment.obj_token,EQUIPMENT.table,operation.payload,saved.recordId,key);
+        await putRecord(equipment.obj_token,target.table,operation.payload,saved.recordId,key);
         saved.needsUpdate=false;await storage.put(key,saved);
       }
-      const record=await getRecord(equipment.obj_token,EQUIPMENT.table,saved.recordId);
+      const record=await getRecord(equipment.obj_token,target.table,saved.recordId);
       const normalize=(value,name)=>name==='采购经办人'?(value||[]).map(v=>v.id).sort().join(','):Array.isArray(value)?value.map(v=>v.text??v).join(''):String(value??'');
       for(const [name,value]of Object.entries(operation.payload))if(normalize(record.fields?.[name],name)!==normalize(value,name))throw authError(409,'设备写入后的字段核验不一致，请财务核对：'+name);
-      await storage.put(key,{...saved,verified:true});
+      await storage.put(key,{...saved,target,verified:true});
     }return true;
   }
   async function upload(file){return uploadTo(file,finance.obj_token,false);}
@@ -140,6 +148,6 @@ export async function financeService(env, injected={}) {
   }
   async function download(fileToken){const r=await fetch('https://open.feishu.cn/open-apis/drive/v1/medias/'+enc(fileToken)+'/download',{headers:{Authorization:'Bearer '+token},signal:AbortSignal.timeout(60000)});if(!r.ok)throw authError(503,'资料暂时无法下载');return r;}
   async function notify(openId,text,id){return call('/im/v1/messages?receive_id_type=open_id','POST',{receive_id:openId,msg_type:'text',content:JSON.stringify({text}),uuid:await stableMessageUuid('finance:'+id)});}
-  return {finance,equipment,token,node,list,write,snapshot,getRecord,equipmentMatches,privateAcl,ensureFinanceTables,mirror,inventory,upload,uploadEquipmentMedia,download,notify,putRecord,
+  return {finance,equipment,target,token,node,list,write,snapshot,getRecord,equipmentMatches,privateAcl,ensureFinanceTables,mirror,inventory,upload,uploadEquipmentMedia,download,notify,putRecord,
     sourceSnapshot:async()=>{const source=await node(SOURCE.wiki);if(allowed.has(source.obj_token)||source.space_id===equipment.space_id)throw authError(503,'来源与ER2目标必须独立');return snapshot(source.obj_token,SOURCE.table);}};
 }

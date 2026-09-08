@@ -8,9 +8,9 @@ class Storage{
  data=new Map();async get(k){return Array.isArray(k)?new Map(k.filter(k=>this.data.has(k)).map(k=>[k,structuredClone(this.data.get(k))])):structuredClone(this.data.get(k));}async put(k,v){this.data.set(k,structuredClone(v));}async delete(k){return this.data.delete(k);}async list({prefix='',startAfter='',limit=1000}={}){return new Map(structuredClone([...this.data].filter(([k])=>k.startsWith(prefix)&&k>startAfter).sort(([a],[b])=>a<b?-1:1).slice(0,limit)));}async setAlarm(){}async transaction(fn){const old=structuredClone(this.data);try{return await fn(this);}catch(e){this.data=old;throw e;}}
 }
 const context=sub=>{const actor=financeActor(people,sub);return {actor,people,access:financeAccess(actor,people,env)};};
-const storage=new Storage();await storage.put('settings',{ready:true});
+const storage=new Storage();await storage.put('settings',{ready:true,equipmentBinding:EQUIPMENT,equipmentVerified:EQUIPMENT});
 const fields=[['文本',1],['数量',1],['采购价格（单价）',2],['采购日期',5],['采购经办人',11],['采购进度',3],['已报销',3]].map(([field_name,type])=>({field_name,type,property:{options:[{name:'完成采购'},{name:'是'}]}}));
-let assets=0;const service={equipmentMatches:async d=>d.lines.map((l,index)=>({index,name:l.name,records:[]})),privateAcl:async()=>({externalAccess:false,linkSharing:'closed'}),equipment:{obj_token:'equipment'},list:async()=>fields,inventory:async(d,s)=>{for(let i=0;i<d.lines.length;i++)if(!await s.get('asset:'+d.id+':'+i)){assets++;await s.put('asset:'+d.id+':'+i,{recordId:'recasset'+assets});}return true;},mirror:async()=>{}};
+let assets=0;const service={equipmentMatches:async d=>d.lines.map((l,index)=>({index,name:l.name,records:[]})),privateAcl:async()=>({externalAccess:false,linkSharing:'closed'}),equipment:{obj_token:'equipment'},target:EQUIPMENT,list:async()=>fields,inventory:async(d,s)=>{for(let i=0;i<d.lines.length;i++)if(!await s.get('asset:'+d.id+':'+i)){assets++;await s.put('asset:'+d.id+':'+i,{recordId:'recasset'+assets});}return true;},mirror:async()=>{}};
 const run=(sub,path,body)=>executeFinance(new Request('https://worker.test/api/finance'+path,body?{method:'POST',body:JSON.stringify(body)}:{}),env,storage,async()=>context(sub),async()=>service).then(r=>r.json());
 const draft={kind:'claim',lines:[{name:'传感器',quantity:'2',unitPrice:'99.50',purchaseDate:'2026-08-25'}],requestId:'finance-valid-request',submit:true};
 assert.equal(context('ou_finance').access.canReview,true);assert.equal(context('ou_other').access.canReview,false);assert.equal(context('ou_pi').access.canReview,false);assert.equal(context('ou_admin').access.canReview,true);
@@ -43,12 +43,12 @@ people[2].fields['人员状态']='离组';await assert.rejects(run('ou_student',
 const own=await run('ou_finance','/save',{...draft,requestId:'finance-own-expense'});await assert.rejects(run('ou_finance','/review',{id:own.document.id,revision:1,action:'approve',requestId:'finance-self-approve'}),e=>e.status===403);
 await assert.rejects(run('ou_student','/save',{...draft,requestId:'finance-other-attachment',attachmentIds:['not-your-attachment']}),e=>e.status===403);
 // Production service enforces the exact permitted tables before any mutation.
-const calls=[];const api=await financeService(env,{getTenantToken:async()=>'mock',call:async(path,method='GET',body)=>{calls.push({path,method,body});if(path.startsWith('/wiki/')){const wiki=new URL('https://x'+path).searchParams.get('token');return {data:{node:{obj_type:'bitable',obj_token:wiki===SOURCE.wiki?'source':wiki===EQUIPMENT.wiki?'equipment':'finance',space_id:wiki===SOURCE.wiki?'joey':'er2'}}};}if(path.endsWith('/tables?page_size=100&user_id_type=open_id'))return {data:{items:[],has_more:false}};return {data:{items:[],has_more:false}};}});
+const calls=[];const api=await financeService({...env,FINANCE_EQUIPMENT_BINDING:EQUIPMENT},{getTenantToken:async()=>'mock',call:async(path,method='GET',body)=>{calls.push({path,method,body});if(path.startsWith('/wiki/')){const wiki=new URL('https://x'+path).searchParams.get('token');return {data:{node:{obj_type:'bitable',obj_token:wiki===SOURCE.wiki?'source':wiki===EQUIPMENT.wiki?'equipment':'finance',space_id:wiki===SOURCE.wiki?'joey':'er2'}}};}if(path.endsWith('/tables?page_size=100&user_id_type=open_id'))return {data:{items:[],has_more:false}};return {data:{items:[],has_more:false}};}});
 await assert.rejects(api.write('source',SOURCE.table,'/records','POST',{}),e=>e.status===403);
 await assert.rejects(api.write('equipment','tblMA67apVlRRQbn','/records','POST',{}),e=>e.status===403);
 await assert.rejects(api.write('finance','tblLegacy','/records','POST',{}),e=>e.status===403);
 await api.sourceSnapshot();assert.equal(calls.filter(c=>c.method!=='GET').length,0);
-const reminders=new Storage();await reminders.put('settings',{ready:true,reminders:true});
+const reminders=new Storage();await reminders.put('settings',{ready:true,reminders:true,equipmentBinding:EQUIPMENT,equipmentVerified:EQUIPMENT});
 await prepareFinanceReminders(Date.parse('2026-09-20T02:00:00Z'),env,reminders,async()=>people);
 const firstCount=[...reminders.data.keys()].filter(k=>k.startsWith('job:')).length;assert.equal(firstCount,5);
 await prepareFinanceReminders(Date.parse('2026-09-20T02:00:00Z'),env,reminders,async()=>people);assert.equal([...reminders.data.keys()].filter(k=>k.startsWith('job:')).length,firstCount);
@@ -56,3 +56,11 @@ await prepareFinanceReminders(Date.parse('2026-09-27T02:00:00Z'),env,reminders,a
 await prepareFinanceReminders(Date.parse('2027-01-01T02:00:00Z'),env,reminders,async()=>people);const digest=[...reminders.data.values()].find(v=>v.kind==='monthly'&&v.text.includes('2026-12'));assert.equal(digest.recipient,'ou_pi');
 console.log('PASS finance reminder schedules, active recipients, deduplication and year-boundary monthly summary');
 console.log('PASS finance required fields, money mapping, private access, self-approval denial, return/resubmit, idempotency, role revocation, attachment ownership and exact write scope');
+
+const failed=await run('ou_student','/save',{...draft,requestId:'failed-inventory-claim'});
+await run('ou_finance','/review',{id:failed.document.id,revision:1,action:'approve',requestId:'review-failed-inventory'});
+for(const [k]of storage.data)if(k.startsWith('job:notice'))storage.data.delete(k);
+await processFinanceJobs(env,storage,async()=>({...service,inventory:async()=>{throw new Error('write interrupted');}}));
+assert.equal((await storage.get('doc:'+failed.document.id)).status,'sync_error','failed writes cannot be reported completed');
+await assert.rejects(run('ou_finance','/review',{id:failed.document.id,revision:1,action:'approve',requestId:'second-distinct-review'}),e=>e.status===409);
+console.log('PASS failed inventory never reports completion and distinct repeat approval is rejected');
