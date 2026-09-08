@@ -1,3 +1,5 @@
+import { mockWeeklyCoordinator } from './test-weekly-coordinator.mjs';
+import { weeklyRevision } from './src/weekly-history.js';
 import { WEEKLY_FIELDS } from './src/weekly-write.js';
 import assert from 'node:assert/strict';
 import service from './src/runtime.js';
@@ -27,6 +29,7 @@ const relation = (pid, prj, extra = {}) => ({ record_id: 'rec-rel' + pid + '-' +
 } });
 let people, projects, relations, rows, writes, failRead, recordResponses, weeklyColumns;
 function reset() {
+  env.WEEKLY_WRITES = mockWeeklyCoordinator(env);
   people = [person(1), person(2), person(9, { '系统职责': ['管理员'] }), person(8, { '系统职责': ['管理员'] })];
   projects = [project(1), project(2), project(3, { '项目阶段': '暂停' })];
   relations = [relation(1, 1), relation(2, 2, { '权限级别': '只读' }), relation(9, 1, { '权限级别': '管理', '审批人': [{ id: 'ou_8' }] })];
@@ -69,6 +72,8 @@ async function token(id, extra = {}) {
   return payload + '.' + signature;
 }
 async function call(id, path, method = 'GET', body, config = env) {
+  if (path === '/api/reports' && body && !Object.hasOwn(body, 'baseRevision'))
+    body = { ...body, baseRevision: await weeklyRevision(rows.weekly.find(r => r.fields['飞书OpenID'] === 'ou_' + id)) };
   return service.fetch(new Request('https://api.example' + path, { method, headers: {
     Authorization: 'Bearer ' + await token(id), 'Content-Type': 'application/json'
   }, ...(body ? { body: JSON.stringify(body) } : {}) }), config);

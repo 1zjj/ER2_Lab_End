@@ -737,3 +737,10 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
   .onboarding-banner > .action-row { grid-column: 1 / -1; }
   .onboarding-shortcut { flex-wrap: wrap; gap: 12px; }
 }
+
+/* Weekly history controls are scoped to the history dialog. */
+.history-filters { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; padding: 16px 28px; border-bottom: 1px solid var(--line); }
+.history-filters label { display: grid; gap: 6px; color: var(--muted); font-size: 14px; }
+.history-filters select, .history-filters input { width: 145px; min-height: 42px; border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; background: #fff; color: var(--ink); font: inherit; }
+.history-filters p { width: 100%; margin: 0; color: var(--muted); font-size: 14px; }
+@media (max-width: 600px) { .history-filters { padding: 14px 18px; gap: 10px; } .history-filters select, .history-filters input { width: 120px; } }

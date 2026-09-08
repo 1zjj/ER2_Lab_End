@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "node release.mjs --apply",
-    "test": "node test.mjs && node digest.test.mjs && node v2.test.mjs && node oauth-retry.test.mjs && node student-home.test.mjs && node authorization.test.mjs && node weekly-write.test.mjs && node weekly-ui.test.mjs && node weekly-consolidation.test.mjs && node weekly-stability.test.mjs && node weekly-automation-setup.test.mjs && node release-checks.test.mjs && node capabilities.test.mjs && node release-flow.test.mjs",
+    "test": "node test.mjs && node digest.test.mjs && node v2.test.mjs && node oauth-retry.test.mjs && node student-home.test.mjs && node authorization.test.mjs && node weekly-write.test.mjs && node weekly-ui.test.mjs && node weekly-consolidation.test.mjs && node weekly-stability.test.mjs && node weekly-automation-setup.test.mjs && node release-checks.test.mjs && node capabilities.test.mjs && node release-flow.test.mjs && node weekly-save-history.test.mjs && node weekly-runtime.test.mjs && node release-weekly-bootstrap.test.mjs",
     "release:check": "node release.mjs"
   },
   "devDependencies": {

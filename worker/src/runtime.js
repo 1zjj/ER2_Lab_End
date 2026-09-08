@@ -1,3 +1,4 @@
+export { WeeklyWriteCoordinator } from './weekly-coordinator.js';
 import { WEEKLY_VERSION } from './weekly-write.js';
 import legacy from './index.js';
 import { runProfessorDigest, DIGEST_VERSION } from './professor-digest.js';
@@ -83,11 +84,19 @@ export default {
     const members = deep.tables?.members || {};
     const weekly = deep.tables?.weekly || {};
     const discovery = deep.discovery || {};
+    let coordinatedWrites = false;
+    try {
+      const probe = env.WEEKLY_WRITES.get(env.WEEKLY_WRITES.idFromName('health'));
+      const result = await probe.fetch(new Request('https://internal/_weekly-storage-check'));
+      coordinatedWrites = result.ok && (await result.json()).ok === true;
+    } catch (_) { /* Missing binding/storage is reported without exposing metadata. */ }
     const headers = new Headers(response.headers);
     return new Response(JSON.stringify({
       ...body,
       release: BUILD_INFO,
-      capabilities: { courses: courseCapabilities(env) },
+      capabilities: { courses: courseCapabilities(env), weekly: {
+        version: 'weekly-save-history-v1', coordinatedWrites, historyPagination: true
+      } },
       coreReady: body.authConfigured === true && body.dataConfigured === true && deep.ok === true &&
         AUTH_BINDINGS.every(key => { try { strictBinding(env, key); return true; } catch (_) { return false; } }),
       securityPatch: 'p0-20260907-2',

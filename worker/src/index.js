@@ -1,3 +1,4 @@
+import { weeklyHash, weeklyRevision, weeklyDates, historyPage } from './weekly-history.js';
 import { evidenceText, serializeWeekly, weeklyValues, weeklyMatches, weeklyCompatibility, WEEKLY_VERSION } from './weekly-write.js';
 import { weeklyRoster, isWeeklySubmitted, hasWeeklyIssue, weeklyAutomationConfiguration } from './weekly-policy.js';
 import { recordPage } from './feishu-record-page.js';
@@ -75,9 +76,10 @@ export default {
         return json(request, env, { code: 'COURSE_UNAVAILABLE', message: '课程提交暂未开放，请在本周工作记录中填写学习与方法。' }, 503);
       if (url.pathname === '/api/admin/weekly-source' && request.method === 'GET') return await weeklySource(request, env, session);
       if (/^\/api\/projects(?:\/|$)/.test(url.pathname)) return await projectApi(request, env, session);
+      if (url.pathname === '/api/reports/history' && request.method === 'GET') return await reportHistory(request, env, session);
       if (url.pathname === '/api/weekly' && request.method === 'GET') return await weeklyPage(request, env, session);
       if (url.pathname === '/api/dashboard' && request.method === 'GET') return await dashboard(request, env, session);
-      if (url.pathname === '/api/reports' && request.method === 'POST') return await saveReport(request, env, session);
+      if (url.pathname === '/api/reports' && request.method === 'POST') return await coordinateWeeklySave(request, env, session);
       if (url.pathname === '/api/literature' && request.method === 'GET') return await getLiterature(request, env, session);
       if (url.pathname === '/api/literature' && request.method === 'POST') return await saveLiterature(request, env, session);
       if (url.pathname === '/api/teacher/review' && request.method === 'POST') return await saveTeacherReview(request, env, session);
@@ -87,7 +89,7 @@ export default {
       return json(request, env, { message: '接口不存在' }, 404);
     } catch (error) {
       const status = Number(error.status || 500);
-      const messages = { WEEKLY_SCHEMA_MISMATCH: '周报存储字段尚未统一，请联系管理员完成配置', WEEKLY_EVIDENCE_COLUMN_TYPE: '产出字段仍是旧的单链接类型，暂不能保存说明和多个链接', WEEKLY_BINDING_MISSING: '周报存储尚未配置', WEEKLY_READBACK_FAILED: '保存请求已处理，但尚未确认读回结果；请保留草稿后重试' };
+      const messages = { WEEKLY_COORDINATOR_MISSING: '周报保存保护尚未就绪，请稍后重试', WEEKLY_WRITE_UNCERTAIN: '上次保存结果仍在核对，草稿已保留；请稍后重试，若持续出现请联系管理员', WEEKLY_SCHEMA_MISMATCH: '周报存储字段尚未统一，请联系管理员完成配置', WEEKLY_EVIDENCE_COLUMN_TYPE: '产出字段仍是旧的单链接类型，暂不能保存说明和多个链接', WEEKLY_BINDING_MISSING: '周报存储尚未配置', WEEKLY_READBACK_FAILED: '保存请求已处理，但尚未确认读回结果；请保留草稿后重试' };
       const message = status >= 500 ? (messages[error.code] || (error.binding ? '数据读取失败（' + error.binding.replace('_TABLE_ID', '') + '），请将下方诊断编号提供给管理员' : '服务暂时不可用，请稍后重试')) : error.message;
       if (status >= 500) console.error(error);
       return json(request, env, { message, code: error.code || (error.binding ? 'TABLE_READ_FAILED' : 'REQUEST_FAILED'), requestId: requestIds.get(request) || '' }, status);
@@ -181,7 +183,7 @@ async function dashboard(request, env, session) {
   const permittedReports = reportRecords.filter(allowedResource);
   const permittedCourses = courseRecords.filter(allowedResource);
   const permittedLinks = linkRecords.filter(allowedResource);
-  const student = buildStudent(session, currentWeek, permittedReports, permittedProjects, permittedCourses, taskRecords.filter(allowedResource), permittedLinks);
+  const student = await buildStudent(session, currentWeek, permittedReports, permittedProjects, permittedCourses, taskRecords.filter(allowedResource), permittedLinks);
   student.projects = permittedProjects.map(record => projectView(record, session));
   const teacher = buildTeacher(session, currentWeek, members, permittedReports, permittedCourses, env);
   const manager = session.roles.includes('manager')
@@ -358,6 +360,7 @@ function reportValues(record) { return weeklyValues(record); }
 
 function normalizeReport(record) {
   return {
+    ...weeklyDates(record),
     recordId: record.record_id || '',
     weekId: clean(field(record, '周次', 'WeekID')),
     weekNumber: field(record, '周序号') || '',
@@ -546,7 +549,7 @@ function buildOnboarding(session, records) {
   };
 }
 
-function buildStudent(session, week, reports, projects, courses, tasks, links) {
+async function buildStudent(session, week, reports, projects, courses, tasks, links) {
   reports = reports.filter(isWeeklySubmitted);
   const mine = (record) => String(field(record, '飞书OpenID', '人员OpenID', 'OpenID')) === String(session.sub);
   const currentReport = reports.find((record) => mine(record) && String(field(record, '周次', 'WeekID')) === week.id);
@@ -567,6 +570,8 @@ function buildStudent(session, week, reports, projects, courses, tasks, links) {
   return {
     onboarding: buildOnboarding(session, courses),
     report: {
+      revision: await weeklyRevision(currentReport),
+      recordId: currentReport?.record_id || '',
       status: currentReport ? 'submitted' : 'pending',
       label: currentReport ? '已提交' : '未提交',
       values: currentReport ? reportValues(currentReport) : {},
@@ -894,7 +899,7 @@ async function weeklyPage(request, env, session) {
   const reports = records.filter(record => !hasProjectScope(record) || canProject(session, businessProjectId(record)));
   const members = people.flatMap(record => { try { const member = authority(people, [], [], identity(record)); return [{ ...member, openId: member.sub }]; } catch (_) { return []; } });
   const week = weekInfo(new Date());
-  const student = buildStudent(session, week, reports, [], [], [], []);
+  const student = await buildStudent(session, week, reports, [], [], [], []);
   const teacher = buildTeacher(session, week, members, reports, [], env);
   return json(request, env, { weeklyOnly: true, weeklyVersion: WEEKLY_VERSION,
     profile: { sub: session.sub, personId: session.personId, name: session.name, roles: session.roles }, week,
@@ -939,7 +944,45 @@ async function weeklySource(request, env, session) {
     schema: weeklyCompatibility(await weeklySchema(app, binding.tableId, token)) });
 }
 
-async function saveReport(request, env, session) {
+async function coordinateWeeklySave(request, env, session) {
+  if (!env.WEEKLY_WRITES?.idFromName || !env.WEEKLY_WRITES?.get)
+    throw Object.assign(httpError(503, '周报保存保护尚未就绪'), { code: 'WEEKLY_COORDINATOR_MISSING' });
+  const binding = resolveTableBinding(env, 'WEEKLY_TABLE_ID');
+  const key = await weeklyHash([binding.appToken || binding.wikiToken, binding.tableId, session.personId]);
+  return env.WEEKLY_WRITES.get(env.WEEKLY_WRITES.idFromName(key)).fetch(request);
+}
+
+// This function is called only by the bound coordinator, not by an HTTP route.
+export async function executeWeeklyRequest(request, env, storage) {
+  try {
+    if (request.method !== 'POST' || new URL(request.url).pathname !== '/api/reports') throw httpError(404, '接口不存在');
+    const session = await requireActiveMember(env, await requireSession(request, env));
+    return await saveReport(request, env, session, storage);
+  } catch (error) {
+    // Preserve the existing public error handling without exposing Feishu data.
+    const messages = { WEEKLY_WRITE_UNCERTAIN: '上次保存结果仍在核对，草稿已保留；请稍后重试，若持续出现请联系管理员',
+      WEEKLY_READBACK_FAILED: '保存请求已处理，但尚未确认读回结果；请保留草稿后重试',
+      WEEKLY_SCHEMA_MISMATCH: '周报存储字段尚未统一，请联系管理员完成配置',
+      WEEKLY_EVIDENCE_COLUMN_TYPE: '产出字段仍是旧的单链接类型，暂不能保存说明和多个链接' };
+    const status = Number(error.status || 500);
+    return json(request, env, { code: error.code || 'REQUEST_FAILED',
+      message: status >= 500 ? messages[error.code] || '周报暂时无法保存，草稿已保留，请稍后重试' : error.message }, status);
+  }
+}
+
+async function reportHistory(request, env, session) {
+  const binding = resolveTableBinding(env, 'WEEKLY_TABLE_ID');
+  if (!binding.tableId || !(binding.appToken || binding.wikiToken))
+    throw Object.assign(httpError(503, '周报尚未配置'), { code: 'WEEKLY_BINDING_MISSING' });
+  const records = await listRecords(env, await getTenantToken(env), 'WEEKLY_TABLE_ID');
+  const mine = records.filter(r => isWeeklySubmitted(r) &&
+    String(field(r, '飞书OpenID', '人员OpenID', 'OpenID')) === session.sub &&
+    (!hasProjectScope(r) || canProject(session, businessProjectId(r))));
+  const { records: page, ...pagination } = historyPage(mine, new URL(request.url).searchParams);
+  return json(request, env, { ...pagination, reports: page.map(normalizeReport) });
+}
+
+async function saveReport(request, env, session, storage) {
   if (!session.roles.includes('student')) throw httpError(403, '只有学生账号可以提交本人周报');
   const body = await readJson(request);
   const businessRequestId = requestBusinessId(request, body, 'weekly');
@@ -955,14 +998,46 @@ async function saveReport(request, env, session) {
 
   const currentWeek = weekInfo(new Date());
   if (body.weekId && body.weekId !== currentWeek.id) throw httpError(400, '只能提交当前周记录');
+  const durableStorage = storage;
+  storage = { get: key => durableStorage.get(currentWeek.id + ':' + key),
+    put: (key, value) => durableStorage.put(currentWeek.id + ':' + key, value),
+    delete: key => durableStorage.delete(currentWeek.id + ':' + key) };
+  if (body.baseRevision != null && (typeof body.baseRevision !== 'string' || body.baseRevision.length > 64))
+    throw httpError(400, '周报版本信息无效，请刷新页面');
+  const values = { progress: clean(body.progress), learning: clean(body.learning), evidence: clean(body.evidence),
+    blockers: clean(body.blockers), nextPlan: clean(body.nextPlan) };
+  const payloadHash = await weeklyHash(values);
+  const receiptKey = 'receipt:' + await weeklyHash(businessRequestId);
   const tenantToken = await getTenantToken(env);
   const records = await listRecords(env, tenantToken, 'WEEKLY_TABLE_ID');
-  const sameWeek = records.filter((record) =>
-    String(field(record, '飞书OpenID', '人员OpenID', 'OpenID')) === String(session.sub) &&
-    String(field(record, '周次', 'WeekID')) === currentWeek.id
-  );
+  const sameWeek = records.filter(record => String(field(record, '飞书OpenID', '人员OpenID', 'OpenID')) === session.sub &&
+    String(field(record, '周次', 'WeekID')) === currentWeek.id);
   if (sameWeek.length > 1) throw httpError(409, '本周存在重复周报，请管理员先合并记录');
   const existing = sameWeek[0];
+  if (existing) requireResource(session, existing, 'edit');
+  const success = async (record, updated, deduplicated = false) => json(request, env, {
+    ok: true, weekId: currentWeek.id, updated, deduplicated, readBackVerified: true,
+    report: { ...normalizeReport(record), revision: await weeklyRevision(record) }
+  });
+  const pending = await storage.get('pending');
+  if (pending) {
+    // An upstream timeout is not proof that a create failed. Never issue a
+    // second create until the first request has been found and verified.
+    if (!existing || clean(field(existing, '请求ID')) !== pending.requestId ||
+        await weeklyHash(reportValues(existing)) !== pending.hash || !isWeeklySubmitted(existing))
+      throw Object.assign(httpError(503, '上次保存结果未确认'), { code: 'WEEKLY_WRITE_UNCERTAIN' });
+    await storage.put('receipt:' + await weeklyHash(pending.requestId), { hash: pending.hash, recordId: existing.record_id });
+    await storage.delete('pending');
+  }
+  const receipt = await storage.get(receiptKey);
+  if (receipt && receipt.hash !== payloadHash) throw httpError(409, '这次提交内容已变化，请重新打开本周记录后提交');
+  if (existing && isWeeklySubmitted(existing) && weeklyMatches(reportValues(existing), values)) {
+    await storage.put(receiptKey, { hash: payloadHash, recordId: existing.record_id });
+    return success(existing, true, true);
+  }
+  if (receipt) throw httpError(409, '本周记录已被更新，请刷新后核对，当前草稿已保留');
+  if ((body.baseRevision || '') !== await weeklyRevision(existing))
+    throw httpError(409, '本周记录已在其他页面更新，请刷新后核对，当前草稿已保留');
   const fields = {
     '请求ID': businessRequestId,
     '飞书OpenID': session.sub,
@@ -986,15 +1061,23 @@ async function saveReport(request, env, session) {
   const current = await requireActiveMember(env, session);
   if (!current.roles.includes('student')) throw httpError(403, '周报提交资格已撤销');
   if (existing) requireResource(current, existing, 'edit');
-  if (existing) await updateRecord(env, tenantToken, 'WEEKLY_TABLE_ID', existing.record_id, payload);
-  else await createRecord(env, tenantToken, 'WEEKLY_TABLE_ID', payload);
+  // Journal before the non-transactional remote write; survives worker restarts.
+  await storage.put('pending', { requestId: businessRequestId, hash: payloadHash, recordId: existing?.record_id || '', at: Date.now() });
+  try {
+    if (existing) await updateRecord(env, tenantToken, 'WEEKLY_TABLE_ID', existing.record_id, payload, true);
+    else await createRecord(env, tenantToken, 'WEEKLY_TABLE_ID', payload, true);
+  } catch (error) {
+    if (error.weeklyWriteRejected) await storage.delete('pending');
+    throw Object.assign(error, { code: error.weeklyWriteRejected ? error.code : 'WEEKLY_WRITE_UNCERTAIN' });
+  }
   const confirmed = (await listRecords(env, tenantToken, 'WEEKLY_TABLE_ID')).filter(record =>
     String(field(record, '飞书OpenID')) === session.sub && String(field(record, '周次', 'WeekID')) === currentWeek.id);
   if (confirmed.length !== 1 || clean(field(confirmed[0], '请求ID')) !== businessRequestId ||
-      !weeklyMatches(reportValues(confirmed[0]), { progress: clean(body.progress), learning: clean(body.learning),
-        evidence: clean(body.evidence), blockers: clean(body.blockers), nextPlan: clean(body.nextPlan) }))
+      !weeklyMatches(reportValues(confirmed[0]), values))
     throw Object.assign(httpError(503, '周报读回未确认'), { code: 'WEEKLY_READBACK_FAILED' });
-  return json(request, env, { ok: true, weekId: currentWeek.id, updated: Boolean(existing), readBackVerified: true, report: normalizeReport(confirmed[0]) });
+  await storage.put(receiptKey, { hash: payloadHash, recordId: confirmed[0].record_id });
+  await storage.delete('pending');
+  return success(confirmed[0], Boolean(existing));
 }
 
 async function saveTeacherReview(request, env, session) {
@@ -1139,7 +1222,7 @@ async function readTableRecords(env, token, tableBinding) {
   return records;
 }
 
-async function createRecord(env, token, tableBinding, fields) {
+async function createRecord(env, token, tableBinding, fields, strictWeeklyWrite = false) {
   const binding = resolveTableBinding(env, tableBinding);
   const appToken = await resolveBitableAppToken(binding, token);
   const tableId = binding.tableId;
@@ -1147,11 +1230,12 @@ async function createRecord(env, token, tableBinding, fields) {
   return feishuRequest('/bitable/v1/apps/' + appToken + '/tables/' + tableId + '/records', {
     method: 'POST',
     bearer: token,
-    body: { fields }
+    body: { fields },
+    strictWeeklyWrite
   });
 }
 
-async function updateRecord(env, token, tableBinding, recordId, fields) {
+async function updateRecord(env, token, tableBinding, recordId, fields, strictWeeklyWrite = false) {
   const binding = resolveTableBinding(env, tableBinding);
   const appToken = await resolveBitableAppToken(binding, token);
   const tableId = binding.tableId;
@@ -1159,7 +1243,8 @@ async function updateRecord(env, token, tableBinding, recordId, fields) {
   return feishuRequest('/bitable/v1/apps/' + appToken + '/tables/' + tableId + '/records/' + recordId, {
     method: 'PUT',
     bearer: token,
-    body: { fields }
+    body: { fields },
+    strictWeeklyWrite
   });
 }
 
@@ -1198,7 +1283,7 @@ async function feishuRequest(path, options = {}) {
   const headers = { 'Content-Type': 'application/json; charset=utf-8' };
   if (options.bearer) headers.Authorization = 'Bearer ' + options.bearer;
   const method = options.method || 'GET';
-  const maxAttempts = ['GET', 'PUT'].includes(method) || options.retryPost === true ? 3 : 1;
+  const maxAttempts = options.strictWeeklyWrite ? 1 : (['GET', 'PUT'].includes(method) || options.retryPost === true ? 3 : 1);
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     let response;
     try {
@@ -1217,6 +1302,14 @@ async function feishuRequest(path, options = {}) {
       throw httpError(502, '飞书数据接口暂时无响应');
     }
     const result = await response.json().catch(() => ({}));
+    if (options.strictWeeklyWrite) {
+      if (response.ok && result.code === 0 && result.data?.record?.record_id) return result;
+      // Only explicit input/access rejection proves no write. Timeout/data-not-ready
+      // business codes can arrive with HTTP 200/400 and must retain the journal.
+      const rejected = response.status < 500 && response.status !== 429 && typeof result.code === 'number' &&
+        ((result.code >= 1254000 && result.code < 1254100) || [1254302, 1254304, 99991661, 99991663, 99991672].includes(result.code));
+      throw Object.assign(httpError(502, '飞书尚未确认周报保存'), { weeklyWriteRejected: rejected });
+    }
     if (response.ok && (typeof result.code !== 'number' || result.code === 0)) return result;
     const retryable = response.status === 429 || response.status >= 500;
     if (retryable && attempt + 1 < maxAttempts) {

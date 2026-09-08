@@ -20,11 +20,11 @@ async function submit(response, refresh = response, disabled = false) {
   const form = { reportValidity: () => true, reset: () => effects.push('reset') };
   const context = vm.createContext({
     DEMO_MODE: false, state: { session: 'test', dashboard: { week: { id: '2026-W37' }, student: { history: [] } } },
-    elements: { reportForm: form, reportSubmit: { disabled }, reportError: {}, reportDialog: {} },
+    elements: { reportForm: form, reportSubmit: { disabled }, reportError: {}, reportReload: {}, reportDialog: {} },
     FormData: class { entries() { return Object.entries({ progress: '输入正文', nextPlan: '下周计划', evidence }); } },
     request: async path => { if (path === '/api/weekly' && refresh instanceof Error) throw refresh; return path === '/api/weekly' ? refresh : response; }, pendingRequestId: () => 'request-1',
     draftKeys: { report: 'draft' }, draftScope: () => 'week',
-    privateDrafts: { remove: () => effects.push('remove') }, clearDraft: () => effects.push('clear'),
+    privateDrafts: { get: () => '', set() {}, remove() {} }, clearDraft: () => effects.push('clear'),
     closeDialog: () => effects.push('close'), renderActiveView: () => effects.push('render'), showToast: () => effects.push('toast')
   });
   vm.runInContext(extract('  async function submitReport(', '  async function submitLiterature('), context);
@@ -91,7 +91,7 @@ function reopenReport(rawDraft, saved = savedReport) {
   const form = { reset: () => Object.values(fields).forEach(field => { field.value = ''; }),
     elements: { namedItem: name => fields[name] } };
   const context = vm.createContext({ privateDrafts: { get: () => rawDraft }, draftScope: () => '2026-W37', draftKeys: { report: 'report' },
-    elements: { reportForm: form, reportWeekLabel: {}, reportError: {}, reportDialog: {} },
+    elements: { reportForm: form, reportWeekLabel: {}, reportError: {}, reportReload: {}, reportDialog: {} },
     state: { dashboard: { week: { label: '当前周' }, student: { report: { values: saved } } } }, showDialog() {} });
   vm.runInContext(extract('  function restoreDraft(', '  function clearDraft('), context);
   vm.runInContext(extract('  function openReportDialog(', '  function openReportHistory('), context);
@@ -109,3 +109,40 @@ assert.deepEqual(reopenReport(JSON.stringify({ evidence: 'https://example.com/un
 }, 'A partial draft cannot inherit fields from an earlier open dialog');
 assert.deepEqual(reopenReport(null, {}), Object.fromEntries(reportNames.map(name => [name, ''])), 'A fresh week has no stale dialog values');
 console.log('PASS weekly UI: empty drafts show saved reports; meaningful drafts and intentionally empty fields are preserved');
+
+// Responses from an earlier query/account must never replace the active history.
+const pendingHistory = [];
+const historyElements = { reportHistoryYear: { value: '' }, reportHistoryWeek: { value: '' },
+  reportHistoryPrev: {}, reportHistoryNext: {}, reportHistoryStatus: {}, reportHistoryBody: {}, reportHistoryDialog: { open: true } };
+const historyContext = vm.createContext({ DEMO_MODE: false, URLSearchParams, elements: historyElements,
+  state: { session: 'session-a', dashboard: { profile: { sub: 'person-a' } }, reportHistory: { page: 1, pages: 1, generation: 0 } },
+  request: path => new Promise((resolve, reject) => pendingHistory.push({ path, resolve, reject })),
+  historyMarkup: records => records.map(r => r.recordId).join(',') });
+vm.runInContext(extract('  async function loadReportHistory(', '  function openLiteratureDialog('), historyContext);
+const page = (id, number = 1) => ({ reports: [{ recordId: id }], total: 42, page: number, pages: 3, years: ['2026', '2025'] });
+const first = historyContext.loadReportHistory(1), second = historyContext.loadReportHistory(2);
+pendingHistory[1].resolve(page('second', 2)); await second;
+pendingHistory[0].resolve(page('obsolete')); await first;
+assert.equal(historyElements.reportHistoryBody.innerHTML, 'second');
+assert.equal(historyElements.reportHistoryPrev.disabled, false);
+assert.ok(pendingHistory[1].path.includes('page=2'));
+const failed = historyContext.loadReportHistory(3); pendingHistory[2].reject(new Error('offline')); await failed;
+assert.equal(historyElements.reportHistoryBody.innerHTML, 'second');
+assert.ok(historyElements.reportHistoryStatus.textContent.includes('上次读取结果'));
+const switched = historyContext.loadReportHistory(3); historyContext.state.session = 'session-b';
+historyContext.state.dashboard.profile.sub = 'person-b'; pendingHistory[3].resolve(page('private-a', 3)); await switched;
+assert.equal(historyElements.reportHistoryBody.innerHTML, 'second', 'Late former-account result must not render');
+console.log('PASS history UI: paging requests, stale response suppression, explicit read failure and account change guard');
+
+// Conflict recovery asks before replacing a real local draft and does not post.
+let acceptReload = false, clearCount = 0, reopened = 0;
+const reloadContext = vm.createContext({ state: { session: 's', dashboard: { week: { id: '2026-W37' }, student: {} } },
+  elements: { reportReload: {}, reportError: {}, reportDialog: { open: true } },
+  request: async path => { assert.equal(path, '/api/weekly'); return { week: { id: '2026-W37' }, student: { report: { revision: 'fresh' } } }; },
+  window: { confirm: () => acceptReload }, clearDraft: () => clearCount++, draftKeys: { report: 'report' },
+  draftScope: () => '2026-W37', privateDrafts: { remove() {} }, openReportDialog: () => reopened++ });
+vm.runInContext(extract('  async function reloadSavedReport(', '  async function submitLiterature('), reloadContext);
+await reloadContext.reloadSavedReport(); assert.equal(clearCount, 0); assert.equal(reopened, 0);
+acceptReload = true; await reloadContext.reloadSavedReport(); assert.equal(clearCount, 1); assert.equal(reopened, 1);
+assert.equal(reloadContext.state.dashboard.student.report.revision, 'fresh');
+console.log('PASS conflict UI: replacing a draft requires an explicit choice; fresh version is loaded without a write');

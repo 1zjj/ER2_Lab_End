@@ -7,7 +7,7 @@
   <meta name="description" content="ER² Lab 学生、教师与管理者的一页式飞书工作台">
   <title>ER² Lab 工作台</title>
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="./styles.css?v=manager-diagnostics-1">
+  <link rel="stylesheet" href="./styles.css?v=weekly-history-1">
 </head>
 <body>
   <header class="topbar">
@@ -70,6 +70,7 @@
         <label>当前问题与阻塞<textarea name="blockers" maxlength="3000" rows="3" placeholder="现象、已尝试的方法和需要的帮助"></textarea></label>
         <label>下周计划<textarea name="nextPlan" required maxlength="3000" rows="3" placeholder="下一步任务和预计完成时间"></textarea></label>
         <p class="form-error" id="report-error" role="alert" hidden></p>
+        <button class="button button-secondary" id="report-reload" type="button" hidden>载入已保存记录</button>
       </div>
       <div class="modal-actions">
         <button class="button button-secondary" type="button" data-close-dialog="report-dialog">取消</button>
@@ -80,11 +81,19 @@
 
   <dialog class="modal literature-detail-modal" id="report-history-dialog">
     <div class="modal-head">
-      <div><p class="kicker">REPORT HISTORY</p><h2>历史周报</h2><p>最近 12 次提交与教师反馈</p></div>
+      <div><p class="kicker">REPORT HISTORY</p><h2>历史周报</h2><p>按所属周查看本人已提交的记录与教师反馈</p></div>
       <button class="icon-button" type="button" data-close-dialog="report-history-dialog" aria-label="关闭">×</button>
     </div>
+    <form class="history-filters" id="report-history-filter">
+      <label>年份<select id="report-history-year"><option value="">全部年份</option></select></label>
+      <label>周次<input id="report-history-week" type="number" min="1" max="53" placeholder="全部周次"></label>
+      <button class="button button-secondary" type="submit">查询</button>
+      <p id="report-history-status" role="status" aria-live="polite"></p>
+    </form>
     <div class="dialog-scroll" id="report-history-body"></div>
     <div class="modal-actions">
+      <button class="button button-secondary" type="button" id="report-history-prev" disabled>上一页</button>
+      <button class="button button-secondary" type="button" id="report-history-next" disabled>下一页</button>
       <button class="button button-secondary" type="button" data-close-dialog="report-history-dialog">关闭</button>
     </div>
   </dialog>
@@ -242,6 +251,6 @@
   <script src="./config.js?v=home-layout-1"></script>
   <script src="./draft-store.js?v=p0-2"></script>
   <script src="./guide-store.js?v=member-guide-1"></script>
-  <script src="./app.js?v=manager-diagnostics-1"></script>
+  <script src="./app.js?v=weekly-history-1"></script>
 </body>
 </html>
