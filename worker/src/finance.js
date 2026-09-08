@@ -1,9 +1,9 @@
 import { requireSession, getTenantToken, listRecords, json } from './index.js';
 import { strictBinding, authError, identity, personNumber } from './authorization.js';
 import { readScope } from './read-performance.js';
-import { FINANCE_VERSION, FINANCE_STORE, STATUS, EQUIPMENT, SOURCE, DEVICE_FIELDS, financeActor, financeAccess, recipient, requireReview, assertView, editable, requestId, validateDocument, monthlySummary, devicePayload } from './finance-policy.js';
+import { FINANCE_VERSION, FINANCE_STORE, STATUS, SOURCE, financeActor, financeAccess, recipient, requireReview, assertView, editable, requestId, validateDocument, monthlySummary, devicePayload } from './finance-policy.js';
 import { financeService } from './finance-feishu.js';
-import { startMigration,migrationStep } from './finance-migration.js';
+import { financeReady, equipmentBinding, verifyEquipmentCopy, validateEquipmentSchema, copyDigest } from './finance-equipment.js';
 
 export async function financeContext(request, env) {
   const session=await requireSession(request,env); strictBinding(env,'MEMBERS_TABLE_ID');
@@ -27,15 +27,16 @@ const compact=d=>({id:d.id,kind:d.kind,ownerName:d.ownerName,personId:d.personId
 export async function enqueue(storage,key,value){await storage.put('job:'+key,{...value,attempts:0,next:Date.now()});await storage.setAlarm(Date.now()+1000);}
 async function log(storage,actor,id,action,note=''){const key='log:'+Date.now()+':'+crypto.randomUUID();await storage.put(key,{id:key,documentId:id,actor:actor.sub,name:actor.name,time:new Date().toISOString(),action,note});}
 async function parse(request){const raw=await request.text();if(raw.length>120000)throw authError(413,'单据过长');try{return JSON.parse(raw);}catch(_){throw authError(400,'请求格式无效');}}
-function configured(settings){if(!settings?.ready)throw authError(409,'财务权限与设备清单正在准备，请稍后办理');}
+function configured(settings){if(!financeReady(settings))throw authError(409,'财务权限与设备清单正在准备，请稍后办理');}
 async function attachments(storage,doc){const out=[];for(const id of doc.attachmentIds||[]){const a=await storage.get('attachment:'+id);if(a)out.push({id,name:a.name,size:a.size});}return out;}
 
 export async function executeFinance(request,env,storage,contextProvider=financeContext,serviceProvider=financeService){
   env=readScope(env,request);const c=await contextProvider(request,env),{actor,access}=c;
   const url=new URL(request.url),path=url.pathname.slice('/api/finance'.length)||'/';
   const settings=await storage.get('settings')||{};
+  env={...env,FINANCE_EQUIPMENT_BINDING:settings.equipmentBinding};
   if(request.method==='GET'){
-    if(path==='/')return json(request,env,{version:FINANCE_VERSION,access,ready:Boolean(settings.ready),statuses:STATUS,
+    if(path==='/')return json(request,env,{version:FINANCE_VERSION,access,ready:financeReady(settings),statuses:STATUS,
       pending:access.canReview?(await docs(storage)).filter(d=>d.kind==='claim'&&['submitted','sync_error','approved'].includes(d.status)).length:0,
       reminders:settings.reminders||false});
     if(path==='/records'){
@@ -66,9 +67,7 @@ export async function executeFinance(request,env,storage,contextProvider=finance
     }
     if(path==='/setup'){
       if(!access.canConfigure)throw authError(403,'仅管理员可配置预算与报销');
-      const source=await storage.get('inspection:source');
-      const sourceParentLinks=source?.records.filter(r=>r.fields['父记录']!=null).map(r=>({recordId:r.record_id,parent:r.fields['父记录']}));
-      return json(request,env,{settings,access,inspection:await storage.get('inspection'),sourceParentLinks,migration:await storage.get('migration'),jobs:(await financeEntries(storage,'job:')).map(([key,j])=>({key,attempts:j.attempts,error:j.error||'',next:j.next}))});
+      return json(request,env,{settings,access,inspection:await storage.get('inspection'),legacyMigration:await storage.get('migration'),jobs:(await financeEntries(storage,'job:')).map(([key,j])=>({key,attempts:j.attempts,error:j.error||'',next:j.next}))});
     }
     throw authError(404,'财务接口不存在');
   }
@@ -119,7 +118,7 @@ export async function executeFinance(request,env,storage,contextProvider=finance
       // Revalidate every mandatory field at the authority boundary.
       validateDocument({kind:'claim',lines:d.lines.map(({name,quantity,unitPrice,purchaseDate})=>({name,quantity,unitPrice,purchaseDate})),requestId:rid});
       const service=await serviceProvider(env);await checkPrivacy(service);
-      const fields=await service.list(service.equipment.obj_token,EQUIPMENT.table,'/fields');for(const line of d.lines)devicePayload(line,d.owner,fields);
+      const fields=await service.list(service.equipment.obj_token,service.target.table,'/fields');for(const line of d.lines)devicePayload(line,d.owner,fields);
       const matches=await service.equipmentMatches(d),decisions=body.equipmentDecisions||{};d.equipmentMatches={};
       if(typeof decisions!=='object'||Array.isArray(decisions))throw authError(400,'设备核对结果无效');
       for(const item of matches){if(!item.records.length)continue;const decision=decisions[item.index];
@@ -156,20 +155,29 @@ async function checkPrivacy(service){const acl=await service.privateAcl();if(acl
 async function setup(request,env,storage,c,settings,serviceProvider){
   if(!c.access.canConfigure)throw authError(403,'仅管理员可配置预算与报销');const body=await parse(request);
   if(body.action==='disable'){await storage.put('settings',{...settings,ready:false});return json(request,env,{saved:true});}
-  const service=await serviceProvider(env);
-  if(body.action==='migration-start'){
-    const migration=await startMigration(service,storage,c.actor,{nativeDependenciesVerified:body.nativeDependenciesVerified===true});
-    await log(storage,c.actor,'SETUP','设备迁移备份完成');return json(request,env,{migration});
+  if(['migration-start','migration-step'].includes(body.action))throw authError(409,'旧迁移流程已停用，请核验并绑定现有设备副本');
+  if(body.action==='bind-equipment'){
+    if(settings.activatedAt || (await docs(storage)).length || (await financeEntries(storage,'asset:')).length || (await financeEntries(storage,'intent:asset:')).length)throw authError(409,'已有财务业务或入库记录，设备绑定变更需专门核对');
+    if(body.nativeEquipmentPermissionsVerified!==true)throw authError(409,'请先核实新设备表的应用编辑权限与访问范围');
+    const binding=equipmentBinding(body.equipmentUrl);
+    const service=await serviceProvider({...env,FINANCE_EQUIPMENT_BINDING:binding});
+    const verified=await verifyEquipmentCopy(service,c.actor.sub);
+    await storage.transaction(async tx=>{
+      await tx.put('settings',{...settings,ready:false,equipmentBinding:binding,equipmentVerified:verified,equipmentPermissionsVerifiedBy:c.actor.personId});
+      const migration=await tx.get('migration');if(migration&&migration.status!=='completed')await tx.put('migration',{...migration,status:'superseded',supersededAt:new Date().toISOString(),reason:'独立设备副本已核验，旧迁移流程停用'});
+      await log(tx,c.actor,'SETUP','核验并绑定独立设备副本');
+    });
+    return json(request,env,{saved:true,equipmentVerified:verified});
   }
-  if(body.action==='migration-step')return json(request,env,{migration:await migrationStep(service,storage)});
+  const service=await serviceProvider(env);
   if(body.action==='inspect'){
-    const inspection={time:new Date().toISOString(),scope:{equipmentTable:EQUIPMENT.table,sourceTable:SOURCE.table},errors:[]};
-    for(const [name,fn]of Object.entries({privacy:()=>service.privateAcl(),source:()=>service.sourceSnapshot(),equipment:()=>service.snapshot(service.equipment.obj_token,EQUIPMENT.table),tables:()=>service.list(service.equipment.obj_token,'','/tables')})){
+    const inspection={time:new Date().toISOString(),scope:{equipmentTable:service.target.table,sourceTable:SOURCE.table},errors:[]};
+    for(const [name,fn]of Object.entries({privacy:()=>service.privateAcl(),source:()=>service.sourceSnapshot(),equipment:()=>service.snapshot(service.equipment.obj_token,service.target.table),tables:()=>service.list(service.equipment.obj_token,'','/tables')})){
       try{const value=await fn();if(['source','equipment'].includes(name)){await storage.put('inspection:'+name,value);inspection[name]={count:value.records.length,fields:value.fields,app:value.app,table:value.table};}else inspection[name]=value;}catch(e){inspection.errors.push({stage:name,code:e.code||'',upstreamCode:e.upstreamCode,upstreamStatus:e.upstreamStatus,message:e.message,...(e.diagnostic?{diagnostic:e.diagnostic}:{})});}
     }
     // Read foreign schemas only. Never alter loan, maintenance or calibration data.
     inspection.references=[];
-    for(const t of inspection.tables||[])if(t.table_id!==EQUIPMENT.table){const fs=await service.list(service.equipment.obj_token,t.table_id,'/fields');for(const f of fs)if(f.property?.table_id===EQUIPMENT.table)inspection.references.push({table:t.table_id,tableName:t.name,field:f.field_name,type:f.type});}
+    for(const t of inspection.tables||[])if(t.table_id!==service.target.table){const fs=await service.list(service.equipment.obj_token,t.table_id,'/fields');for(const f of fs)if(f.property?.table_id===service.target.table)inspection.references.push({table:t.table_id,tableName:t.name,field:f.field_name,type:f.type});}
     await storage.put('inspection',inspection);await log(storage,c.actor,'SETUP','只读核对');return json(request,env,{inspection});
   }
   if(body.action==='prepare'){
@@ -179,8 +187,9 @@ async function setup(request,env,storage,c,settings,serviceProvider){
     await checkPrivacy(service);if(!c.access.reviewerReady)throw authError(409,'财务负责人职责未配置');recipient(c.people,env.FINANCE_PROFESSOR_PERSON_ID||'P-001');
     if(!body.nativePermissionsVerified)throw authError(409,'需先核实四张财务资料表仅财务和指定管理员可访问');
     const bindings=await storage.get('finance:bindings');if(!bindings||Object.keys(bindings).length!==4)throw authError(409,'财务资料表尚未准备完成');
-    const migration=await storage.get('migration');if(migration?.status!=='completed')throw authError(409,'设备源表复制尚未完成并核验');
-    const fields=await service.list(service.equipment.obj_token,EQUIPMENT.table,'/fields');devicePayload({name:'字段验证',quantity:'1',unitPrice:'1.00',purchaseDate:'2026-01-01'},c.actor.sub,fields);
+    if(!settings.equipmentBinding||settings.equipmentVerified?.table!==settings.equipmentBinding.table||settings.equipmentVerified?.wiki!==settings.equipmentBinding.wiki||settings.equipmentVerified?.app!==service.equipment.obj_token)throw authError(409,'新设备副本尚未绑定并核验');
+    const snapshot=await service.snapshot(service.equipment.obj_token,service.target.table);validateEquipmentSchema(snapshot.fields,c.actor.sub);
+    if(!settings.activatedAt&&await copyDigest(snapshot)!==settings.equipmentVerified.digest)throw authError(409,'设备副本在核验后发生变化，请重新核验');
     await storage.put('settings',{...settings,ready:true,nativePermissionsVerifiedBy:c.actor.personId,activatedAt:new Date().toISOString(),reminders:body.reminders===true});
     if((await financeEntries(storage,'job:')).some(([,j])=>j.next<Number.MAX_SAFE_INTEGER))await storage.setAlarm(Date.now()+1000);
     await log(storage,c.actor,'SETUP','启用预算与报销');return json(request,env,{saved:true});
@@ -189,12 +198,13 @@ async function setup(request,env,storage,c,settings,serviceProvider){
 }
 
 export async function processFinanceJobs(env,storage,serviceProvider=financeService){
-  if(!(await storage.get('settings'))?.ready)return;
+  const initialSettings=await storage.get('settings');if(!financeReady(initialSettings))return;
+  env={...env,FINANCE_EQUIPMENT_BINDING:initialSettings.equipmentBinding};
   const jobs=(await financeEntries(storage,'job:')).filter(([,j])=>j.next<=Date.now()).slice(0,2);if(!jobs.length)return;
   let service;
   try{service=await serviceProvider(env);}catch(e){for(const [key,j]of jobs)await storage.put(key,{...j,attempts:j.attempts+1,error:'飞书连接失败',next:Date.now()+60000});await storage.setAlarm(Date.now()+60000);return;}
   for(const [key,j]of jobs){try{
-    const settings=await storage.get('settings');if(!settings?.ready)continue;
+    const settings=await storage.get('settings');if(!financeReady(settings))continue;
     if(j.kind==='monthly'){
       if(!settings.reminders){await storage.delete(key);continue;}
       const people=await listRecords(env,await getTenantToken(env),'MEMBERS_TABLE_ID'),target=recipient(people,j.personId);
@@ -236,7 +246,7 @@ export async function processFinanceJobs(env,storage,serviceProvider=financeServ
 }
 
 export async function prepareFinanceReminders(time,env,storage,peopleProvider){
-  const settings=await storage.get('settings');if(!settings?.ready||!settings.reminders)return;
+  const settings=await storage.get('settings');if(!financeReady(settings)||!settings.reminders)return;
   const day=new Date(Number(time)+8*3600000).toISOString(),date=day.slice(0,10),n=Number(day.slice(8,10));if(![1,20,27].includes(n)||day.slice(11,13)!=='10')return;
   const ledger='schedule:'+date;if(await storage.get(ledger))return;
   const people=await(peopleProvider?peopleProvider():listRecords(env,await getTenantToken(env),'MEMBERS_TABLE_ID')),records=await docs(storage),notices=[];

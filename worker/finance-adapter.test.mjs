@@ -7,7 +7,7 @@ class Storage {
 }
 const fields=[['文本',1],['数量',1],['采购价格（单价）',2],['采购日期',5],['采购经办人',11],['采购进度',3],['已报销',3],['设备名称',1]].map(([field_name,type])=>({field_name,type,property:{options:[{name:'完成采购'},{name:'是'}]}}));
 const line={name:'仪器',quantity:'2',unitPrice:'99.50',purchaseDate:'2026-08-25',amountCents:19900};
-const claim=(id,n=1)=>({id,kind:'claim',owner:'ou_user',personId:'P-003',ownerName:'申报人',revision:1,status:'approved',attachmentIds:[],materials:'',totalCents:n*19900,lines:Array.from({length:n},(_,i)=>({...line,name:'仪器'+i}))});
+const claim=(id,n=1)=>({id,kind:'claim',owner:'ou_user',personId:'P-003',ownerName:'申报人',revision:1,status:'approved',approvedBy:'ou_reviewer',approvedAt:'2026-09-01T00:00:00Z',attachmentIds:[],materials:'',totalCents:n*19900,lines:Array.from({length:n},(_,i)=>({...line,name:'仪器'+i}))});
 async function fixture(){
  const data=new Map(),calls=[],storage=new Storage(),bindings=Object.fromEntries(Object.keys(F).map(k=>[k,'tbl'+k]));let failRead=false,counter=0;
  const call=async(path,method='GET',body)=>{
@@ -23,7 +23,7 @@ async function fixture(){
   if(method==='DELETE'){rows.delete(id);return {data:{}};}
   const row=id?rows.get(id):{record_id:'rec'+ ++counter,fields:{}};assert.ok(row);Object.assign(row.fields,structuredClone(body.fields));rows.set(row.record_id,row);return {data:{record:structuredClone(row)}};
  };
- const service=await financeService({}, {getTenantToken:async()=>'mock',call});
+ const service=await financeService({FINANCE_EQUIPMENT_BINDING:EQUIPMENT}, {getTenantToken:async()=>'mock',call});
  return {service,data,calls,storage,bindings,failNextRead(){failRead=true;}};
 }
 const f=await fixture(),d=claim('EXP-LARGE',50);let loops=0;
@@ -40,11 +40,11 @@ await archive.storage.delete('mirror:'+d.id);await archive.storage.put('archive-
 console.log('PASS finance adapter bounded 50-item batches, exact inventory readback, interrupted-write recovery, existing-asset preservation, expired-create protection and archive recovery');
 
 // Explicit empty pagination is valid; incomplete reads must still block migration.
-let listReply={data:{total:0,has_more:false}},readCalls=[];
-const emptyService=await financeService({}, {getTenantToken:async()=>'mock',call:async(path)=>{
+let listReply={data:{total:0,has_more:false}},readCalls=[],permissionReply={external_access:false,link_share_entity:'closed'};
+const emptyService=await financeService({FINANCE_EQUIPMENT_BINDING:EQUIPMENT}, {getTenantToken:async()=>'mock',call:async(path)=>{
  readCalls.push(path);
  if(path.startsWith('/wiki/'))return {data:{node:{obj_type:'bitable',obj_token:path.includes(EQUIPMENT.wiki)?'equipment':'finance',space_id:'er2'}}};
- if(path.startsWith('/drive/'))return {data:{permission_public:{external_access:false,link_share_entity:'closed'}}};
+ if(path.startsWith('/drive/'))return {data:{permission_public:permissionReply}};
  return listReply;
 }});
 assert.deepEqual(await emptyService.list('equipment',EQUIPMENT.table,'/records'),[]);
@@ -54,5 +54,17 @@ for(const data of [{},{has_more:false},{total:1,has_more:false},{items:[],has_mo
 }
 listReply={data:{total:0,has_more:false}};await assert.rejects(emptyService.list('equipment',EQUIPMENT.table,'/fields'));
 assert.deepEqual(await emptyService.privateAcl(),{externalAccess:false,linkSharing:'closed',raw:{external_access:false,link_share_entity:'closed'}});
+for(const [permission,expected] of [
+ [{external_access_entity:'closed'},false],
+ [{external_access_entity:'open'},true],
+ [{external_access_entity:'open',external_access:false},true],
+ [{external_access_entity:'closed',external_access:true},true],
+ [{external_access_entity:'unknown',external_access:false},undefined],
+ [{external_access_entity:null},undefined],
+ [{},undefined],
+]){
+ permissionReply={...permission,link_share_entity:'closed'};
+ assert.equal((await emptyService.privateAcl()).externalAccess,expected);
+}
 assert.ok(readCalls.includes('/drive/v2/permissions/'+FINANCE_WIKI+'/public?type=wiki'));
 console.log('PASS explicit empty record pagination and wiki-node permission lookup; incomplete reads remain blocked');
