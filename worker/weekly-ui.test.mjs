@@ -55,7 +55,7 @@ const entries = new Map();
 const storage = { get length() { return entries.size; }, key: i => [...entries.keys()][i], getItem: k => entries.get(k) ?? null,
   setItem: (k, v) => entries.set(k, v), removeItem: k => entries.delete(k) };
 let handler;
-const auth = vm.createContext({ sessionStorage: storage, memberGuide: { bind() {} },
+const auth = vm.createContext({ learningUIInstance: { reset() {} }, sessionStorage: storage, memberGuide: { bind() {} },
   state: { session: 'old', dashboard: {} }, API_BASE: 'https://api.example',
   location: { hash: '#session=test-session', pathname: '/', search: '', href: 'https://workbench.example/' }, history: { replaceState() {} },
   document: { getElementById: () => ({}), querySelectorAll: () => [] }, elements: { app: {} }, showError() {},

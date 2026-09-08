@@ -63,7 +63,7 @@ const uiStore = make('ui'); uiStore.bind('account-a');
 const dashboard = { profile: { roles: ['student'], sub: 'account-a', status: '在组' },
   student: { onboarding: { completed: true, completedSteps: steps }, course: { completed: 0 } } };
 const snapshot = JSON.stringify(dashboard);
-const ui = vm.createContext({ memberGuide: uiStore, state: { dashboard, activeRole: 'student', learningCenterOpen: false },
+const ui = vm.createContext({ DEMO_MODE: true, window: {}, memberGuide: uiStore, state: { dashboard, activeRole: 'student', learningCenterOpen: false },
   elements: { onboardingDialog: { open: true }, onboardingChecklist: element(), onboardingProgressLabel: element(),
     onboardingProgressHint: element(), onboardingProgressTrack: element(), onboardingCourseEntry: element(),
     onboardingSaveStatus: element(), app: { querySelector: selector => selector === '.course-panel' ? coursePanel : null } },

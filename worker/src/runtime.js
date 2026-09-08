@@ -1,3 +1,6 @@
+export { LearningRecords } from './learning-coordinator.js';
+import { routeLearning, learningEnabled, learningRecipientsReady, LEARNING_STORE_NAME } from './learning.js';
+import { LEARNING_VERSION } from './learning-catalog.js';
 export { WeeklyWriteCoordinator } from './weekly-coordinator.js';
 import { WEEKLY_VERSION } from './weekly-write.js';
 import legacy from './index.js';
@@ -53,6 +56,7 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
+    if (request.method !== 'OPTIONS' && /^\/api\/learning(?:\/|$)/.test(path)) return routeLearning(request, env);
     if (request.method !== 'OPTIONS' && /^\/api\/ai(?:\/|$)/.test(path)) return aiPaused(request, env);
 
     if (request.method === 'GET' && path === '/api/v2/health') {
@@ -90,11 +94,21 @@ export default {
       const result = await probe.fetch(new Request('https://internal/_weekly-storage-check'));
       coordinatedWrites = result.ok && (await result.json()).ok === true;
     } catch (_) { /* Missing binding/storage is reported without exposing metadata. */ }
+    let learningReady = false;
+    let recipientsReady = false;
+    if (learningEnabled(env)) {
+      try {
+        const probe = env.LEARNING_RECORDS.get(env.LEARNING_RECORDS.idFromName(LEARNING_STORE_NAME));
+        const check = await probe.fetch(new Request('https://internal/_learning-storage-check'));
+        learningReady = check.ok && (await check.json()).version === LEARNING_VERSION;
+        recipientsReady = await learningRecipientsReady(env);
+      } catch (_) {}
+    }
     const headers = new Headers(response.headers);
     return new Response(JSON.stringify({
       ...body,
       release: BUILD_INFO,
-      capabilities: { courses: courseCapabilities(env), weekly: {
+      capabilities: { learning: { version: LEARNING_VERSION, storageReady: learningReady, recipientsReady, independentPermissions: true }, courses: courseCapabilities(env), weekly: {
         version: 'weekly-save-history-v1', coordinatedWrites, historyPagination: true
       } },
       coreReady: body.authConfigured === true && body.dataConfigured === true && deep.ok === true &&
