@@ -21,7 +21,7 @@ window.addEventListener('DOMContentLoaded', function () {
       .home-v2-projects{display:grid;gap:12px;margin-top:12px}
       .home-v2-project{border:1px solid var(--border,#dfe6f1);border-radius:14px;padding:14px;background:#fff}
       .home-v2-project-head{display:flex;justify-content:space-between;gap:12px;align-items:center}
-      .home-v2-project h3{margin:0 0 5px}.home-v2-project p{margin:5px 0;color:var(--muted,#68758a)}
+      .home-v2-project h3{margin:0;min-width:0;flex:1;overflow-wrap:anywhere}.home-v2-project p{margin:5px 0;color:var(--muted,#68758a)}
       .home-v2-todo-action{margin-left:auto;white-space:nowrap}
       .home-v2-training-summary p{margin:8px 0;color:var(--muted,#68758a)}
       .home-v2-training-meta{display:flex;gap:10px;align-items:center;justify-content:space-between;margin:10px 0 14px}
@@ -39,10 +39,6 @@ window.addEventListener('DOMContentLoaded', function () {
         const h2 = panel.querySelector('h2');
         return h2 && h2.textContent.trim() === title;
       }) || null;
-    }
-    function safeUrl(value) {
-      const text = String(value || '').trim();
-      return /^https:\/\//i.test(text) ? text : '';
     }
     function escapeHtml(value) {
       return String(value == null ? '' : value).replace(/[&<>'"]/g, function (char) {
@@ -75,22 +71,6 @@ window.addEventListener('DOMContentLoaded', function () {
       if (kicker) kicker.textContent = '本周工作记录';
       if (title) title.textContent = home.report?.status === 'submitted' ? '本周工作记录已提交' : '本周工作记录待提交';
       if (description) description.textContent = [home.report?.weekLabel, home.report?.dueLabel].filter(Boolean).join(' · ');
-    }
-    function renderProjects(home) {
-      const panel = panelByTitle('我的项目');
-      if (!panel) return;
-      if (home.moduleErrors?.projects) {
-        panel.hidden = false;
-        panel.innerHTML = '<h2>我的项目</h2><p>项目暂时无法读取，分配情况尚未确认。</p>';
-        return;
-      }
-      const projects = Array.isArray(home.projects) ? home.projects : [];
-      if (!home.modules?.projects?.visible || !projects.length) { panel.hidden = true; return; }
-      panel.hidden = false;
-      panel.innerHTML = '<div class="panel-title"><h2>我的项目</h2><span>' + projects.length + ' 个活跃项目</span></div><div class="home-v2-projects">' + projects.slice(0, 3).map(function (project) {
-        const link = safeUrl(project.url) ? '<a class="text-link" href="' + escapeHtml(project.url) + '">进入项目 ›</a>' : '<span class="home-v2-module-note">项目页待管理员配置</span>';
-        return '<article class="home-v2-project"><div class="home-v2-project-head"><div><h3>' + escapeHtml([project.code, project.title].filter(Boolean).join(' · ')) + '</h3><p>' + escapeHtml([project.role, project.status].filter(Boolean).join(' · ')) + '</p></div>' + link + '</div>' + (project.nextTask ? '<p><strong>下一项：</strong>' + escapeHtml(project.nextTask) + '</p>' : '') + (project.blocker ? '<p><strong>最近阻塞：</strong>' + escapeHtml(project.blocker) + '</p>' : '') + '<div class="progress-track" role="progressbar" aria-valuenow="' + Number(project.progress || 0) + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + Number(project.progress || 0) + '%"></span></div></article>';
-      }).join('') + '</div>';
     }
     function renderTraining(home) {
       // The current layout owns the single learning entry; do not recreate the legacy card.
@@ -171,7 +151,6 @@ window.addEventListener('DOMContentLoaded', function () {
       try {
         renderWeeklyStatus(home);
         renderTodos(home);
-        renderProjects(home);
         renderTraining(home);
         reorderLiterature();
         bindHomeActions();

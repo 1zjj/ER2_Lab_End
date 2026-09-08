@@ -594,7 +594,7 @@ async function buildStudent(session, week, reports, projects, courses, tasks, li
       milestone: field(project, '当前里程碑', '里程碑') || '请在飞书项目页维护',
       progress: Math.max(0, Math.min(100, projectProgress)),
       blocker: field(project, '最近阻塞', '阻塞') || '暂无记录',
-      url: field(project, '飞书链接', '项目链接') || ''
+      url: projectHomepage(project)
     },
     tasks: activeTasks.length ? activeTasks.map((record) => ({
       title: field(record, '任务名称', '任务') || '未命名任务',
@@ -1434,11 +1434,29 @@ function requireResource(session, record, action = 'read') {
   if (hasProjectScope(record)) requireProject(session, businessProjectId(record), action);
 }
 
+function projectHomepage(record) {
+  // Project links have one source. Do not use display labels or unrelated legacy links.
+  let value = record?.fields?.['项目主页'];
+  if (Array.isArray(value)) {
+    if (value.length === 1) value = value[0];
+    else if (value.every(v => v?.type === 'text' && typeof v.text === 'string')) value = value.map(v => v.text).join('');
+    else return '';
+  }
+  if (value && typeof value === 'object') value = value.link ?? value.text;
+  if (typeof value !== 'string' || !/^https:\/\//i.test(value.trim())) return '';
+  try {
+    const url = new URL(value.trim());
+    if (url.origin !== 'https://lcnywl4yrecr.feishu.cn' || url.username || url.password || !/^\/wiki\/[A-Za-z0-9]+$/.test(url.pathname)) return '';
+    return url.origin + url.pathname;
+  } catch (_) { return ''; }
+}
+
 function projectView(record, session) {
   const id = businessProjectId(record);
   return { projectId: id, code: id, title: field(record, '项目名称', '名称'),
     milestone: field(record, '当前里程碑'), blocker: field(record, '最近阻塞'),
-    progress: Number(field(record, '进度')) || 0, permission: session.grants[id]?.level || 0 };
+    progress: Number(field(record, '进度')) || 0, permission: session.grants[id]?.level || 0,
+    url: projectHomepage(record) };
 }
 
 async function projectApi(request, env, session) {

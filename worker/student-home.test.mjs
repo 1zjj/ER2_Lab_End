@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { buildStudentHome } from './src/v2/student-home.js';
+import { readFileSync } from 'node:fs';
+import { JSDOM } from 'jsdom';
 
 {
   const home = buildStudentHome({
@@ -70,3 +72,54 @@ import { buildStudentHome } from './src/v2/student-home.js';
 }
 
 console.log('Student home V2 tests passed');
+
+// Exercise the actual project card and the existing homepage enhancer together.
+// The enhancer must not replace fresh, permission-filtered links with older data.
+{
+  const source = readFileSync(new URL('../app.js', import.meta.url), 'utf8');
+  const extract = (start, end) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)));
+  const dom = new JSDOM('<main id="app-root"><section class="welcome"><p class="kicker">STUDENT WORKSPACE</p></section><div id="projects"></div><section class="panel learning-card">学习中心原文</section><section class="panel finance-card">预算与报销原文</section></main>', { url: 'https://portal.example/', runScripts: 'outside-only' });
+  const w = dom.window;
+  w.state = { dashboard: { student: { projects: [] } } };
+  w.eval(extract('  function escapeHtml(', '  function safeUrl('));
+  w.eval(extract('  function projectHomepageUrl(', '  function renderStudent('));
+  const slot = w.document.querySelector('#projects');
+  const render = (projects, moduleErrors = {}) => {
+    w.state.dashboard = { student: { projects }, moduleErrors };
+    slot.innerHTML = w.renderProjectCard();
+  };
+  const projects = [4, 2, 3, 1].map(i => ({ code: 'PRJ-00' + i, title: '测试项目' + i, permission: i === 1 ? 1 : 2, url: 'https://lcnywl4yrecr.feishu.cn/wiki/TestProject' + i, progress: 50, blocker: '旧阻塞信息' }));
+  render(projects);
+  assert.equal(slot.querySelectorAll('a').length, 4);
+  assert.match(slot.textContent, /4 个项目/);
+  assert.deepEqual([...slot.querySelectorAll('a')].map(a => a.href), [1, 2, 3, 4].map(i => 'https://lcnywl4yrecr.feishu.cn/wiki/TestProject' + i));
+  assert.ok([...slot.querySelectorAll('a')].every(a => a.target === '_blank' && a.rel === 'noopener noreferrer'));
+  assert.equal(slot.querySelector('[role="progressbar"]'), null);
+  assert.doesNotMatch(slot.textContent, /旧阻塞信息|进行中|活跃项目/);
+  w.eval(readFileSync(new URL('../config.js', import.meta.url), 'utf8'));
+  w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+  w.dispatchEvent(new w.CustomEvent('er2-dashboard-rendered', { detail: { role: 'student', home: { aiRequired: false, modules: { projects: { visible: true } }, projects: [{ code: 'PRJ-999', title: '过时项目', url: 'https://evil.example' }] } } }));
+  assert.equal(slot.querySelectorAll('a').length, 4);
+  assert.doesNotMatch(slot.textContent, /过时项目/);
+  render([{ ...projects[0], permission: 0 }, { ...projects[1], url: '' }]);
+  assert.equal(slot.querySelectorAll('article').length, 1);
+  assert.equal(slot.querySelectorAll('a').length, 0);
+  assert.match(slot.textContent, /项目入口待配置/);
+  render([{ ...projects[0], title: '<img src=x onerror=alert(1)>', url: 'https://evil.example' }]);
+  assert.equal(slot.querySelector('img'), null);
+  assert.equal(slot.querySelector('a'), null);
+  for (const url of ['javascript:alert(1)', 'https://lcnywl4yrecr.feishu.cn.evil.example/wiki/Test', 'https://user@lcnywl4yrecr.feishu.cn/wiki/Test', 'https://lcnywl4yrecr.feishu.cn/docx/Test']) {
+    render([{ ...projects[0], url }]); assert.equal(slot.querySelector('a'), null);
+  }
+  render(projects, { projects: '读取失败' });
+  assert.equal(slot.querySelector('a'), null);
+  assert.match(slot.textContent, /项目暂时无法读取/);
+  assert.doesNotMatch(slot.textContent, /暂无已授权项目/);
+  render([]);
+  assert.equal(slot.querySelector('a'), null);
+  assert.match(slot.textContent, /暂无已授权项目/);
+  assert.equal(w.document.querySelector('.learning-card').textContent, '学习中心原文');
+  assert.equal(w.document.querySelector('.finance-card').textContent, '预算与报销原文');
+  dom.window.close();
+}
+console.log('PASS project entry UI: all authorized links, new tabs, stale enhancer isolation, empty/error states and safe URLs');

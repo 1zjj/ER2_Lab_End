@@ -796,6 +796,31 @@
     financeUIInstance.mount();
   }
 
+  function projectHomepageUrl(value) {
+    if (typeof value !== 'string' || !/^https:\/\//i.test(value.trim())) return '';
+    try {
+      const url = new URL(value.trim());
+      if (url.origin !== 'https://lcnywl4yrecr.feishu.cn' || url.username || url.password || !/^\/wiki\/[A-Za-z0-9]+$/.test(url.pathname)) return '';
+      return url.origin + url.pathname;
+    } catch (_) { return ''; }
+  }
+
+  function renderProjectCard() {
+    const dashboard = state.dashboard || {};
+    const heading = '<section class="panel project-home-card"><div class="panel-title"><h2>我的项目</h2>';
+    if (dashboard.moduleErrors?.projects) return heading + '</div><p>项目暂时无法读取，请稍后重新载入。</p></section>';
+    const projects = (Array.isArray(dashboard.student?.projects) ? dashboard.student.projects : [])
+      .filter(project => /^PRJ-\d{3,}$/.test(project.code) && project.permission >= 1)
+      .sort((a, b) => a.code.localeCompare(b.code));
+    if (!projects.length) return heading + '</div><p>暂无已授权项目。</p></section>';
+    return heading + '<span>' + projects.length + ' 个项目</span></div><div class="home-v2-projects">' + projects.map(function (project) {
+      const title = [project.code, project.title].filter(Boolean).join(' · ');
+      const url = projectHomepageUrl(project.url);
+      const entry = url ? '<a class="button button-secondary" href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer" aria-label="进入 ' + escapeHtml(title) + ' 知识库">进入项目</a>' : '<span class="home-v2-module-note">项目入口待配置</span>';
+      return '<article class="home-v2-project"><div class="home-v2-project-head"><h3>' + escapeHtml(title) + '</h3>' + entry + '</div></article>';
+    }).join('') + '</div></section>';
+  }
+
   function renderStudent() {
     const profile = state.dashboard.profile;
     const week = state.dashboard.week;
@@ -819,9 +844,7 @@
       }).join(''), '</ol></details>',
       renderCoursePanel(), '</div><aside class="stack student-side" aria-label="学习、申请与项目">',
       renderLearningCard(), renderFinancePlaceholder(),
-      '<section class="panel project-home-card"><div class="panel-title"><h2>我的项目</h2>' + availableLink(data.project.url, '打开项目页') + '</div>',
-      '<h3>' + escapeHtml(data.project.code + ' ' + data.project.title) + '</h3><p>' + escapeHtml(data.project.milestone) + '</p>',
-      '<p class="project-note"><strong>最近阻塞：</strong>' + escapeHtml(data.project.blocker) + '</p></section>',
+      renderProjectCard(),
       '</aside></div>', footer()
     ].join('');
   }
