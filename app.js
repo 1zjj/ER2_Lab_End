@@ -783,11 +783,17 @@
   }
 
   function renderFinancePlaceholder() {
-    return '<section class="panel finance-card" aria-labelledby="finance-title"><p class="kicker">APPLICATIONS</p>' +
-      '<div class="panel-title"><h2 id="finance-title">预算与报销</h2>' + tag('筹备中') + '</div>' +
-      '<div class="finance-overview"><div><span aria-hidden="true">01</span><div><h3>预算申请</h3><p>费用发生前，说明用途与预计金额。</p></div></div>' +
-      '<div><span aria-hidden="true">02</span><div><h3>费用报销</h3><p>费用发生后，整理实际支出与凭证。</p></div></div></div>' +
-      '<p class="finance-notice">在线办理暂未开放，后续在这里统一查看申请进度。</p></section>';
+    return !DEMO_MODE && window.ER2Finance ? window.ER2Finance.card() : '<section class="panel finance-card"><h2>预算与报销</h2><p>登录后办理采购申请与费用报销。</p></section>';
+  }
+
+  let financeUIInstance;
+  function mountFinance() {
+    if (DEMO_MODE || !window.ER2Finance) return;
+    if (!financeUIInstance) financeUIInstance = window.ER2Finance.create({
+      apiBase: API_BASE, getSession: () => state.session, getProfile: () => state.dashboard?.profile,
+      onUnauthorized: () => window.dispatchEvent(new CustomEvent('er2-session-denied', { detail: { status: 401 } }))
+    });
+    financeUIInstance.mount();
   }
 
   function renderStudent() {
@@ -841,7 +847,7 @@
       '<li><a href="' + safeUrl(wikiUrl()) + '"><span>课程与培训维护</span><span>›</span></a></li>',
       '<li><a href="' + safeUrl(wikiUrl()) + '"><span>项目里程碑</span><span>›</span></a></li>',
       '<li><a href="' + safeUrl(wikiUrl()) + '"><span>周报原始记录</span><span>›</span></a></li>',
-      '</ul></section></aside></div>', renderCourseReviewPanel(), renderLiteratureSection(), footer()
+      '</ul></section></aside></div>', renderCourseReviewPanel(), renderLiteratureSection(), renderFinancePlaceholder(), footer()
     ].join('');
   }
 
@@ -869,11 +875,12 @@
       '<div class="metric-grid" style="margin-top:22px"><a class="metric-card" href="' + safeUrl(wikiUrl()) + '"><span>人员与权限</span><strong>角色配置</strong><small>维护学生、教师、管理者和负责关系</small></a>',
       '<a class="metric-card" href="' + safeUrl(wikiUrl()) + '"><span>课程与知识</span><strong>内容维护</strong><small>课程、SOP、资料版本和大文件</small></a>',
       '<a class="metric-card" href="' + safeUrl(wikiUrl()) + '"><span>项目与周报</span><strong>原始数据</strong><small>项目成员、里程碑和历史记录</small></a></div>',
-      renderDataSourceDiagnostics(), renderCourseReviewPanel(), renderLiteratureSection(), footer()
+      renderDataSourceDiagnostics(), renderCourseReviewPanel(), renderLiteratureSection(), renderFinancePlaceholder(), footer()
     ].join('');
   }
 
   function bindViewActions() {
+    try { mountFinance(); } catch (_) { /* Finance setup must not interrupt other homepage actions. */ }
     elements.app.querySelectorAll('[data-reload-dashboard]').forEach(function (button) {
       button.addEventListener('click', function () { if (button.disabled) return; button.disabled = true; loadDashboard(state.activeRole); });
     });

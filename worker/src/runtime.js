@@ -1,3 +1,5 @@
+export { FinanceRecords } from './finance.js';
+import { routeFinance, scheduleFinance } from './finance.js';
 export { LearningRecords } from './learning-coordinator.js';
 import { routeLearning, learningEnabled, learningRecipientsReady, LEARNING_STORE_NAME } from './learning.js';
 import { LEARNING_VERSION } from './learning-catalog.js';
@@ -57,6 +59,7 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
+    if (request.method !== 'OPTIONS' && /^\/api\/finance(?:\/|$)/.test(path)) return routeFinance(request, env);
     if (request.method !== 'OPTIONS' && /^\/api\/learning(?:\/|$)/.test(path)) return routeLearning(request, env);
     if (request.method !== 'OPTIONS' && /^\/api\/ai(?:\/|$)/.test(path)) return aiPaused(request, env);
 
@@ -109,7 +112,7 @@ export default {
     return new Response(JSON.stringify({
       ...body,
       release: BUILD_INFO,
-      capabilities: { learning: { version: LEARNING_VERSION, storageReady: learningReady, recipientsReady, independentPermissions: true }, courses: courseCapabilities(env), weekly: {
+      capabilities: { finance: { version: 'finance-v1', configured: env.FINANCE_ENABLED === 'true' && Boolean(env.FINANCE_RECORDS), independentPermissions: true }, learning: { version: LEARNING_VERSION, storageReady: learningReady, recipientsReady, independentPermissions: true }, courses: courseCapabilities(env), weekly: {
         version: 'weekly-save-history-v1', coordinatedWrites, historyPagination: true
       } },
       coreReady: body.authConfigured === true && body.dataConfigured === true && deep.ok === true &&
@@ -157,6 +160,7 @@ export default {
     }), { status: response.status, headers });
   },
   async scheduled(controller, env, ctx) {
+    if(env.FINANCE_ENABLED==='true'&&env.FINANCE_RECORDS)ctx.waitUntil(scheduleFinance(controller.scheduledTime, env));
     const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
       timeZone: 'Asia/Shanghai', weekday: 'short', hour: '2-digit', hourCycle: 'h23'
     }).formatToParts(new Date(controller.scheduledTime)).map((part) => [part.type, part.value]));
