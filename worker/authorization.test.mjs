@@ -212,8 +212,46 @@ try {
   await test('missing explicit master binding cannot use global fallback', async () => { assert.throws(() => strictBinding({ MEMBERS_TABLE_ID: 'm', FEISHU_BASE_APP_TOKEN: 'old' }, 'MEMBERS_TABLE_ID')); assert.equal((await call(1, '/api/me', 'GET', null, { ...env, MEMBERS_BASE_APP_TOKEN: '', FEISHU_BASE_APP_TOKEN: 'old' })).status, 503); });
   await test('master read failure denies API', async () => { failRead = true; assert.equal((await call(1, '/api/me')).status, 502); });
   await test('project list and dashboard exclude unrelated project', async () => {
+    rows.projects[0].fields['项目主页'] = { text: '打开项目', link: 'https://lcnywl4yrecr.feishu.cn/wiki/AllowedProjectHome?from=from_copylink' };
+    rows.projects[1].fields['项目主页'] = 'https://lcnywl4yrecr.feishu.cn/wiki/HiddenProjectHome';
     const list = await (await call(1, '/api/projects')).json(); assert.deepEqual(list.projects.map(p => p.code), ['PRJ-001']);
+    assert.equal(list.projects[0].url, 'https://lcnywl4yrecr.feishu.cn/wiki/AllowedProjectHome');
+    assert.equal(JSON.stringify(list).includes('HiddenProjectHome'), false);
     const dashboard = await (await call(1, '/api/dashboard')).json(); assert.deepEqual(dashboard.student.projects.map(p => p.code), ['PRJ-001']); assert.deepEqual(dashboard.manager.stats, {});
+    assert.equal(dashboard.student.projects[0].url, list.projects[0].url);
+    assert.equal(dashboard.student.home.projects[0].url, list.projects[0].url);
+    assert.equal(dashboard.student.project.url, list.projects[0].url);
+    assert.equal(JSON.stringify(dashboard).includes('HiddenProjectHome'), false);
+    assert.equal((await call(1, '/api/projects/PRJ-002')).status, 403);
+    assert.equal(writes.length, 0);
+  });
+  await test('project homepage supports Feishu hyperlink and text cells without using display labels', async () => {
+    const url = 'https://lcnywl4yrecr.feishu.cn/wiki/TestProjectHome';
+    for (const value of [url, { text: '项目知识库', link: url }, [{ text: '项目知识库', link: url }], [{ type: 'text', text: url.slice(0, 20) }, { type: 'text', text: url.slice(20) }]]) {
+      rows.projects[0].fields['项目主页'] = value;
+      const response = await call(1, '/api/projects/PRJ-001'); assert.equal(response.status, 200);
+      assert.equal((await response.json()).project.url, url);
+    }
+    assert.equal(writes.length, 0);
+  });
+  await test('unsafe or missing project homepage does not fall back to unrelated links', async () => {
+    rows.projects[0].fields['飞书链接'] = 'https://lcnywl4yrecr.feishu.cn/wiki/UnrelatedLegacyPage';
+    for (const value of [undefined, '', 'javascript:alert(1)', 'http://lcnywl4yrecr.feishu.cn/wiki/Test', 'https://evil.example/wiki/Test', 'https://lcnywl4yrecr.feishu.cn.evil.example/wiki/Test', 'https://user@lcnywl4yrecr.feishu.cn/wiki/Test', 'https://lcnywl4yrecr.feishu.cn/wiki/', 'https://lcnywl4yrecr.feishu.cn/docx/Test', { text: '项目知识库', link: 'javascript:alert(1)' }, [{ link: 'https://lcnywl4yrecr.feishu.cn/wiki/One' }, { link: 'https://lcnywl4yrecr.feishu.cn/wiki/Two' }]]) {
+      rows.projects[0].fields['项目主页'] = value;
+      assert.equal((await (await call(1, '/api/projects/PRJ-001')).json()).project.url, '');
+    }
+    assert.equal((await call(1, '/api/projects/PRJ-001', 'PATCH', { '项目主页': 'https://lcnywl4yrecr.feishu.cn/wiki/Other' })).status, 400);
+    assert.equal(writes.length, 0);
+  });
+  await test('project entry disappears from an existing session after authorization is withdrawn', async () => {
+    rows.projects[0].fields['项目主页'] = 'https://lcnywl4yrecr.feishu.cn/wiki/WithdrawnProjectHome';
+    assert.equal((await (await call(1, '/api/projects')).json()).projects.length, 1);
+    relations[0].fields['授权状态'] = '已撤销';
+    assert.deepEqual((await (await call(1, '/api/projects')).json()).projects, []);
+    assert.equal((await call(1, '/api/projects/PRJ-001')).status, 403);
+    const dashboard = await (await call(1, '/api/dashboard')).json();
+    assert.deepEqual(dashboard.student.projects, []);
+    assert.equal(JSON.stringify(dashboard).includes('WithdrawnProjectHome'), false);
   });
   await test('direct cross-project GET and PATCH denied', async () => { assert.equal((await call(1, '/api/projects/PRJ-002')).status, 403); assert.equal((await call(1, '/api/projects/PRJ-002', 'PATCH', { milestone: 'attack' })).status, 403); assert.equal(writes.length, 0); });
   await test('read-only reads but cannot edit', async () => { assert.equal((await call(2, '/api/projects/PRJ-002')).status, 200); assert.equal((await call(2, '/api/projects/PRJ-002', 'PATCH', { milestone: 'x' })).status, 403); });
