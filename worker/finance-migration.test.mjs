@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { startMigration,migrationStep } from './src/finance-migration.js';
+import { startMigration,migrationStep,links } from './src/finance-migration.js';
 import { SOURCE,EQUIPMENT,DEVICE_FIELDS } from './src/finance-policy.js';
 class Storage{data=new Map();async get(k){return Array.isArray(k)?new Map(k.filter(k=>this.data.has(k)).map(k=>[k,structuredClone(this.data.get(k))])):structuredClone(this.data.get(k));}async put(k,v){this.data.set(k,structuredClone(v));}}
 const types=[1,3,3,1,17,1,2,1,18,5,3,1,11];
@@ -30,3 +30,10 @@ assert.equal((await f.storage.get('migration:before:record:recOld')).fields['错
 for(const config of [{foreignReference:true},{failBackup:true}]){const x=fixture(config);await assert.rejects(startMigration(x.service,x.storage,{personId:'P-002'},{nativeDependenciesVerified:true}));assert.equal(x.writes.length,0);assert.equal(x.target.records.length,1);}
 const empty=fixture({emptyReference:true});await startMigration(empty.service,empty.storage,{personId:'P-002'},{nativeDependenciesVerified:true});assert.equal(empty.writes.length,0);
 console.log('PASS equipment migration backup-before-write, parent remapping, attachment copy, source immutability, field/value readback, other-table protection and retry safety');
+for(const value of [['recParent'],{record_ids:['recParent']},{link_record_ids:['recParent']},[{link_record_ids:['recParent']}],[{record_id:'recParent'}],[{id:'recParent'}]])assert.deepEqual(links(value),['recParent']);
+for(const value of [{},[{text:'parent name'}],[''],['not-a-record-id']])assert.throws(()=>links(value),e=>e.status===409);
+assert.deepEqual(links([]),[]);assert.deepEqual(links(null),[]);
+const orphan=fixture();orphan.service.sourceSnapshot=async()=>({...structuredClone(source),records:[{record_id:'recOnly',fields:{'文本':'device','父记录':{link_record_ids:['recMissing']}}}]});
+await assert.rejects(startMigration(orphan.service,orphan.storage,{personId:'P-002'},{nativeDependenciesVerified:true}),e=>e.status===409&&e.message.includes('recOnly')&&e.message.includes('recMissing'));
+assert.equal(orphan.writes.length,0);assert.equal(await orphan.storage.get('migration'),undefined);
+console.log('PASS wrapped link record IDs, malformed-link denial and orphan diagnostics before any write');
