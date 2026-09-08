@@ -35,6 +35,7 @@ jobs:
           node --check guide-store.js
           node tests/weekly-ui.test.mjs
           node tests/member-guide.test.mjs
+          node tests/course-capability.test.mjs
           test -f index.html
           test -f styles.css
           test -f data/catalog.json

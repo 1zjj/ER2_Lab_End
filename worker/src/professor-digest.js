@@ -1,3 +1,8 @@
+import { weeklyValues } from './weekly-write.js';
+import { weeklyRoster, isWeeklySubmitted as isSubmitted, hasWeeklyIssue as hasIssue } from './weekly-policy.js';
+import { recordPage } from './feishu-record-page.js';
+import { authority, strictBinding, hasProjectScope } from './authorization.js';
+import { resolveTableBinding } from './v2/bindings.js';
 /** Deterministic ER² professor digest. No model requests, inference or public storage. */
 const API = 'https://open.feishu.cn/open-apis';
 const encoder = new TextEncoder();
@@ -32,14 +37,6 @@ function isEnabled(record) {
   const value = get(record, '是否启用', '启用');
   return value !== false && value !== 0 && !['false', '停用', '否'].includes(text(value).toLowerCase());
 }
-function isSubmitted(record) {
-  return ['已提交', 'submitted'].includes(read(record, '提交状态').toLowerCase());
-}
-function hasIssue(value) {
-  return Boolean(value) && !['无', '暂无', '没有', '无问题', '无阻塞', '暂无问题', '暂无阻塞', 'none', 'n/a']
-    .includes(value.replace(/[。.!！\s]+$/u, '').toLowerCase());
-}
-
 export function weekAt(at) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit'
@@ -54,7 +51,7 @@ export function weekAt(at) {
     start: monday.toISOString().slice(0, 10), end: sunday.toISOString().slice(0, 10) };
 }
 
-export function buildDigest({ members = [], reports = [], literature = [], at }) {
+export function buildDigest({ members = [], reports = [], literature = [], literatureAvailable = true, at }) {
   if (!Number.isFinite(+new Date(at))) throw new Error('A valid digest cutoff is required');
   const cutoff = +new Date(at);
   const week = weekAt(cutoff);
@@ -88,10 +85,10 @@ export function buildDigest({ members = [], reports = [], literature = [], at })
     if (!found) { missing.push(name); continue; }
     const record = found.record;
     students.push({ name, project: read(member, '项目编号', '项目代码'),
-      progress: read(record, '本周完成与结果', '本周完成'),
-      nextPlan: read(record, '下周计划'), learning: read(record, '学习与方法', '学习进展'),
-      knowledge: read(record, '候选知识点'), blockers: read(record, '问题与阻塞', '阻塞'),
-      evidence: read(record, '证据链接'), submittedAt: found.time,
+      progress: weeklyValues(record).progress || read(record, '本周完成'),
+      nextPlan: weeklyValues(record).nextPlan, learning: weeklyValues(record).learning || read(record, '学习进展'),
+      knowledge: read(record, '候选知识点'), blockers: weeklyValues(record).blockers || read(record, '阻塞'),
+      evidence: weeklyValues(record).evidence, submittedAt: found.time,
       recordId: record.record_id || '' });
   }
   const reading = literature.filter((record) => read(record, '周次', 'WeekID') === week.id &&
@@ -100,6 +97,7 @@ export function buildDigest({ members = [], reports = [], literature = [], at })
     expected: roster.length, submitted: students.length, missing, students,
     attention: students.filter((student) => hasIssue(student.blockers)).map(({ name, blockers }) => ({ name, blockers })),
     knowledgeCount: students.filter((student) => hasIssue(student.knowledge)).length,
+    literatureAvailable,
     literatureCount: reading.length,
     literatureContributors: new Set(reading.map((record) => read(record, '提交人OpenID')).filter(Boolean)).size,
     missingTimestamps: students.filter((student) => !student.submittedAt).length };
@@ -125,7 +123,7 @@ function localTime(at) {
 }
 function blocksFor(digest) {
   const blocks = [plain(`${digest.week.start} — ${digest.week.end} · 第 ${digest.week.number} 周\n统计截止：${localTime(digest.cutoff)}（北京时间）`),
-    heading('本周概览'), plain(`已提交 ${digest.submitted} / ${digest.expected} 人　｜　未提交 ${digest.missing.length} 人\n填写问题/支持 ${digest.attention.length} 人　｜　知识候选 ${digest.knowledgeCount} 人\n文献阅读 ${digest.literatureCount} 篇 / ${digest.literatureContributors} 人`)];
+    heading('本周概览'), plain(`已提交 ${digest.submitted} / ${digest.expected} 人　｜　未提交 ${digest.missing.length} 人\n填写问题/支持 ${digest.attention.length} 人　｜　知识候选 ${digest.knowledgeCount} 人\n${digest.literatureAvailable === false ? '文献统计暂不可用（不影响本次周报原文）' : `文献阅读 ${digest.literatureCount} 篇 / ${digest.literatureContributors} 人`}`)];
   if (digest.missing.length || digest.attention.length || digest.missingTimestamps) {
     blocks.push(rule(), heading('需关注'));
     const notices = [];
@@ -191,10 +189,10 @@ async function request(path, token, body, method = body ? 'POST' : 'GET') {
   return result;
 }
 function binding(env, key) {
-  return { appToken: env[key.replace(/_TABLE_ID$/, '_BASE_APP_TOKEN')] || env.FEISHU_BASE_APP_TOKEN || '',
-    wikiToken: env[key.replace(/_TABLE_ID$/, '_BASE_WIKI_TOKEN')] || env.FEISHU_BASE_WIKI_TOKEN || '',
-    tableId: env[key] || (key === 'LITERATURE_TABLE_ID' ? 'tblyHLZpybGVU364' : '') };
+  if (key === 'MEMBERS_TABLE_ID') return strictBinding(env, key);
+  return resolveTableBinding({ ...env, LITERATURE_TABLE_ID: env.LITERATURE_TABLE_ID || 'tblyHLZpybGVU364' }, key);
 }
+
 async function tablePath(env, token, key, required = false) {
   const item = binding(env, key);
   if (!item.tableId || (!item.appToken && !item.wikiToken)) {
@@ -213,13 +211,12 @@ async function list(path, token) {
   if (!path) return [];
   const all = [], seenPages = new Set(); let page = '';
   do {
-    const result = await request(path + '?page_size=500' + (page ? '&page_token=' + encodeURIComponent(page) : ''), token);
-    if (!Array.isArray(result.data?.items)) throw new Error('Invalid Feishu record list');
-    all.push(...result.data.items);
-    if (!result.data.has_more) break;
-    page = result.data.page_token;
-    if (!page || seenPages.has(page)) throw new Error('Incomplete Feishu pagination');
-    seenPages.add(page);
+    const result = await request(path + '?user_id_type=open_id&page_size=500' + (page ? '&page_token=' + encodeURIComponent(page) : ''), token);
+    const parsed = recordPage(result, page, all.length);
+    all.push(...parsed.items);
+    page = parsed.next;
+    if (page && seenPages.has(page)) throw new Error('Incomplete Feishu pagination');
+    if (page) seenPages.add(page);
   } while (page);
   return all;
 }
@@ -234,9 +231,9 @@ export async function runProfessorDigest(at, env) {
   const auth = await request('/auth/v3/tenant_access_token/internal', '', { app_id: env.FEISHU_APP_ID, app_secret: env.FEISHU_APP_SECRET });
   const token = auth.tenant_access_token || auth.data?.tenant_access_token;
   if (!token) throw new Error('No Feishu tenant token');
-  const [memberPath, weeklyPath, literaturePath, logPath] = await Promise.all([
+  const [memberPath, weeklyPath, logPath] = await Promise.all([
     tablePath(env, token, 'MEMBERS_TABLE_ID', true), tablePath(env, token, 'WEEKLY_TABLE_ID', true),
-    tablePath(env, token, 'LITERATURE_TABLE_ID'), tablePath(env, token, 'AUTOMATION_LOGS_TABLE_ID')]);
+    tablePath(env, token, 'AUTOMATION_LOGS_TABLE_ID', true)]);
   const logs = await list(logPath, token);
   const runKey = weekAt(at).id + '-professor-summary'; // Preserve the legacy weekly deduplication key.
   const success = (key) => logs.some((record) => read(record, '运行键') === key && read(record, '执行结果') === '成功');
@@ -245,8 +242,21 @@ export async function runProfessorDigest(at, env) {
     if (logPath) await request(logPath, token, { fields: { '运行键': key, '任务名称': '教授周报汇总（原文拼接）',
       '执行时间': new Date().toISOString(), '执行结果': result, '执行说明': detail } });
   };
-  const [members, reports, literature] = await Promise.all([list(memberPath, token), list(weeklyPath, token), list(literaturePath, token)]);
-  const digest = buildDigest({ members, reports, literature, at });
+  const [masterRecords, reports, literatureResult] = await Promise.all([
+    list(memberPath, token), list(weeklyPath, token),
+    (async () => {
+      const path = await tablePath(env, token, 'LITERATURE_TABLE_ID');
+      return { records: await list(path, token), available: Boolean(path) };
+    })().catch(() => ({ records: [], available: false }))
+  ]);
+  const recipient = authority(masterRecords, [], [], env.PROFESSOR_OPEN_ID);
+  if (!recipient.duties.includes('教授周报接收')) throw new Error('Professor recipient has no current digest duty');
+  const members = weeklyRoster(masterRecords).map(member => ({ ...member.memberRecord,
+    fields: { ...member.memberRecord.fields, '飞书OpenID': member.sub, '角色': ['学生'], '是否启用': true }
+  }));
+  // Weekly reports are personal records. Project-labelled material requires separate project authorization.
+  const personalReports = reports.filter(record => !hasProjectScope(record));
+  const digest = buildDigest({ members, reports: personalReports, literature: literatureResult.records, literatureAvailable: literatureResult.available, at });
   const cards = buildCards(digest, env.FRONTEND_URL, env.PROFESSOR_OPEN_ID);
   const snapshotId = await stableId(JSON.stringify(cards));
   const prefix = `${runKey}-${DIGEST_VERSION}-`;
@@ -259,6 +269,8 @@ export async function runProfessorDigest(at, env) {
       const partKey = `${prefix}${i + 1}`;
       if (success(partKey)) continue;
       const uuid = await stableId(`${partKey}:${env.PROFESSOR_OPEN_ID}:${snapshotId}`);
+      const currentRecipient = authority(await list(memberPath, token), [], [], env.PROFESSOR_OPEN_ID);
+      if (!currentRecipient.duties.includes('教授周报接收')) throw new Error('Professor digest duty was revoked');
       await request('/im/v1/messages?receive_id_type=open_id', token, messageBody(cards[i], env.PROFESSOR_OPEN_ID, uuid));
       await log(partKey, '成功', `${snapshotId}:${i + 1}/${cards.length}`);
     }

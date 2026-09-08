@@ -4,7 +4,16 @@ import { capabilitiesFromMemberFields, canReviewCourses, canApproveBudgets, canH
 import { validateSchema, SCHEMA_VERSION } from './src/v2/schema.js';
 import { buildTrainingCatalog, visibleTrainingCatalog } from './src/v2/training.js';
 import { buildV2Health } from './src/v2/health.js';
-import { nextPersonId, validatePersonRecord, mayUseWorkbench } from './src/v2/personnel.js';
+import { nextPersonId, validatePersonRecord, mayUseWorkbench, normalizePersonRecord } from './src/v2/personnel.js';
+
+// The live master uses 成员编号; shadow validation must agree with authorization.
+{
+  assert.equal(normalizePersonRecord({ fields: { 成员编号: 'P-003' } }).personId, 'P-003');
+  assert.equal(normalizePersonRecord({ fields: { 人员编号: 'P-003' } }).personId, 'P-003');
+  assert.equal(normalizePersonRecord({ fields: { 成员编号: 'P-003', 人员编号: 'P-004' } }).personId, '');
+  assert.equal(normalizePersonRecord({ fields: { 成员编号: 'P-003', 人员编号: 'P-003' } }).personId, 'P-003');
+  assert.ok(validateSchema('members', []).missingRequired.includes('成员编号'));
+}
 
 {
   const env = {
