@@ -30,7 +30,7 @@ export function financeAccess(actor, people, env) {
   const delegate=internal && delegates.includes(actor.personId) && actor.duties.includes('管理员');
   return { canSubmit:internal, canReview:actor.sub===reviewer?.sub || delegate, canConfigure:internal && actor.duties.includes('管理员'),
     isDelegate:delegate, reviewerReady:Boolean(reviewer), reviewerId, reviewerName:reviewer?.name || '',
-    canSummary:internal && (actor.sub===reviewer?.sub || delegate || actor.personId===(env.FINANCE_PROFESSOR_PERSON_ID || 'P-001')) };
+    canSummary:internal && actor.personId===(env.FINANCE_PROFESSOR_PERSON_ID || 'P-001') };
 }
 export function requireReview(actor, access, doc) {
   if(!access.canReview) throw authError(403,'没有财务审核权限');

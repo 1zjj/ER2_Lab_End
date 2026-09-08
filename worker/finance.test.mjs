@@ -14,6 +14,11 @@ let assets=0;const service={equipmentMatches:async d=>d.lines.map((l,index)=>({i
 const run=(sub,path,body)=>executeFinance(new Request('https://worker.test/api/finance'+path,body?{method:'POST',body:JSON.stringify(body)}:{}),env,storage,async()=>context(sub),async()=>service).then(r=>r.json());
 const draft={kind:'claim',lines:[{name:'传感器',quantity:'2',unitPrice:'99.50',purchaseDate:'2026-08-25'}],requestId:'finance-valid-request',submit:true};
 assert.equal(context('ou_finance').access.canReview,true);assert.equal(context('ou_other').access.canReview,false);assert.equal(context('ou_pi').access.canReview,false);assert.equal(context('ou_admin').access.canReview,true);
+for(const sub of ['ou_student','ou_finance','ou_admin','ou_other']){
+  assert.equal(context(sub).access.canSummary,false,'monthly spending is reserved for the configured professor');
+  await assert.rejects(run(sub,'/summary?month=2026-08'),e=>e.status===403);
+}
+assert.equal(context('ou_pi').access.canSummary,true);
 assert.equal(canView(context('ou_finance').actor,context('ou_finance').access,{owner:'ou_student',kind:'claim',status:'draft'}),false);
 assert.equal(canView(context('ou_finance').actor,context('ou_finance').access,{owner:'ou_student',kind:'purchase',status:'sent'}),false);
 assert.throws(()=>requireReview(context('ou_finance').actor,context('ou_finance').access,{owner:'previous_finance_account',personId:'P-004'}),e=>e.status===403);
@@ -36,6 +41,13 @@ for(const [k]of storage.data)if(k.startsWith('job:notice'))storage.data.delete(k
 for(let n=0;n<3;n++)await processFinanceJobs(env,storage,async()=>service);assert.equal(assets,1);assert.equal((await run('ou_student','/record?id='+id)).document.status,'completed');
 await run('ou_finance','/review',{id,revision:3,action:'approve',requestId:'approve-with-record'});assert.equal(assets,1);
 const summary=monthlySummary([reviewed.document,{kind:'purchase',status:'sent',totalCents:500000}], '2026-08');assert.equal(summary.totalCents,19900);
+assert.equal((await run('ou_pi','/summary?month=2026-08')).totalCents,19900);
+env.FINANCE_PROFESSOR_PERSON_ID='P-005';
+await assert.rejects(run('ou_pi','/summary?month=2026-08'),e=>e.status===403);
+assert.equal((await run('ou_other','/summary?month=2026-08')).totalCents,19900);
+env.FINANCE_PROFESSOR_PERSON_ID='P-001';
+people[0].fields['人员状态']='离组';await assert.rejects(run('ou_pi','/summary?month=2026-08'),e=>e.status===403);people[0].fields['人员状态']='在组';
+console.log('PASS professor-only monthly summary, direct endpoint denial, reassignment and membership revocation');
 people[3].fields['系统职责']=[];await assert.rejects(run('ou_finance','/records?review=true'),e=>e.status===403);
 await assert.rejects(run('ou_finance','/review',{id,revision:3,action:'approve',requestId:'approve-with-record'}),e=>e.status===404||e.status===403);
 people[3].fields['系统职责']=['财务'];
