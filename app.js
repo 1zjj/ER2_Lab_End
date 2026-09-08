@@ -321,8 +321,10 @@
     if (event.detail?.status !== 401) privateDrafts.clear();
     memberGuide.bind('');
     state.dashboard = null;
-    document.getElementById('weekly-source-panel').hidden = true;
-    document.getElementById('weekly-source-result').textContent = '';
+    const sourcePanel = document.getElementById('weekly-source-panel');
+    const sourceResult = document.getElementById('weekly-source-result');
+    if (sourcePanel) sourcePanel.hidden = true;
+    if (sourceResult) sourceResult.textContent = '';
     document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
     elements.app.hidden = true;
     showError('访问权限需要重新核验', '请重新登录；若账号已停用，请联系管理员核对。');
@@ -399,7 +401,6 @@
       const roles = Array.isArray(data.profile.roles) ? data.profile.roles.filter(function (item) { return roleMeta[item]; }) : ['student'];
       state.activeRole = roles.includes(role) ? role : (roles.includes(state.activeRole) ? state.activeRole : roles[0]);
       renderAccount();
-      document.getElementById('weekly-source-panel').hidden = !roles.includes('manager');
       renderRoleNavigation(roles);
       renderActiveView();
       elements.notice.hidden = !DEMO_MODE;
@@ -415,7 +416,6 @@
           elements.accountName.textContent = me.profile.name;
           elements.accountRole.textContent = '已确认身份';
           elements.logoutButton.hidden = false;
-          document.getElementById('weekly-source-panel').hidden = !me.profile.roles.includes('manager');
         } catch (_) { /* Keep the original failure and do not assume an identity. */ }
       }
     }
@@ -786,6 +786,14 @@
     ].join('');
   }
 
+  function renderDataSourceDiagnostics() {
+    if (state.activeRole !== 'manager' || !state.dashboard?.profile?.roles?.includes('manager')) return '';
+    return '<details class="panel data-source-diagnostics" id="weekly-source-panel"><summary>数据源诊断</summary>' +
+      '<div class="data-source-diagnostics-body"><h3>周报数据源核对</h3><p>查看后端实际连接的周报表及字段配置。</p>' +
+      '<button class="button button-secondary" type="button" id="weekly-source-button">查看当前连接的周报表</button>' +
+      '<div id="weekly-source-result" aria-live="polite"></div></div></details>';
+  }
+
   function renderManager() {
     const data = state.dashboard.manager;
     return [
@@ -802,11 +810,13 @@
       '<div class="metric-grid" style="margin-top:22px"><a class="metric-card" href="' + safeUrl(wikiUrl()) + '"><span>人员与权限</span><strong>角色配置</strong><small>维护学生、教师、管理者和负责关系</small></a>',
       '<a class="metric-card" href="' + safeUrl(wikiUrl()) + '"><span>课程与知识</span><strong>内容维护</strong><small>课程、SOP、资料版本和大文件</small></a>',
       '<a class="metric-card" href="' + safeUrl(wikiUrl()) + '"><span>项目与周报</span><strong>原始数据</strong><small>项目成员、里程碑和历史记录</small></a></div>',
-      renderCourseReviewPanel(), renderLiteratureSection(), footer()
+      renderDataSourceDiagnostics(), renderCourseReviewPanel(), renderLiteratureSection(), footer()
     ].join('');
   }
 
   function bindViewActions() {
+    const sourceButton = elements.app.querySelector('#weekly-source-button');
+    if (sourceButton) sourceButton.addEventListener('click', showWeeklySource);
     elements.app.querySelectorAll('[data-open-learning-center]').forEach(function (button) {
       button.addEventListener('click', openLearningCenter);
     });
@@ -1298,16 +1308,25 @@
     renderActiveView();
     if (elements.onboardingDialog.open) renderOnboardingDialog();
   });
-  document.getElementById('weekly-source-button').addEventListener('click', async function () {
+  async function showWeeklySource() {
+    if (state.activeRole !== 'manager' || !state.dashboard?.profile?.roles?.includes('manager')) return;
     const output = document.getElementById('weekly-source-result');
+    const button = document.getElementById('weekly-source-button');
+    if (!output || !button || button.disabled) return;
+    const owner = state.dashboard.profile.sub;
+    const stillVisible = () => state.activeRole === 'manager' && state.dashboard?.profile?.sub === owner &&
+      state.dashboard?.profile?.roles?.includes('manager') && document.getElementById('weekly-source-result') === output;
+    button.disabled = true;
     output.textContent = '正在读取服务器实际配置…';
     try {
       const source = await request('/api/admin/weekly-source' + (config.feishuDocsOrigin ? '?docsOrigin=' + encodeURIComponent(config.feishuDocsOrigin) : ''));
+      if (!stillVisible()) return;
       output.innerHTML = '<p>' + escapeHtml(source.baseName + ' / ' + source.tableName) + '</p><p>表 ID：' + escapeHtml(source.tableId) + '</p>' +
         (source.tableUrl ? availableLink(source.tableUrl, '打开实际连接的周报表', 'button button-secondary') : '<p>未返回直达地址，请核对飞书文档域名配置。</p>') +
         (source.schema ? '<p>' + (source.schema.ok ? '当前写入字段检查通过；仍需实际提交验收。' : escapeHtml('待修复字段：' + source.schema.missing.concat(source.schema.incompatible).join('、'))) + '</p>' : '');
-    } catch (error) { output.textContent = error.message; }
-  });
+    } catch (error) { if (stillVisible()) output.textContent = error.message; }
+    finally { button.disabled = false; }
+  }
   document.getElementById('retry-button').addEventListener('click', function () { loadDashboard(state.activeRole); });
   elements.reportForm.addEventListener('submit', submitReport);
   elements.literatureForm.addEventListener('submit', submitLiterature);

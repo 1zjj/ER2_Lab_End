@@ -36,6 +36,7 @@ jobs:
           node tests/weekly-ui.test.mjs
           node tests/member-guide.test.mjs
           node tests/course-capability.test.mjs
+          node tests/diagnostics-ui.test.mjs
           test -f index.html
           test -f styles.css
           test -f data/catalog.json

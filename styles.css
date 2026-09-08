@@ -668,6 +668,10 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
 .guide-explanation p { line-height: 1.7; margin: 8px 0 0; }
 .onboarding-banner .action-row, .onboarding-shortcut .action-row { flex-wrap: wrap; }
 .course-panel[hidden] { display: none; }
+.data-source-diagnostics { margin-top: 22px; }
+.data-source-diagnostics > summary { cursor: pointer; font-weight: 700; font-size: 18px; }
+.data-source-diagnostics-body { margin-top: 20px; }
+.data-source-diagnostics-body p { color: var(--muted); line-height: 1.7; overflow-wrap: anywhere; }
 
 /* Student homepage: one place for each routine action. Dialog styles stay separate. */
 .student-welcome { align-items: center; }
