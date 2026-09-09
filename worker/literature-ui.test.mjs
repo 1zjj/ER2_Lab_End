@@ -24,9 +24,13 @@ const success = { ok: true, recordId: 'confirmed', readBackVerified: true, liter
 try {
   assert.equal(form.noValidate, true); assert.equal(error.parentElement.className, 'modal-actions');
   button.click(); await wait(() => !button.disabled); assert.equal(requests.length, 0); assert.match(error.textContent, /请填写论文标题/); assert.equal(error.hidden, false);
+  assert.equal(form.elements.noteUrl.required, false);
+  respond = async () => success;
   fill(); form.elements.noteUrl.value = ''; button.click(); await wait(() => !button.disabled);
-  assert.match(error.textContent, /请填写飞书阅读笔记链接/); assert.equal(d.activeElement.name, 'noteUrl'); assert.equal(requests.length, 0);
-  form.elements.noteUrl.value = 'http://example.com'; button.click(); await wait(() => !button.disabled); assert.match(error.textContent, /https/); assert.equal(requests.length, 0);
+  assert.equal(requests[0].noteUrl, ''); assert.equal(closed, 1); assert.equal(cleared, 1); assert.equal(toasts, 1);
+  requests.length = 0; closed = 0; cleared = 0; toasts = 0;
+  respond = async () => { throw new Error('模拟保存失败'); };
+  fill(); form.elements.noteUrl.value = 'http://example.com'; button.click(); await wait(() => !button.disabled); assert.match(error.textContent, /https/); assert.equal(requests.length, 0);
   fill(); form.requestSubmit(button); await wait(() => !button.disabled);
   assert.equal(requests[0].noteUrl, 'https://example.com/note', 'Enter/requestSubmit normalizes before validity checks');
   assert.match(error.textContent, /模拟保存失败/); assert.equal(error.hidden, false); assert.equal(form.elements.title.value, '合成论文'); assert.equal(cleared, 0);

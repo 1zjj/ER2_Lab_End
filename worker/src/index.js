@@ -304,7 +304,7 @@ async function saveLiterature(request, env, session) {
   validateText(body.method, '方法摘要', 0, 5000);
   validateText(body.review, '个人评价', 0, 3000);
   validateText(body.projectRelation, '与项目关系', 0, 3000);
-  validateHttps(body.noteUrl, '阅读笔记链接', true);
+  validateHttps(body.noteUrl, '阅读笔记链接', false);
   validateHttps(body.paperUrl, '论文链接', false);
   validateHttps(body.attachmentUrl, '论文附件链接', false);
 
@@ -343,6 +343,7 @@ async function saveLiterature(request, env, session) {
   const binding = resolveTableBinding(env, 'LITERATURE_TABLE_ID');
   const app = await resolveBitableAppToken(binding, tenantToken);
   const serialized = serializeLiterature(await weeklySchema(app, binding.tableId, tenantToken), fields);
+  const expected = { ...serialized, '阅读笔记链接': serialized['阅读笔记链接'] ?? '' };
   const duplicate = existingRecords.find((record) =>
     (String(field(record, '提交人OpenID')) === String(session.sub) && clean(field(record, '请求ID')) === businessRequestId) || (
       String(field(record, '提交人OpenID')) === String(session.sub) &&
@@ -352,7 +353,7 @@ async function saveLiterature(request, env, session) {
     )
   );
   if (duplicate) {
-    const comparable = { ...serialized };
+    const comparable = { ...expected };
     for (const key of ['请求ID', '提交时间', '阅读日期', '提交人姓名', '提交人角色']) delete comparable[key];
     if (!literatureMatches(duplicate, comparable)) throw httpError(409, '这篇文献已有不同内容的记录，请先核对已提交记录；当前填写内容已保留');
     return json(request, env, {
@@ -373,7 +374,7 @@ async function saveLiterature(request, env, session) {
     if (!id) throw new Error('Missing confirmed literature record ID');
     const readBack = await feishuRequest('/bitable/v1/apps/' + app + '/tables/' + binding.tableId + '/records/' + encodeURIComponent(id), { bearer: tenantToken });
     record = readBack.data?.record;
-    if (readBack.code !== 0 || !literatureMatches(record, serialized)) throw new Error('Literature readback mismatch');
+    if (readBack.code !== 0 || !literatureMatches(record, expected)) throw new Error('Literature readback mismatch');
   } catch (error) { throw Object.assign(error, { status: 502, code: 'LITERATURE_READBACK_FAILED' }); }
   return json(request, env, {
     ok: true, readBackVerified: true, recordId: record.record_id,
