@@ -35,23 +35,23 @@ function dashboardContext(request) {
   const effects = [];
   const context = vm.createContext({ DEMO_MODE: false, URLSearchParams, location: { search: '', href: 'https://test.invalid' }, window: {},
     state: { session: 'fixture', activeRole: 'student' }, roleMeta: { student: {} }, request,
-    privateDrafts: { bind() {} }, memberGuide: { bind() {} },
+    tabStorage: { persistent: true }, privateDrafts: { bind() {} }, memberGuide: { bind() {} },
     elements: { accountName: {}, accountRole: {}, logoutButton: {}, notice: {}, error: {}, loading: {}, app: {} },
     setBusy() {}, showError: (_, message) => effects.push(message), renderAccount() {}, renderRoleNavigation() {},
-    renderActiveView: () => effects.push('render') });
+    mergeCatalog: (a,b) => b || [], renderActiveView: () => effects.push('render') });
   vm.runInContext(extract('  async function loadDashboard(', '  function renderAccount('), context);
   return { context, effects };
 }
 const calls = [];
 const requiredFailure = dashboardContext(async path => { calls.push(path); throw Object.assign(Error('人员读取失败'), { status: 502, binding: 'MEMBERS_TABLE_ID' }); });
 await requiredFailure.context.loadDashboard();
-assert.deepEqual(calls, ['/api/dashboard'], 'Do not repeat a known failed MEMBERS read through fallback and /api/me');
+assert.deepEqual(calls, ['/api/dashboard/start'], 'Do not repeat a known failed MEMBERS read through fallback and /api/me');
 assert.deepEqual(requiredFailure.effects, ['人员读取失败']);
 
 let clock = 0; const budgets = [];
 const fallback = dashboardContext(async (path, options) => {
   budgets.push(options.readTimeoutMs);
-  if (path === '/api/dashboard') { clock = 24000; throw Object.assign(Error('project read failed'), { status: 502, binding: 'AUTH_PROJECTS_TABLE_ID' }); }
+  if (path === '/api/dashboard/start') { clock = 24000; throw Object.assign(Error('project read failed'), { status: 502, binding: 'AUTH_PROJECTS_TABLE_ID' }); }
   return { profile: { sub: 'same-user', roles: ['student'] }, weeklyOnly: true };
 });
 fallback.context.Date = { now: () => clock };
@@ -69,7 +69,7 @@ assert.deepEqual(stale.effects, ['render'], 'An earlier refresh cannot overwrite
 const accountChange = dashboardContext(async () => { accountChange.context.state.session = ''; return payload('old-account'); });
 await accountChange.context.loadDashboard(); assert.equal(accountChange.context.state.dashboard, undefined);
 
-const catalog = vm.createContext({ DEMO_MODE: false, URLSearchParams, location: { search: '' },
+const catalog = vm.createContext({ DEMO_MODE: false, URLSearchParams, location: { search: '' }, window: {},
   fetch: () => new Promise(() => {}), loadDashboard: () => calls.push('started-with-hung-catalog') });
 vm.runInContext(extract('  const catalogRequest =', '}());'), catalog);
 assert.equal(calls.at(-1), 'started-with-hung-catalog');

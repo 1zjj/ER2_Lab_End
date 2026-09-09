@@ -34,7 +34,7 @@ export async function executeFinance(request,env,storage,contextProvider=finance
   env=readScope(env,request);const c=await contextProvider(request,env),{actor,access}=c;
   const url=new URL(request.url),path=url.pathname.slice('/api/finance'.length)||'/';
   const settings=await storage.get('settings')||{};
-  env={...env,FINANCE_EQUIPMENT_BINDING:settings.equipmentBinding};
+  env.FINANCE_EQUIPMENT_BINDING=settings.equipmentBinding;
   if(request.method==='GET'){
     if(path==='/')return json(request,env,{version:FINANCE_VERSION,access,ready:financeReady(settings),statuses:STATUS,
       pending:access.canReview?(await docs(storage)).filter(d=>d.kind==='claim'&&['submitted','sync_error','approved'].includes(d.status)).length:0,

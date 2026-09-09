@@ -250,11 +250,27 @@
   </dialog>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="./config.js?v=project-entry-1"></script>
-  <script src="./draft-store.js?v=p0-2"></script>
-  <script src="./guide-store.js?v=member-guide-1"></script>
-  <script src="./learning-center.js?v=learning-text-1"></script>
-  <script src="./finance.js?v=finance-1"></script>
-  <script src="./app.js?v=project-entry-1"></script>
+  <script>
+    (function () {
+      function failed(event) {
+        if (event?.target && event.target !== window && event.target.tagName !== 'SCRIPT') return;
+        if (window.ER2_APP_STARTED) return;
+        window.ER2_BOOT_FAILED = true;
+        document.getElementById('loading-state').hidden = true;
+        document.getElementById('error-state').hidden = false;
+        document.getElementById('error-title').textContent = '工作台组件未完整载入';
+        document.getElementById('error-message').textContent = '请重新载入页面后继续，已保存的记录不受影响。';
+        document.getElementById('retry-button').onclick = function () { location.reload(); };
+      }
+      window.addEventListener('error', failed, true);
+      setTimeout(function () { if (!window.ER2_APP_STARTED) failed(); }, 20000);
+    })();
+  </script>
+  <script src="./config.js?v=stability-20260909"></script>
+  <script src="./draft-store.js?v=stability-20260909"></script>
+  <script src="./guide-store.js?v=stability-20260909"></script>
+  <script src="./learning-center.js?v=stability-20260909"></script>
+  <script src="./finance.js?v=stability-20260909"></script>
+  <script src="./app.js?v=stability-20260909"></script>
 </body>
 </html>

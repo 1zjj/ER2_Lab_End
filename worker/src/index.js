@@ -73,7 +73,7 @@ export default {
       if (url.pathname === '/auth/callback') return await authCallback(request, env);
 
       let session = await requireSession(request, env);
-      const personalRoutes = ['/api/me', '/api/weekly', '/api/reports/history', '/api/reports', '/api/admin/weekly-source', '/api/admin/literature-source'];
+      const personalRoutes = ['/api/me', '/api/dashboard/start', '/api/weekly', '/api/reports/history', '/api/reports', '/api/admin/weekly-source', '/api/admin/literature-source'];
       if (url.pathname.startsWith('/api/')) session = personalRoutes.includes(url.pathname)
         ? await requireMemberIdentity(env, session) : await requireActiveMember(env, session);
       if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(request.method) && url.pathname.startsWith('/api/')) enforceWriteRateLimit(session.sub);
@@ -85,10 +85,11 @@ export default {
       if (/^\/api\/projects(?:\/|$)/.test(url.pathname)) return await projectApi(request, env, session);
       if (url.pathname === '/api/reports/history' && request.method === 'GET') return await reportHistory(request, env, session);
       if (url.pathname === '/api/weekly' && request.method === 'GET') return await weeklyPage(request, env, session);
+      if (url.pathname === '/api/dashboard/start' && request.method === 'GET') return await dashboardStart(request, env, session);
       if (url.pathname === '/api/dashboard' && request.method === 'GET') return await dashboard(request, env, session);
       if (url.pathname === '/api/reports' && request.method === 'POST') return await coordinateWeeklySave(request, env, session);
       if (url.pathname === '/api/literature' && request.method === 'GET') return await getLiterature(request, env, session);
-      if (url.pathname === '/api/literature' && request.method === 'POST') return await saveLiterature(request, env, session);
+      if (url.pathname === '/api/literature' && request.method === 'POST') return await coordinateLiteratureSave(request, env, session);
       if (url.pathname === '/api/teacher/review' && request.method === 'POST') return await saveTeacherReview(request, env, session);
       if (url.pathname === '/api/courses/submit' && request.method === 'POST') return await saveCourseSubmission(request, env, session);
       if (url.pathname === '/api/courses/confirm' && request.method === 'POST') return await confirmCourseSubmission(request, env, session);
@@ -163,7 +164,31 @@ async function authCallback(request, env) {
   return Response.redirect(returnTo.split('#')[0] + '#session=' + encodeURIComponent(sessionToken), 302);
 }
 
+// Identity is the only prerequisite for rendering the shell. Each data module
+// still performs its own fresh authorization before returning any records.
+async function dashboardStart(request, env, session) {
+  const people = memberSnapshots.get(session) || [];
+  const members = people.flatMap(record => { try {
+    const member = authority(people, [], [], identity(record));
+    return [{ ...member, openId: member.sub, enabled: true }];
+  } catch (_) { return []; } });
+  const week = weekInfo(new Date());
+  const student = await buildStudent(session, week, [], [], [], [], []);
+  student.projects = [];
+  const manager = session.roles.includes('manager') ? buildManager(members, [], [], env) : { stats: {}, automations: [] };
+  manager.stats.projects = null;
+  const teacher = buildTeacher(session, week, [], [], [], env);
+  return json(request, env, {
+    progressive: true,
+    profile: { sub: session.sub, personId: session.personId, name: session.name, track: session.track || '', roles: session.roles },
+    week, student, teacher, manager, literature: null, catalog: [], moduleErrors: {},
+    moduleLoading: { weekly: true, projects: true, literature: true, extras: true },
+    capabilities: { courses: courseCapabilities(env) }
+  });
+}
+
 async function dashboard(request, env, session) {
+  const extrasOnly = new URL(request.url).searchParams.get('section') === 'extras';
   const requestedRole = new URL(request.url).searchParams.get('role');
   const role = session.roles.includes(requestedRole) ? requestedRole : session.roles[0];
   if (!role) throw httpError(403, '账号没有可用角色');
@@ -185,12 +210,12 @@ async function dashboard(request, env, session) {
   };
   const [memberRecords, reportRecords, projectRecords, courseRecords, taskRecords, linkRecords, literatureRecords] = await Promise.all([
     memberSnapshots.get(session) || listRecords(env, tenantToken, 'MEMBERS_TABLE_ID'),
-    listRecords(env, tenantToken, 'WEEKLY_TABLE_ID'),
-    optional('projects', 'PROJECTS_TABLE_ID'),
+    extrasOnly ? [] : listRecords(env, tenantToken, 'WEEKLY_TABLE_ID'),
+    extrasOnly ? [] : optional('projects', 'PROJECTS_TABLE_ID'),
     courseCapabilities(env).enabled ? optional('courses', 'COURSES_TABLE_ID') : Promise.resolve([]),
     optional('tasks', 'TASKS_TABLE_ID'),
     optional('links', 'LINKS_TABLE_ID'),
-    optional('literature', 'LITERATURE_TABLE_ID')
+    extrasOnly ? [] : optional('literature', 'LITERATURE_TABLE_ID')
   ]);
   const currentWeek = weekInfo(new Date());
   const members = memberRecords.flatMap(record => { try { const member = authority(memberRecords, [], [], identity(record)); return [{ ...member, openId: member.sub, enabled: true }]; } catch (_) { return []; } });
@@ -290,7 +315,29 @@ async function getLiterature(request, env, session) {
   return json(request, env, { literature: buildLiterature(session, weekInfo(new Date()), records) });
 }
 
-async function saveLiterature(request, env, session) {
+async function coordinateLiteratureSave(request, env, session) {
+  if (!env.WEEKLY_WRITES) throw Object.assign(httpError(503, '文献保存保护尚未就绪，请稍后重试'), { code: 'LITERATURE_WRITE_FAILED' });
+  const binding = resolveTableBinding(env, 'LITERATURE_TABLE_ID');
+  const app = await resolveBitableAppToken(binding, await getTenantToken(env));
+  // Reuse the deployed durable namespace with an independent object key.
+  const key = JSON.stringify(['literature', app, binding.tableId, session.personId]);
+  return env.WEEKLY_WRITES.get(env.WEEKLY_WRITES.idFromName(key)).fetch(request);
+}
+
+export async function executeLiteratureRequest(request, env, storage) {
+  env = readScope(env, request);
+  try {
+    if (request.method !== 'POST' || new URL(request.url).pathname !== '/api/literature') throw httpError(404, '接口不存在');
+    const session = await requireActiveMember(env, await requireSession(request, env));
+    return await saveLiterature(request, env, session, storage);
+  } catch (error) {
+    const status = Number(error.status || 500);
+    return json(request, env, { code: error.code || 'REQUEST_FAILED',
+      message: status >= 500 ? '尚未确认文献保存结果，填写内容已保留；请使用原提交重试核对。' : error.message }, status);
+  }
+}
+
+async function saveLiterature(request, env, session, storage) {
   const body = await readJson(request);
   const businessRequestId = requestBusinessId(request, body, 'literature');
   validateText(body.title, '论文标题', 1, 500);
@@ -356,6 +403,8 @@ async function saveLiterature(request, env, session) {
     const comparable = { ...expected };
     for (const key of ['请求ID', '提交时间', '阅读日期', '提交人姓名', '提交人角色']) delete comparable[key];
     if (!literatureMatches(duplicate, comparable)) throw httpError(409, '这篇文献已有不同内容的记录，请先核对已提交记录；当前填写内容已保留');
+    const pending = await storage.get('literature:pending');
+    if (pending?.requestId === clean(field(duplicate, '请求ID'))) await storage.delete('literature:pending');
     return json(request, env, {
       ok: true,
       deduplicated: true,
@@ -364,21 +413,30 @@ async function saveLiterature(request, env, session) {
       literature: buildLiterature(session, currentWeek, existingRecords)
     });
   }
+  // An ambiguous create must be reconciled before another create is allowed,
+  // including after an object restart. Never retry an uncertain POST blindly.
+  if (await storage.get('literature:pending')) throw Object.assign(httpError(503, '上次文献保存结果仍在核对'), { code: 'LITERATURE_READBACK_FAILED' });
   await requireActiveMember(env, session);
+  await storage.put('literature:pending', { requestId: businessRequestId });
   let created;
-  try { created = await createRecord(env, tenantToken, 'LITERATURE_TABLE_ID', serialized); }
-  catch (error) { throw Object.assign(error, { code: 'LITERATURE_WRITE_FAILED' }); }
+  try { created = await createRecord(env, tenantToken, 'LITERATURE_TABLE_ID', serialized, true); }
+  catch (error) {
+    if (error.weeklyWriteRejected || [1254290, 1254291].includes(error.upstreamCode)) await storage.delete('literature:pending');
+    throw Object.assign(error, { code: 'LITERATURE_WRITE_FAILED' });
+  }
   let record;
+  let confirmedRecords;
   try {
     const id = created.code === 0 && created.data?.record?.record_id;
     if (!id) throw new Error('Missing confirmed literature record ID');
-    const readBack = await feishuRequest('/bitable/v1/apps/' + app + '/tables/' + binding.tableId + '/records/' + encodeURIComponent(id), { bearer: tenantToken });
-    record = readBack.data?.record;
-    if (readBack.code !== 0 || !literatureMatches(record, expected)) throw new Error('Literature readback mismatch');
+    confirmedRecords = await listRecords(env, tenantToken, 'LITERATURE_TABLE_ID');
+    record = confirmedRecords.find(item => item.record_id === id);
+    if (!literatureMatches(record, expected)) throw new Error('Literature readback mismatch');
   } catch (error) { throw Object.assign(error, { status: 502, code: 'LITERATURE_READBACK_FAILED' }); }
+  await storage.delete('literature:pending');
   return json(request, env, {
     ok: true, readBackVerified: true, recordId: record.record_id,
-    literature: buildLiterature(session, currentWeek, [record, ...existingRecords])
+    literature: buildLiterature(session, currentWeek, confirmedRecords)
   }, 201);
 }
 
@@ -945,7 +1003,7 @@ async function weeklyPage(request, env, session) {
   return json(request, env, { weeklyOnly: true, weeklyVersion: WEEKLY_VERSION,
     profile: { sub: session.sub, personId: session.personId, name: session.name, roles: session.roles }, week,
     student: { report: student.report, history: student.history },
-    teacher: { students: teacher.students, stats: teacher.stats } });
+    teacher: { students: teacher.students, stats: teacher.stats, commonIssues: teacher.commonIssues } });
 }
 
 async function weeklySource(request, env, session, tableKey = 'WEEKLY_TABLE_ID') {
@@ -1357,10 +1415,11 @@ export async function feishuRequest(path, options = {}) {
       // business codes can arrive with HTTP 200/400 and must retain the journal.
       const rejected = response.status < 500 && response.status !== 429 && typeof result.code === 'number' &&
         ((result.code >= 1254000 && result.code < 1254100) || [1254302, 1254304, 99991661, 99991663, 99991672].includes(result.code));
-      throw Object.assign(httpError(502, '飞书尚未确认周报保存'), { weeklyWriteRejected: rejected });
+      throw Object.assign(httpError(502, '飞书尚未确认周报保存'), { weeklyWriteRejected: rejected, upstreamStatus: response.status, upstreamCode: result.code });
     }
     if (response.ok && (typeof result.code !== 'number' || result.code === 0)) return result;
-    const retryable = response.status === 429 || response.status >= 500;
+    const retryable = response.status === 429 || response.status >= 500 ||
+      [1254290, 1254291, 1255001, 1255002, 1255040].includes(result.code);
     if (retryable && attempt + 1 < maxAttempts) {
       await delay(250 * (attempt + 1));
       continue;
@@ -1580,7 +1639,7 @@ function corsResponse(request, env, body, status) {
       'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Request-ID',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       'Access-Control-Expose-Headers': 'X-Request-ID, Server-Timing, X-ER2-Read-Version',
-      'X-Request-ID': requestIds.get(request) || '',
+      'X-Request-ID': requestIds.get(request) || request.headers.get('X-Request-ID') || crypto.randomUUID(),
       'Vary': 'Origin'
     }
   });

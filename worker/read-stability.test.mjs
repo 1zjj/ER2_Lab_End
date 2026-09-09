@@ -75,6 +75,23 @@ try {
   assert.equal(calls.filter(c => c.startsWith('members:')).length, 3, 'Entry, coordinator and pre-write identities remain fresh');
   console.log('PASS read counts:', JSON.stringify({ ...counts, 'POST /api/reports': calls.length }));
 
+  calls = []; const start = await (await call('/api/dashboard/start')).json();
+  assert.equal(start.progressive, true); assert.equal(calls.length, 1);
+  assert.deepEqual(Object.keys(start.moduleLoading).sort(), ['extras','literature','projects','weekly']);
+  failed = 'project_members';
+  assert.equal((await call('/api/dashboard/start')).status, 200, 'Unrelated grant outage cannot block the identity shell');
+  failed = 'weekly'; calls = [];
+  assert.equal((await call('/api/dashboard?section=extras')).status, 200);
+  assert.equal(calls.some(c => /^(weekly|literature|projects):/.test(c)), false, 'Extra modules never read unrelated business tables');
+  failed = '';
+  for (const code of [1254290,1254291,1255001]) {
+    const fixtureFetch = globalThis.fetch; let attempts = 0;
+    globalThis.fetch = async () => Response.json(++attempts === 1 ? { code } : { code:0, data:{} });
+    try { await feishuRequest('/synthetic-retry', { readDeadline: Date.now()+2000 }); assert.equal(attempts,2); }
+    finally { globalThis.fetch = fixtureFetch; }
+  }
+  console.log('PASS identity-only bootstrap, independent extra modules and HTTP-200 transient-code retries');
+
   failed = 'project_members';
   for (const path of ['/api/me', '/api/weekly', '/api/reports/history']) assert.equal((await call(path)).status, 200);
   assert.equal((await (await call('/api/reports/history', 2)).json()).total, 0, 'Never return another student’s report');

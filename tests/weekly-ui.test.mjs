@@ -19,7 +19,7 @@ async function submit(response, refresh = response, disabled = false) {
   const effects = [];
   const form = { reportValidity: () => true, reset: () => effects.push('reset') };
   const context = vm.createContext({
-    DEMO_MODE: false, state: { session: 'test', dashboard: { week: { id: '2026-W37' }, student: { history: [] } } },
+    DEMO_MODE: false, state: { session: 'test', dashboard: { profile: { sub: 'test' }, week: { id: '2026-W37' }, student: { history: [] } } },
     elements: { reportForm: form, reportSubmit: { disabled }, reportError: {}, reportReload: {}, reportDialog: {} },
     FormData: class { entries() { return Object.entries({ progress: '输入正文', nextPlan: '下周计划', evidence }); } },
     request: async path => { if (path === '/api/weekly' && refresh instanceof Error) throw refresh; return path === '/api/weekly' ? refresh : response; }, pendingRequestId: () => 'request-1',
@@ -41,7 +41,7 @@ const confirmed = await submit({ ok: true, readBackVerified: true,
 assert.equal(confirmed.context.state.dashboard.student.history[0].recordId, 'rec-confirmed');
 assert.equal(confirmed.context.state.dashboard.student.report.values.progress, values.progress);
 assert.ok(confirmed.effects.includes('clear'));
-const fresh = { week: { id: '2026-W37' }, student: { report: { values }, history: [] }, teacher: { students: [{ id: 'test', status: '已提交' }], stats: { submitted: 1 } } };
+const fresh = { profile: { sub: 'test' }, week: { id: '2026-W37' }, student: { report: { values }, history: [] }, teacher: { students: [{ id: 'test', status: '已提交' }], stats: { submitted: 1 } } };
 const updated = await submit({ ok: true, readBackVerified: true, report: { values } }, fresh);
 assert.equal(updated.context.state.dashboard.teacher.students[0].status, '已提交');
 const refreshFailure = await submit({ ok: true, readBackVerified: true, report: { values } }, new Error('offline'));
@@ -55,10 +55,10 @@ const entries = new Map();
 const storage = { get length() { return entries.size; }, key: i => [...entries.keys()][i], getItem: k => entries.get(k) ?? null,
   setItem: (k, v) => entries.set(k, v), removeItem: k => entries.delete(k) };
 let handler;
-const auth = vm.createContext({ learningUIInstance: { reset() {} }, sessionStorage: storage, memberGuide: { bind() {} },
+const auth = vm.createContext({ learningUIInstance: { reset() {} }, sessionStorage: storage, tabStorage: storage, memberGuide: { bind() {} },
   state: { session: 'old', dashboard: {} }, API_BASE: 'https://api.example',
   location: { hash: '#session=test-session', pathname: '/', search: '', href: 'https://workbench.example/' }, history: { replaceState() {} },
-  document: { getElementById: () => ({}), querySelectorAll: () => [] }, elements: { app: {} }, showError() {},
+  document: { getElementById: () => ({}), querySelectorAll: () => [] }, elements: { app: {}, roleNav: {}, mobileRoleNav: {}, searchResults: {} }, showError() {},
   window: { addEventListener: (name, fn) => { handler = fn; }, dispatchEvent: e => handler(e) },
   CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } },
   fetch: async () => ({ status: 401 })
@@ -92,7 +92,7 @@ function reopenReport(rawDraft, saved = savedReport) {
     elements: { namedItem: name => fields[name] } };
   const context = vm.createContext({ privateDrafts: { get: () => rawDraft }, draftScope: () => '2026-W37', draftKeys: { report: 'report' },
     elements: { reportForm: form, reportWeekLabel: {}, reportError: {}, reportReload: {}, reportDialog: {} },
-    state: { dashboard: { week: { label: '当前周' }, student: { report: { values: saved } } } }, showDialog() {} });
+    state: { dashboard: { profile: { sub: 'test' }, week: { label: '当前周' }, student: { report: { values: saved } } } }, showDialog() {} });
   vm.runInContext(extract('  function restoreDraft(', '  function clearDraft('), context);
   vm.runInContext(extract('  function openReportDialog(', '  function openReportHistory('), context);
   context.openReportDialog();
@@ -136,7 +136,7 @@ console.log('PASS history UI: paging requests, stale response suppression, expli
 
 // Conflict recovery asks before replacing a real local draft and does not post.
 let acceptReload = false, clearCount = 0, reopened = 0;
-const reloadContext = vm.createContext({ state: { session: 's', dashboard: { week: { id: '2026-W37' }, student: {} } },
+const reloadContext = vm.createContext({ state: { session: 's', dashboard: { profile: { sub: 'test' }, week: { id: '2026-W37' }, student: {} } },
   elements: { reportReload: {}, reportError: {}, reportDialog: { open: true } },
   request: async path => { assert.equal(path, '/api/weekly'); return { week: { id: '2026-W37' }, student: { report: { revision: 'fresh' } } }; },
   window: { confirm: () => acceptReload }, clearDraft: () => clearCount++, draftKeys: { report: 'report' },

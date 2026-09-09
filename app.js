@@ -1,5 +1,7 @@
 (function () {
   'use strict';
+  if (window.ER2_BOOT_FAILED) return;
+  if (!window.ER2_CONFIG || !window.ER2DraftStore || !window.ER2GuideStore || !window.ER2LearningCenter || !window.ER2Finance) throw new Error('工作台组件未完整载入');
 
   const config = window.ER2_CONFIG || {};
   const DEMO_MODE = config.demo !== false || !config.apiBase;
@@ -100,7 +102,21 @@
     toast: document.getElementById('toast')
   };
 
-  const privateDrafts = window.ER2DraftStore.create(sessionStorage);
+  // Storage can be denied by embedded browsers. Keep this tab usable and
+  // retain its draft in memory; never use local storage for login tokens.
+  const tabStorage = (function () {
+    const memory = new Map(); let storage;
+    try { storage = window.sessionStorage; storage.getItem('er2-session'); } catch (_) {}
+    return {
+      get persistent() { return Boolean(storage); },
+      get length() { try { return storage ? storage.length : memory.size; } catch (_) { storage = null; return memory.size; } },
+      key(i) { try { return storage ? storage.key(i) : [...memory.keys()][i]; } catch (_) { storage = null; return [...memory.keys()][i]; } },
+      getItem(k) { try { if (storage) { const value = storage.getItem(k); if (value !== null) memory.set(k, value); return value; } } catch (_) { storage = null; } return memory.get(k) ?? null; },
+      setItem(k, v) { memory.set(k, String(v)); try { storage?.setItem(k, v); } catch (_) { storage = null; } },
+      removeItem(k) { memory.delete(k); try { storage?.removeItem(k); } catch (_) { storage = null; } }
+    };
+  })();
+  const privateDrafts = window.ER2DraftStore.create(tabStorage);
   const state = {
     session: readSession(),
     activeRole: 'student',
@@ -110,6 +126,8 @@
     learningCenterOpen: false,
     dashboard: null,
     catalog: [],
+    baseCatalog: [],
+    moduleGeneration: {},
     toastTimer: null
   };
 
@@ -222,11 +240,11 @@
       const token = decodeURIComponent(match[1]);
       // Drafts remain unreadable until /api/me or the dashboard confirms the
       // owner. bind() clears them when a different account signs in.
-      sessionStorage.setItem('er2-session', token);
+      tabStorage.setItem('er2-session', token);
       history.replaceState(null, '', location.pathname + location.search);
       return token;
     }
-    return sessionStorage.getItem('er2-session') || '';
+    return tabStorage.getItem('er2-session') || '';
   }
 
   function escapeHtml(value) {
@@ -328,7 +346,14 @@
     learningUIInstance?.reset();
     if (event.detail?.status !== 401) privateDrafts.clear();
     memberGuide.bind('');
+    state.loadGeneration = (state.loadGeneration || 0) + 1;
+    state.moduleGeneration = {};
     state.dashboard = null;
+    state.catalog = [];
+    state.activeStudentId = '';
+    elements.roleNav.innerHTML = '';
+    elements.mobileRoleNav.innerHTML = '';
+    elements.searchResults.innerHTML = '';
     const sourcePanel = document.getElementById('weekly-source-panel');
     const sourceResult = document.getElementById('weekly-source-result');
     if (sourcePanel) sourcePanel.hidden = true;
@@ -364,7 +389,7 @@
       delete fetchOptions.readTimeoutMs;
       const response = await authenticatedFetch(API_BASE + path, fetchOptions);
       if (response.status === 401) {
-        sessionStorage.removeItem('er2-session');
+        tabStorage.removeItem('er2-session');
         location.href = API_BASE + '/auth/launch?returnTo=' + encodeURIComponent(location.href);
         throw new Error('身份已过期，正在重新登录');
       }
@@ -416,8 +441,14 @@
         }
         if (new URLSearchParams(location.search).get('page') === 'weekly') data = await loadRead('/api/weekly');
         else {
-          try { data = await loadRead('/api/dashboard' + (role ? '?role=' + encodeURIComponent(role) : '')); }
-          catch (error) {
+          try {
+            try { data = await loadRead('/api/dashboard/start'); }
+            catch (error) {
+            // Existing backend remains compatible while a deployment completes.
+            if (error.status !== 404) throw error;
+            data = await loadRead('/api/dashboard' + (role ? '?role=' + encodeURIComponent(role) : ''));
+          }
+          } catch (error) {
             if (!error.status || error.status < 500 || error.binding === 'MEMBERS_TABLE_ID' || error.code === 'REQUEST_TIMEOUT') throw error;
             data = await loadRead('/api/weekly');
             data.dashboardUnavailable = true;
@@ -429,10 +460,12 @@
       memberGuide.bind(DEMO_MODE ? 'demo' : data.profile.sub);
       state.learningCenterOpen = false;
       state.dashboard = data;
-      if (Array.isArray(data.catalog) && data.catalog.length) state.catalog = mergeCatalog(state.catalog, data.catalog);
+      state.moduleGeneration = {};
+      state.catalog = mergeCatalog(state.baseCatalog, data.catalog || []);
       const roles = Array.isArray(data.profile.roles) ? data.profile.roles.filter(function (item) { return roleMeta[item]; }) : ['student'];
       state.activeRole = roles.includes(role) ? role : (roles.includes(state.activeRole) ? state.activeRole : roles[0]);
       renderAccount();
+      if (!tabStorage.persistent) showToast('浏览器未允许保存草稿，关闭页面前请提交或复制填写内容。');
       renderRoleNavigation(roles);
       renderActiveView();
       elements.notice.hidden = !DEMO_MODE;
@@ -440,6 +473,7 @@
       elements.loading.hidden = true;
       elements.app.hidden = false;
       if (new URLSearchParams(location.search).get('page') === 'weekly' && roles.includes('student')) openReportDialog();
+      if (data.progressive) ['weekly', 'projects', 'literature', 'extras'].forEach(function (name) { reloadModule(name); });
       const learningPage = new URLSearchParams(location.search).get('page');
       if (!DEMO_MODE && window.ER2LearningCenter && ['learning', 'learning-inbox'].includes(learningPage))
         learningUI().open(learningPage === 'learning-inbox');
@@ -455,6 +489,56 @@
           elements.logoutButton.hidden = false;
         } catch (_) { /* Keep the original failure and do not assume an identity. */ }
       }
+    }
+  }
+
+  function modulePlaceholder(name, title, className) {
+    const loading = state.dashboard?.moduleLoading?.[name];
+    return '<section class="' + className + '" aria-busy="' + Boolean(loading) + '"><h2>' + title + '</h2><p role="status">' +
+      (loading ? '正在读取…' : '暂时无法读取，请重试。') + '</p>' +
+      (loading ? '' : '<button type="button" class="button button-secondary" data-reload-module="' + name + '">重新读取</button>') + '</section>';
+  }
+
+  async function reloadModule(name) {
+    const paths = { weekly: '/api/weekly', projects: '/api/projects', literature: '/api/literature', extras: '/api/dashboard?section=extras' };
+    if (!paths[name] || !state.dashboard) return;
+    const dashboard = state.dashboard, session = state.session, generation = state.loadGeneration;
+    const revision = state.moduleGeneration[name] = (state.moduleGeneration[name] || 0) + 1;
+    const current = () => state.dashboard === dashboard && state.session === session && generation === state.loadGeneration && revision === state.moduleGeneration[name];
+    dashboard.moduleLoading ||= {}; dashboard.moduleErrors ||= {};
+    dashboard.moduleLoading[name] = true; delete dashboard.moduleErrors[name];
+    renderActiveView(true);
+    try {
+      const result = await request(paths[name]);
+      if (!current()) return;
+      if (name === 'weekly') {
+        if (result.profile?.sub !== dashboard.profile.sub || result.week?.id !== dashboard.week.id || !result.student?.report || !result.teacher) throw new Error('周报结果尚未确认，请重新载入。');
+        Object.assign(dashboard.student, result.student);
+        Object.assign(dashboard.teacher, result.teacher);
+      } else if (name === 'projects') {
+        if (!Array.isArray(result.projects) || !result.projects.every(p => /^PRJ-\d{3,}$/.test(p.code) && p.permission >= 1)) throw new Error('项目读取结果尚未确认');
+        dashboard.student.projects = result.projects;
+        if (dashboard.manager?.stats && Number.isInteger(result.activeCount)) dashboard.manager.stats.projects = result.activeCount;
+      } else if (name === 'literature') {
+        if (!result.literature || !Array.isArray(result.literature.items)) throw new Error('文献读取结果尚未确认');
+        dashboard.literature = result.literature;
+      } else {
+        if (result.profile?.sub !== dashboard.profile.sub || !result.student || !result.teacher) throw new Error('读取结果尚未确认');
+        for (const key of ['tasks', 'links', 'course', 'onboarding']) dashboard.student[key] = result.student[key];
+        dashboard.teacher.courseReview = result.teacher.courseReview;
+        if (dashboard.manager?.stats) dashboard.manager.stats.courses = result.manager?.stats?.courses;
+        dashboard.catalog = result.catalog || [];
+        state.catalog = mergeCatalog(state.baseCatalog, dashboard.catalog);
+        for (const key of ['tasks', 'links', 'courses']) {
+          delete dashboard.moduleErrors[key];
+          if (result.moduleErrors?.[key]) dashboard.moduleErrors[key] = result.moduleErrors[key];
+        }
+        if (Object.keys(result.moduleErrors || {}).length) dashboard.moduleErrors.extras = '部分内容未读取';
+      }
+    } catch (error) {
+      if (current()) dashboard.moduleErrors[name] = error.message || '暂时无法读取';
+    } finally {
+      if (current()) { delete dashboard.moduleLoading[name]; renderActiveView(true); }
     }
   }
 
@@ -515,7 +599,7 @@
       nav.querySelectorAll('[data-role]').forEach(function (button) {
         button.addEventListener('click', function () {
           const role = button.dataset.role;
-          if (!roles.includes(role)) return;
+          if (!state.dashboard || !roles.includes(role)) return;
           learningUIInstance?.reset();
           state.activeRole = role;
           renderAccount();
@@ -641,7 +725,8 @@
   }
 
   function renderLiteratureSection() {
-    if (state.dashboard.moduleErrors?.literature) return '<section class="panel literature-panel"><h2>文献阅读</h2><p role="status">文献记录暂时无法读取，当前提交数量尚未确认。周报和学习中心可继续使用。</p><button class="button button-secondary" type="button" data-reload-dashboard>重新读取</button></section>';
+    if (state.dashboard.moduleLoading?.literature) return modulePlaceholder('literature', '文献阅读', 'panel literature-panel');
+    if (state.dashboard.moduleErrors?.literature) return '<section class="panel literature-panel"><h2>文献阅读</h2><p role="status">文献记录暂时无法读取，当前提交数量尚未确认。周报和学习中心可继续使用。</p><button class="button button-secondary" type="button" data-reload-module="literature">重新读取</button></section>';
     const literature = state.dashboard.literature || { mineCount: 0, minimum: 3, completed: false, items: [] };
     const items = Array.isArray(literature.items) ? literature.items : [];
     const progress = Math.min(100, Math.round((Number(literature.mineCount || 0) / Math.max(Number(literature.minimum || 3), 1)) * 100));
@@ -751,11 +836,14 @@
     }) });
   }
 
-  function renderActiveView() {
+  function renderActiveView(preserveModules) {
+    if (!state.dashboard) return;
+    const financeCard = preserveModules && elements.app.querySelector('.finance-card');
     if (state.dashboard.weeklyOnly) { renderWeeklyOnly(); return; }
     if (state.activeRole === 'teacher') elements.app.innerHTML = renderTeacher();
     else if (state.activeRole === 'manager') elements.app.innerHTML = renderManager();
     else elements.app.innerHTML = renderStudent();
+    if (financeCard) elements.app.querySelector('.finance-card')?.replaceWith(financeCard);
     bindViewActions();
     window.dispatchEvent(new CustomEvent('er2-dashboard-rendered', { detail: { role: state.activeRole, home: studentHomeView(state.dashboard.student) } }));
     updateModuleNotice();
@@ -764,13 +852,13 @@
   function updateModuleNotice() {
     elements.app.querySelector('[data-module-notice]')?.remove();
     const errors = state.dashboard.moduleErrors || {};
-    const labels = { projects: '项目', courses: '原课程记录', tasks: '待办', links: '知识库入口', literature: '文献阅读' };
+    const labels = { weekly: '周报', extras: '待办与入口', projects: '项目', courses: '原课程记录', tasks: '待办', links: '知识库入口', literature: '文献阅读' };
     const unavailable = Object.keys(labels).filter(function (key) { return errors[key]; });
     if (unavailable.length) {
       const notice = document.createElement('div');
       notice.className = 'panel'; notice.setAttribute('role', 'status');
       notice.setAttribute('data-module-notice', '');
-      notice.textContent = unavailable.map(function (key) { return labels[key]; }).join('、') + '暂时无法读取，相关统计尚未确认；已读取的周报可正常使用。';
+      notice.textContent = unavailable.map(function (key) { return labels[key]; }).join('、') + '暂时无法读取，相关统计尚未确认；已载入的模块可继续使用。';
       elements.app.prepend(notice);
     }
   }
@@ -801,7 +889,7 @@
       apiBase: API_BASE, getSession: () => state.session, getProfile: () => state.dashboard?.profile,
       onUnauthorized: () => window.dispatchEvent(new CustomEvent('er2-session-denied', { detail: { status: 401 } }))
     });
-    financeUIInstance.mount();
+    financeUIInstance.mount(true);
   }
 
   function projectHomepageUrl(value) {
@@ -816,6 +904,7 @@
   function renderProjectCard() {
     const dashboard = state.dashboard || {};
     const heading = '<section class="panel project-home-card"><div class="panel-title"><h2>我的项目</h2>';
+    if (dashboard.moduleLoading?.projects) return modulePlaceholder('projects', '我的项目', 'panel project-home-card');
     if (dashboard.moduleErrors?.projects) {
       const diagnosis = dashboard.moduleDiagnostics?.projects?.requestId;
       return heading + '</div><p role="status" data-project-read-status>项目暂时无法读取。' +
@@ -836,7 +925,7 @@
 
   function bindProjectRetry() {
     const button = elements.app.querySelector('[data-reload-projects]');
-    if (button) button.addEventListener('click', function () { reloadProjects(button); });
+    if (button) button.addEventListener('click', function () { state.dashboard?.progressive ? reloadModule('projects') : reloadProjects(button); });
   }
 
   async function reloadProjects(button) {
@@ -876,6 +965,19 @@
     }
   }
 
+  function renderWeeklyCard() {
+    if (state.dashboard.moduleLoading?.weekly || state.dashboard.moduleErrors?.weekly)
+      return modulePlaceholder('weekly', '本周工作记录', 'hero-card weekly-home-card');
+    const data = state.dashboard.student, week = state.dashboard.week;
+    const submitted = data.report.status === 'submitted';
+    return [
+      '<section class="hero-card weekly-home-card"><div><p class="kicker">本周工作记录</p><h2>' + (submitted ? '本周工作记录已提交' : '记录这一周的进展') + '</h2>',
+      '<p>' + escapeHtml(week.label || '') + '</p><div class="weekly-home-status">' + tag(data.report.label, submitted ? 'green' : 'orange') + '<span>项目进展、学习收获与下周计划</span></div><div class="action-row">',
+      '<button class="button button-primary" type="button" data-open-report>' + (submitted ? '修改本周记录' : '填写本周记录') + '</button>',
+      '<button class="button button-secondary" type="button" data-open-report-history>查看历史记录</button></div></div></section>',
+    ].join('');
+  }
+
   function renderStudent() {
     const profile = state.dashboard.profile;
     const week = state.dashboard.week;
@@ -888,15 +990,12 @@
       '<div class="deadline">◷ ' + escapeHtml(week.dueLabel) + '</div></div></section>',
       renderOnboardingEntry(),
       '<div class="student-home-layout"><div class="stack student-main">',
-      '<section class="hero-card weekly-home-card"><div><p class="kicker">本周工作记录</p><h2>' + (submitted ? '本周工作记录已提交' : '记录这一周的进展') + '</h2>',
-      '<p>' + escapeHtml(week.label || '') + '</p><div class="weekly-home-status">' + tag(data.report.label, submitted ? 'green' : 'orange') + '<span>项目进展、学习收获与下周计划</span></div><div class="action-row">',
-      '<button class="button button-primary" type="button" data-open-report>' + (submitted ? '修改本周记录' : '填写本周记录') + '</button>',
-      '<button class="button button-secondary" type="button" data-open-report-history>查看历史记录</button></div></div></section>',
+      renderWeeklyCard(),
       renderLiteratureSection(),
-      '<details class="panel home-todos"><summary>本周待办</summary><div class="panel-title"><h2>本周待办</h2>' + tag(data.tasks.length + '项') + '</div><ol class="task-list">',
+      (state.dashboard.moduleLoading?.extras || state.dashboard.moduleErrors?.extras ? modulePlaceholder('extras', '本周待办', 'panel home-todos') : '<details class="panel home-todos"><summary>本周待办</summary><div class="panel-title"><h2>本周待办</h2>' + tag(data.tasks.length + '项') + '</div><ol class="task-list">' +
       data.tasks.map(function (item, index) {
         return '<li><span class="task-number">' + (index + 1) + '</span><div><strong>' + escapeHtml(item.title) + '</strong><small>' + escapeHtml(item.detail) + '</small></div>' + tag(item.type) + '</li>';
-      }).join(''), '</ol></details>',
+      }).join('') + '</ol></details>'),
       renderCoursePanel(), '</div><aside class="stack student-side" aria-label="学习、申请与项目">',
       renderLearningCard(), renderFinancePlaceholder(),
       renderProjectCard(),
@@ -907,6 +1006,7 @@
   function renderTeacher() {
     const profile = state.dashboard.profile;
     const data = state.dashboard.teacher;
+    if (state.dashboard.moduleLoading?.weekly || state.dashboard.moduleErrors?.weekly) return '<section class="welcome"><h1>教师汇总页</h1></section>' + modulePlaceholder('weekly', '本周工作记录', 'panel') + renderCourseReviewPanel() + renderLiteratureSection() + renderFinancePlaceholder() + footer();
     return [
       '<section class="welcome"><div><p class="kicker">TEACHER WORKSPACE</p><h1>教师汇总页</h1><p>' + escapeHtml(profile.name) + '负责学生的周报、项目和培养进度。</p></div>',
       '<a class="button button-secondary" href="' + safeUrl(wikiUrl()) + '">打开飞书后台</a></section>',
@@ -961,6 +1061,7 @@
 
   function bindViewActions() {
     bindProjectRetry();
+    elements.app.querySelectorAll('[data-reload-module]').forEach(button => button.addEventListener('click', () => reloadModule(button.dataset.reloadModule)));
     try { mountFinance(); } catch (_) { /* Finance setup must not interrupt other homepage actions. */ }
     elements.app.querySelectorAll('[data-reload-dashboard]').forEach(function (button) {
       button.addEventListener('click', function () { if (button.disabled) return; button.disabled = true; loadDashboard(state.activeRole); });
@@ -1198,7 +1299,12 @@
   async function submitReport(event) {
     event.preventDefault();
     if (elements.reportSubmit.disabled) return;
-    if (!elements.reportForm.reportValidity()) return;
+    if (!elements.reportForm.reportValidity() || !state.dashboard) return;
+    const dashboard = state.dashboard, session = state.session, generation = state.loadGeneration;
+    const current = () => state.dashboard === dashboard && state.session === session && state.loadGeneration === generation;
+    const originalForm = JSON.stringify(Object.fromEntries(new FormData(elements.reportForm).entries()));
+    state.moduleGeneration ||= {};
+    state.moduleGeneration.weekly = (state.moduleGeneration.weekly || 0) + 1;
     const fields = Object.fromEntries(new FormData(elements.reportForm).entries());
     fields.baseRevision = state.reportBaseRevision || '';
     const intent = JSON.stringify(fields);
@@ -1227,6 +1333,8 @@
         });
         if (saved.readBackVerified !== true || !saved.report) throw new Error('后端未返回保存读回确认，草稿已保留；请管理员核对部署版本。');
       }
+      if (!current()) return;
+      const editedDuringSave = originalForm !== JSON.stringify(Object.fromEntries(new FormData(elements.reportForm).entries()));
       state.dashboard.student.report = {
         status: 'submitted',
         label: '已提交',
@@ -1257,26 +1365,32 @@
       state.dashboard.student.history = [historyEntry].concat(previousHistory.filter(function (item) {
         return item.weekId !== state.dashboard.week.id;
       })).slice(0, 12);
-      closeDialog(elements.reportDialog);
-      elements.reportForm.reset();
-      clearDraft(draftKeys.report);
+      if (editedDuringSave) {
+        saveDraft(elements.reportForm, draftKeys.report);
+      } else {
+        closeDialog(elements.reportDialog);
+        elements.reportForm.reset();
+        clearDraft(draftKeys.report);
+      }
       privateDrafts.remove('er2-request-report', draftScope());
       privateDrafts.remove('er2-report-intent', draftScope());
       renderActiveView();
-      showToast('本周工作记录已提交');
-      // Refresh the same source for dual-role users. Never turn a confirmed
-      // save into a submission failure if this secondary refresh is unavailable.
+      showToast(editedDuringSave ? '刚才提交的内容已保存；继续填写的内容已保留，请再次提交。' : '本周工作记录已提交');
+      // The save is complete. A secondary refresh must neither block editing
+      // nor overwrite another load/save that happened after this one.
       if (!DEMO_MODE) {
-        try {
-          const fresh = await request('/api/weekly');
-          if (state.dashboard && fresh.week?.id === state.dashboard.week.id && fresh.student && fresh.teacher) {
-            state.dashboard.student = Object.assign({}, state.dashboard.student, fresh.student);
-            state.dashboard.teacher = Object.assign({}, state.dashboard.teacher, fresh.teacher);
-            renderActiveView();
+        const revision = state.moduleGeneration.weekly;
+        request('/api/weekly').then(fresh => {
+          if (!current() || revision !== state.moduleGeneration.weekly || fresh.profile?.sub !== dashboard.profile.sub || fresh.week?.id !== dashboard.week.id) return;
+          if (fresh.student && fresh.teacher) {
+            Object.assign(dashboard.student, fresh.student);
+            Object.assign(dashboard.teacher ||= {}, fresh.teacher);
+            renderActiveView(true);
           }
-        } catch (_) { /* Confirmed report/history already remain visible above. */ }
+        }).catch(() => {});
       }
     } catch (error) {
+      if (!current()) return;
       elements.reportError.textContent = error.message || '提交失败，请稍后重试';
       elements.reportError.hidden = false;
       elements.reportReload.hidden = error.status !== 409;
@@ -1374,6 +1488,9 @@
         if (!stillOwns()) return;
         if (!result.ok || result.readBackVerified !== true || !result.recordId || !result.literature || !Array.isArray(result.literature.items) || !Number.isFinite(result.literature.mineCount))
           throw new Error('尚未确认保存结果，请保留填写内容后重试');
+        state.moduleGeneration ||= {};
+        state.moduleGeneration.literature = (state.moduleGeneration.literature || 0) + 1;
+        if (state.dashboard.moduleLoading) delete state.dashboard.moduleLoading.literature;
         state.dashboard.literature = result.literature;
       }
       closeDialog(elements.literatureDialog);
@@ -1485,9 +1602,16 @@
 
   async function submitTeacherFeedback(event) {
     event.preventDefault();
-    if (!elements.feedbackForm.reportValidity()) return;
+    if (elements.feedbackSubmit.disabled || !elements.feedbackForm.reportValidity() || !state.dashboard) return;
+    const dashboard = state.dashboard, studentId = state.activeStudentId, session = state.session;
+    const current = () => state.dashboard === dashboard && state.session === session;
     const fields = Object.fromEntries(new FormData(elements.feedbackForm).entries());
-    fields.requestId = pendingRequestId(draftKeys.feedbackRequest, 'review');
+    const requestKey = draftKeys.feedbackRequest + ':' + studentId + ':' + fields.recordId;
+    if (privateDrafts.get(requestKey + ':intent', draftScope()) !== fields.comment) {
+      privateDrafts.remove(requestKey, draftScope());
+      privateDrafts.set(requestKey + ':intent', draftScope(), fields.comment);
+    }
+    fields.requestId = pendingRequestId(requestKey, 'review');
     elements.feedbackSubmit.disabled = true;
     elements.feedbackSubmit.textContent = '正在提交…';
     elements.feedbackError.hidden = true;
@@ -1504,16 +1628,19 @@
           body: JSON.stringify(fields)
         });
       }
-      const student = (state.dashboard.teacher.students || []).find(function (item) { return String(item.id) === String(state.activeStudentId); });
-      if (student && student.currentReport) {
+      if (!current()) return;
+      const student = (state.dashboard.teacher.students || []).find(function (item) { return String(item.id) === String(studentId); });
+      if (student?.currentReport?.recordId === fields.recordId) {
         student.currentReport.feedback = fields.comment;
         student.currentReport.status = '已反馈';
       }
-      privateDrafts.remove(draftKeys.feedbackRequest, draftScope());
-      closeDialog(elements.studentDetailDialog);
+      privateDrafts.remove(requestKey, draftScope());
+      privateDrafts.remove(requestKey + ":intent", draftScope());
+      if (state.activeStudentId === studentId && elements.feedbackComment.value === fields.comment) closeDialog(elements.studentDetailDialog);
       renderActiveView();
       showToast('教师反馈已保存');
     } catch (error) {
+      if (!current() || state.activeStudentId !== studentId) return;
       elements.feedbackError.textContent = error.message || '反馈提交失败，请稍后重试';
       elements.feedbackError.hidden = false;
     } finally {
@@ -1618,12 +1745,12 @@
   elements.searchForm.addEventListener('submit', runSearch);
   elements.logoutButton.addEventListener('click', function () {
     privateDrafts.clear();
-    sessionStorage.removeItem('er2-session');
+    tabStorage.removeItem('er2-session');
     privateDrafts.remove('er2-request-report', draftScope());
     privateDrafts.remove('er2-request-literature', draftScope());
     privateDrafts.remove(draftKeys.feedbackRequest, draftScope());
-    sessionStorage.removeItem(draftKeys.courseRequest);
-    sessionStorage.removeItem(draftKeys.courseReviewRequest);
+    tabStorage.removeItem(draftKeys.courseRequest);
+    tabStorage.removeItem(draftKeys.courseReviewRequest);
     memberGuide.bind('');
     state.session = '';
     location.href = API_BASE + '/auth/launch?returnTo=' + encodeURIComponent(location.origin + location.pathname);
@@ -1632,10 +1759,12 @@
   const catalogRequest = fetch('./data/catalog.json')
     .then(function (response) { return response.ok ? response.json() : []; })
     .then(function (data) {
-      state.catalog = mergeCatalog(Array.isArray(data) ? data : [], state.dashboard?.catalog || []);
+      state.baseCatalog = Array.isArray(data) ? data : [];
+      if (state.dashboard) state.catalog = mergeCatalog(state.baseCatalog, state.dashboard.catalog || []);
       hydrateDemoLinks();
     })
     .catch(function () { /* Search metadata must not delay or clear live data. */ });
   if (DEMO_MODE) catalogRequest.finally(function () { loadDashboard(new URLSearchParams(location.search).get('view')); });
   else loadDashboard(new URLSearchParams(location.search).get('view'));
+  window.ER2_APP_STARTED = true;
 }());

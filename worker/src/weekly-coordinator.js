@@ -1,4 +1,4 @@
-import { executeWeeklyRequest } from './index.js';
+import { executeWeeklyRequest, executeLiteratureRequest } from './index.js';
 
 // One globally unique object per table/person (journals are partitioned by week). The promise queue is needed
 // because outgoing Feishu fetches yield; Durable Object requests can interleave.
@@ -14,7 +14,8 @@ export class WeeklyWriteCoordinator {
     if (request.method === 'GET' && new URL(request.url).pathname === '/_weekly-storage-check') {
       return this.state.storage.get('health').then(() => Response.json({ ok: true }));
     }
-    const result = this.queue.then(() => executeWeeklyRequest(request, this.env, this.state.storage));
+    const execute = new URL(request.url).pathname === '/api/literature' ? executeLiteratureRequest : executeWeeklyRequest;
+    const result = this.queue.then(() => execute(request, this.env, this.state.storage));
     this.queue = result.catch(() => {});
     return result;
   }

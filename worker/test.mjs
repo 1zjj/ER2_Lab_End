@@ -1,3 +1,4 @@
+import { mockWeeklyCoordinator } from './test-weekly-coordinator.mjs';
 import { LITERATURE_FIELDS } from './src/literature-write.js';
 import assert from 'node:assert/strict';
 import service from './src/index.js';
@@ -245,6 +246,7 @@ const literatureEnv = {
   COURSE_REVIEWER_OPEN_ID: 'ou_junjie',
   PROFESSOR_OPEN_ID: 'ou_professor'
 };
+literatureEnv.WEEKLY_WRITES = mockWeeklyCoordinator(literatureEnv);
 const oauthStatePayload = Buffer.from(JSON.stringify({
   purpose: 'oauth',
   returnTo: env.FRONTEND_URL,
