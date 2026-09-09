@@ -6,6 +6,7 @@ import { authority, AUTH_BINDINGS, strictBinding, identity, canProject, requireP
 import { resolveTableBinding as resolveBinding } from './v2/bindings.js';
 import { courseCapabilities } from './capabilities.js';
 import { readScope, readOptions, measureRead, readHeaders } from './read-performance.js';
+import { canonicalProjectData } from './project-master.js';
 const FEISHU_API = 'https://open.feishu.cn/open-apis';
 const FEISHU_AUTHORIZE = 'https://accounts.feishu.cn/open-apis/authen/v1/authorize';
 const wikiTokenCache = new Map();
@@ -13,6 +14,7 @@ const requestIds = new WeakMap();
 const writeRateBuckets = new Map();
 const courseConfirmationLocks = new Map();
 const memberSnapshots = new WeakMap();
+const projectSnapshots = new WeakMap();
 let tenantTokenCache = { token: '', expiresAt: 0 };
 const LITERATURE_TABLE_FALLBACK = 'tblyHLZpybGVU364';
 const TRACK_A_ID = 'track-a';
@@ -169,7 +171,7 @@ async function dashboard(request, env, session) {
   if (!role) throw httpError(403, '账号没有可用角色');
   const tenantToken = await getTenantToken(env);
   if (!isInternalMember(session)) {
-    const projects = visibleProjects(session, await listRecords(env, tenantToken, 'PROJECTS_TABLE_ID')).map(r => projectView(r, session));
+    const projects = visibleProjects(session, projectSnapshots.get(session) || await listRecords(env, tenantToken, 'PROJECTS_TABLE_ID')).map(r => projectView(r, session));
     return json(request, env, { profile: { sub: session.sub, personId: session.personId, name: session.name, roles: session.roles },
       collaborator: true, student: { projects }, catalog: projects.filter(p => p.url).map(p => ({ title: p.title, url: p.url, category: '项目', subtitle: '进入项目' })), moduleErrors: {}, capabilities: { internal: false } });
   }
@@ -181,7 +183,7 @@ async function dashboard(request, env, session) {
   const [memberRecords, reportRecords, projectRecords, courseRecords, taskRecords, linkRecords, literatureRecords] = await Promise.all([
     memberSnapshots.get(session) || listRecords(env, tenantToken, 'MEMBERS_TABLE_ID'),
     listRecords(env, tenantToken, 'WEEKLY_TABLE_ID'),
-    optional('projects', 'PROJECTS_TABLE_ID'),
+    projectSnapshots.get(session) || optional('projects', 'PROJECTS_TABLE_ID'),
     courseCapabilities(env).enabled ? optional('courses', 'COURSES_TABLE_ID') : Promise.resolve([]),
     optional('tasks', 'TASKS_TABLE_ID'),
     optional('links', 'LINKS_TABLE_ID'),
@@ -1164,7 +1166,7 @@ async function runScheduledTask(scheduledTime, env) {
   const results = await Promise.allSettled(missing.map(async member => {
     const recipientKey = runKey + '-' + await stableMessageUuid(member.sub);
     if (succeeded(recipientKey)) return;
-    const current = await requireActiveMember(env, { sub: member.sub });
+    const current = await requireMemberIdentity(env, { sub: member.sub });
     if (!current.roles.includes('student')) return;
     await sendText(env, tenantToken, member.sub,
       'ER² Lab提醒：你本周的工作记录尚未提交，请在今天18:00前进入工作台完成。',
@@ -1271,7 +1273,7 @@ async function updateRecord(env, token, tableBinding, recordId, fields, strictWe
 }
 
 async function sendText(env, token, openId, text, uuid = '') {
-  await requireActiveMember(env, { sub: openId });
+  await requireMemberIdentity(env, { sub: openId });
   if (!openId) return;
   return feishuRequest('/im/v1/messages?receive_id_type=open_id', {
     method: 'POST',
@@ -1411,9 +1413,11 @@ export async function requireSession(request, env) {
 async function requireActiveMember(env, session) {
   AUTH_BINDINGS.forEach(key => strictBinding(env, key));
   const tenantToken = await getTenantToken(env);
-  const [people, projects, relations] = await Promise.all(AUTH_BINDINGS.map(key => listRecords(env, tenantToken, key)));
-  const current = { ...session, ...authority(people, projects, relations, session.sub) };
+  const [people, mirrors, relations, master] = await Promise.all(AUTH_BINDINGS.map(key => listRecords(env, tenantToken, key)));
+  const catalog = canonicalProjectData(master, mirrors, relations);
+  const current = { ...session, ...authority(people, catalog.projects, catalog.relations, session.sub) };
   memberSnapshots.set(current, people);
+  projectSnapshots.set(current, master);
   return current;
 }
 
@@ -1430,10 +1434,12 @@ async function accessForRecords(env, session, records) {
   const people = memberSnapshots.get(session);
   if (!people) return requireActiveMember(env, session);
   const token = await getTenantToken(env);
-  const [projects, relations] = await Promise.all(['AUTH_PROJECTS_TABLE_ID', 'PROJECT_MEMBERS_TABLE_ID']
+  const [mirrors, relations, master] = await Promise.all(['AUTH_PROJECTS_TABLE_ID', 'PROJECT_MEMBERS_TABLE_ID', 'PROJECTS_TABLE_ID']
     .map(key => { strictBinding(env, key); return listRecords(env, token, key); }));
-  const current = { ...session, ...authority(people, projects, relations, session.sub) };
+  const catalog = canonicalProjectData(master, mirrors, relations);
+  const current = { ...session, ...authority(people, catalog.projects, catalog.relations, session.sub) };
   memberSnapshots.set(current, people);
+  projectSnapshots.set(current, master);
   return current;
 }
 
@@ -1474,7 +1480,7 @@ async function projectApi(request, env, session) {
   else if (request.method !== 'GET') throw httpError(405, '不支持此操作');
   strictBinding(env, 'PROJECTS_TABLE_ID');
   const token = await getTenantToken(env);
-  const records = await listRecords(env, token, 'PROJECTS_TABLE_ID');
+  const records = projectSnapshots.get(session) || await listRecords(env, token, 'PROJECTS_TABLE_ID');
   if (!id) return json(request, env, { projects: visibleProjects(session, records).map(r => projectView(r, session)) });
   const matches = records.filter(r => businessProjectId(r) === id);
   if (matches.length !== 1) throw httpError(409, '统一项目编号缺失或重复');

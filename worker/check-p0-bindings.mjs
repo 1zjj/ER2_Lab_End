@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { authority, identity, strictBinding, businessProjectId, personNumber } from './src/authorization.js';
 import { validateSchema } from './src/v2/schema.js';
+import { canonicalProjectData } from './src/project-master.js';
 
 export async function checkBindings(env, fetchImpl = fetch) {
   const result = { writesPerformed: false, credentialsPresent: Boolean(env.FEISHU_APP_ID && env.FEISHU_APP_SECRET), tables: {}, ready: false };
@@ -66,7 +67,7 @@ export async function checkBindings(env, fetchImpl = fetch) {
       stage = 'records';
       const records = await list(prefix + '/records?user_id_type=open_id', 'items');
       progress[key].recordsReadable = true;
-      const missing = schema ? validateSchema(schema, names).missingRequired : ['项目名称', '当前里程碑', '最近阻塞'].filter(n => !names.includes(n));
+      const missing = schema ? validateSchema(schema, names).missingRequired : ['项目名称', '项目阶段', '保密等级', '当前里程碑', '最近阻塞'].filter(n => !names.includes(n));
       if (!schema && !names.some(n => ['统一项目编号', 'ProjectID'].includes(n))) missing.push('统一项目编号');
       result.tables[key] = { readable: true, records: records.length, missingRequired: missing };
       datasets[key] = records;
@@ -74,8 +75,9 @@ export async function checkBindings(env, fetchImpl = fetch) {
     stage = 'data_validation'; table = '';
     let usable = 0, denied = 0, activeDenied = 0, grants = 0;
     const accessByPerson = [];
+    const canonical = canonicalProjectData(datasets.PROJECTS, datasets.AUTH_PROJECTS, datasets.PROJECT_MEMBERS);
     for (const person of datasets.MEMBERS) {
-      try { const ctx = authority(datasets.MEMBERS, datasets.AUTH_PROJECTS, datasets.PROJECT_MEMBERS, identity(person)); usable++; grants += Object.keys(ctx.grants).length;
+      try { const ctx = authority(datasets.MEMBERS, canonical.projects, canonical.relations, identity(person)); usable++; grants += Object.keys(ctx.grants).length;
         accessByPerson.push({ personId: personNumber(person), projects: Object.entries(ctx.grants).map(([projectId, grant]) => ({ projectId, operations: grant.level === 3 ? '管理' : grant.level === 2 ? '编辑' : '只读' })) }); }
       catch (_) { denied++; if (person.fields?.['人员状态'] === '在组') activeDenied++; }
     }
@@ -83,9 +85,9 @@ export async function checkBindings(env, fetchImpl = fetch) {
     const authorityIds = new Set(datasets.AUTH_PROJECTS.map(p => p.fields?.['项目编号']));
     const invalidMappings = ids.filter(id => !id || !authorityIds.has(id) || ids.filter(other => other === id).length !== 1).length;
     result.personnel = { usable, denied, activeDenied };
-    result.projectMappings = { invalid: invalidMappings };
+    result.projectMappings = { invalid: invalidMappings, issues: canonical.issues };
     result.grantedProjectRelationships = grants;
-    result.ready = usable > 0 && activeDenied === 0 && invalidMappings === 0 && Object.values(result.tables).every(t => t.missingRequired.length === 0);
+    result.ready = usable > 0 && activeDenied === 0 && invalidMappings === 0 && canonical.issues.length === 0 && Object.values(result.tables).every(t => t.missingRequired.length === 0);
     result.bindingReady = result.ready;
     result.authorizationReady = result.bindingReady && grants > 0;
     result.accessByPerson = accessByPerson;

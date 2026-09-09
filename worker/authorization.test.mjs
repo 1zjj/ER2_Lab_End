@@ -20,7 +20,7 @@ const person = (id, extra = {}) => ({ record_id: 'rec-p' + id, fields: {
   '飞书成员': [{ id: 'ou_' + id }], '人员状态': '在组', '人员边界': '团队内', '成员类别': '博士', '系统职责': [], '保密等级': '内部', ...extra
 } });
 const project = (id, extra = {}) => ({ record_id: 'rec-prj' + id, fields: {
-  '项目编号': 'PRJ-' + String(id).padStart(3, '0'), '项目阶段': '执行中', '保密等级': '内部', ...extra
+  '项目编号': 'PRJ-' + String(id).padStart(3, '0'), '项目名称': '业务项目' + id, '项目阶段': '执行中', '保密等级': '内部', ...extra
 } });
 const relation = (pid, prj, extra = {}) => ({ record_id: 'rec-rel' + pid + '-' + prj, fields: {
   '关联人员': { link_record_ids: ['rec-p' + pid] }, '关联项目': { link_record_ids: ['rec-prj' + prj] },
@@ -34,7 +34,7 @@ function reset() {
   projects = [project(1), project(2), project(3, { '项目阶段': '暂停' })];
   relations = [relation(1, 1), relation(2, 2, { '权限级别': '只读' }), relation(9, 1, { '权限级别': '管理', '审批人': [{ id: 'ou_8' }] })];
   rows = {
-    projects: [1, 2, 3].map(i => ({ record_id: 'business' + i, fields: { '项目编号': 'P0' + i, '统一项目编号': 'PRJ-00' + i, '项目名称': '业务项目' + i } })),
+    projects: [1, 2, 3].map(i => ({ record_id: 'business' + i, fields: { '项目编号': 'P0' + i, '统一项目编号': 'PRJ-00' + i, '项目名称': '业务项目' + i, '项目阶段': i === 3 ? '暂停' : '执行中', '保密等级': '内部' } })),
     weekly: [], courses: [], tasks: [], links: [], literature: []
   }; writes = []; failRead = false; recordResponses = {}; weeklyColumns = Object.entries(WEEKLY_FIELDS).map(([field_name, types]) => ({ field_name, type: field_name === '证据链接' ? 15 : types[0] }));
 }
@@ -81,6 +81,19 @@ async function call(id, path, method = 'GET', body, config = env) {
 let count = 0;
 async function test(name, fn) { reset(); await fn(); count++; console.log('PASS authorization:', name); }
 try {
+  await test('canonical consistency diagnostics require a current administrator and never write', async () => {
+    assert.equal((await call(1, '/api/admin/projects/consistency')).status, 403);
+    const result = await call(9, '/api/admin/projects/consistency');
+    assert.equal(result.status, 200);
+    const body = await result.json();
+    assert.equal(body.source, 'PROJECTS_TABLE_ID'); assert.deepEqual(body.issues, []);
+    assert.equal(body.writesPerformed, false); assert.equal(body.nativeAccessCertified, false);
+    assert.equal(body.projects.length, 3); assert.equal(body.projects[0].ownerLabel, '待指定');
+    assert.equal((await call(9, '/api/admin/projects/consistency', 'POST', {})).status, 405);
+    people[2].fields['系统职责'] = [];
+    assert.equal((await call(9, '/api/admin/projects/consistency')).status, 403);
+    assert.equal(writes.length, 0);
+  });
   await test('external and temporary accounts have only authorized project data and no internal routes', async () => {
     for (const kind of ['external', 'temporary']) {
       reset();
@@ -296,10 +309,10 @@ try {
   await test('deleted relation revokes existing session', async () => { assert.equal((await call(1, '/api/projects/PRJ-001')).status, 200); relations = relations.filter(r => r !== relations[0]); assert.equal((await call(1, '/api/projects/PRJ-001')).status, 403); });
   await test('duplicate relationship is not a privilege union', async () => { relations.push(relation(1, 1, { '权限级别': '管理' })); assert.equal((await call(1, '/api/projects/PRJ-001')).status, 403); });
   await test('duplicate authority PRJ denied', async () => { projects.push({ ...project(1), record_id: 'another' }); assert.equal((await call(1, '/api/projects/PRJ-001')).status, 403); });
-  await test('duplicate business PRJ mapping hidden and direct access rejected', async () => { rows.projects.push({ ...rows.projects[0], record_id: 'duplicate' }); assert.deepEqual((await (await call(1, '/api/projects')).json()).projects, []); assert.equal((await call(1, '/api/projects/PRJ-001')).status, 409); });
-  await test('legacy P01 never matched without unified mapping', async () => { delete rows.projects[0].fields['统一项目编号']; assert.equal((await call(1, '/api/projects/PRJ-001')).status, 409); });
-  await test('conflicting PRJ aliases cannot grant access', async () => { rows.projects[0].fields.ProjectID = 'PRJ-002'; assert.equal((await call(1, '/api/projects/PRJ-001')).status, 409); });
-  await test('paused project downgrades to read', async () => { projects[0].fields['项目阶段'] = '暂停'; assert.equal((await call(1, '/api/projects/PRJ-001')).status, 200); assert.equal((await call(1, '/api/projects/PRJ-001', 'PATCH', { milestone: 'x' })).status, 403); });
+  await test('duplicate business PRJ mapping hidden and direct access rejected', async () => { rows.projects.push({ ...rows.projects[0], record_id: 'duplicate' }); assert.deepEqual((await (await call(1, '/api/projects')).json()).projects, []); assert.equal((await call(1, '/api/projects/PRJ-001')).status, 403); });
+  await test('legacy P01 never matched without unified mapping', async () => { delete rows.projects[0].fields['统一项目编号']; assert.equal((await call(1, '/api/projects/PRJ-001')).status, 403); });
+  await test('conflicting PRJ aliases cannot grant access', async () => { rows.projects[0].fields.ProjectID = 'PRJ-002'; assert.equal((await call(1, '/api/projects/PRJ-001')).status, 403); });
+  await test('paused project downgrades to read after canonical and mirror agree', async () => { rows.projects[0].fields['项目阶段'] = '暂停'; projects[0].fields['项目阶段'] = '暂停'; assert.equal((await call(1, '/api/projects/PRJ-001')).status, 200); assert.equal((await call(1, '/api/projects/PRJ-001', 'PATCH', { milestone: 'x' })).status, 403); });
   await test('conflicting project status denies', async () => { projects[0].fields['状态'] = '已归档'; assert.equal((await call(1, '/api/projects/PRJ-001')).status, 403); });
   await test('external member cannot inherit global administrator duty', async () => { people[0].fields['人员边界'] = '团队外'; people[0].fields['系统职责'] = ['管理员', '课程审核']; const r = await (await call(1, '/api/me')).json(); assert.deepEqual(r.profile.roles, ['collaborator']); });
   await test('same-day Feishu numeric expiry includes Shanghai day', async () => {
@@ -334,7 +347,7 @@ try {
       const match = url.pathname.match(/\/apps\/([^/]+)\/tables\/([^/]+)\/(fields|records)$/); assert.ok(match);
       const [, base, table, type] = match; assert.equal(base, 'base-' + table);
       const schema = { members: 'members', auth_projects: 'authorityProjects', project_members: 'projectMembers' }[table];
-      const items = type === 'fields' ? (schema ? SCHEMAS[schema].required : ['统一项目编号', '项目名称', '当前里程碑', '最近阻塞']).map(field_name => ({ field_name })) : ({ members: people, auth_projects: projects, project_members: relations, projects: rows.projects })[table];
+      const items = type === 'fields' ? (schema ? SCHEMAS[schema].required : ['统一项目编号', '项目名称', '项目阶段', '保密等级', '当前里程碑', '最近阻塞']).map(field_name => ({ field_name })) : ({ members: people, auth_projects: projects, project_members: relations, projects: rows.projects })[table];
       return Response.json({ code: 0, data: { items, has_more: false } });
     });
     assert.equal(result.ready, true); assert.equal(result.writesPerformed, false); assert.equal(requests, 9);
@@ -353,6 +366,7 @@ try {
         people[0].fields['飞书成员'] = [{ id: 'ou_' + login }];
         people[0].fields['保密等级'] = personLevel;
         projects[0].fields['保密等级'] = projectLevel;
+        rows.projects[0].fields['保密等级'] = projectLevel;
         const allowed = ({ '普通': ['公开'], '受限': ['公开', '内部'], '内部': ['公开', '内部', '机密', '绝密'] })[personLevel]?.includes(projectLevel) || false;
         assert.equal((await call(login, '/api/projects/PRJ-001')).status, allowed ? 200 : 403);
         assert.equal((await call(login, '/api/projects/PRJ-001', 'PATCH', { milestone: 'x' })).status, allowed ? 200 : 403);

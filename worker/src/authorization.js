@@ -1,5 +1,5 @@
 // Authoritative ER2 authorization. No legacy role, name or project-code fallback.
-export const AUTH_BINDINGS = ['MEMBERS_TABLE_ID', 'AUTH_PROJECTS_TABLE_ID', 'PROJECT_MEMBERS_TABLE_ID'];
+export const AUTH_BINDINGS = ['MEMBERS_TABLE_ID', 'AUTH_PROJECTS_TABLE_ID', 'PROJECT_MEMBERS_TABLE_ID', 'PROJECTS_TABLE_ID'];
 export const text = value => Array.isArray(value) ? value.map(text).join('') : String(value && typeof value === 'object' ? value.text ?? value.name ?? value.value ?? '' : value ?? '').trim();
 const values = value => (Array.isArray(value) ? value : value ? [value] : []).map(text).filter(Boolean);
 // Explicit user-approved matrix; personnel labels are not an ordinal scale.
@@ -85,7 +85,7 @@ export function authority(people, projects, relations, openId, now = Date.now())
   for (const project of projects) {
     const id = text(project.fields?.['项目编号']);
     if (!/^PRJ-\d{3,}$/.test(id)) continue;
-    if (projectMap.has(id)) invalid.add(id);
+    if (projectMap.has(id) || project.definitionBlocked === true) invalid.add(id);
     projectMap.set(id, project);
   }
   const grants = {}, counts = new Map();

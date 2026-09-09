@@ -30,7 +30,8 @@ globalThis.fetch = async (input, options = {}) => {
     .map(([field_name, types]) => ({ field_name, type: types[0] })), has_more: false } });
   if (options.method === 'GET') {
     if (failed === table) return Response.json({ code: 99991672, msg: 'synthetic rejection' });
-    const items = { members: people, auth_projects: projects, project_members: relations, weekly: rows }[table] || [];
+    const items = { members: people, auth_projects: projects, project_members: relations, weekly: rows,
+      projects: projects.map(p => ({ record_id: 'canonical-' + p.record_id, fields: { ...p.fields, '统一项目编号': p.fields['项目编号'], '项目名称': '测试项目' } })) }[table] || [];
     const result = Response.json({ code: 0, data: { items: structuredClone(items), has_more: false } });
     if (onRead) onRead(table);
     if (table === 'members' && holdMember) { const wait = holdMember; holdMember = null; await wait(); }

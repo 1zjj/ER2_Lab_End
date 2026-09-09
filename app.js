@@ -886,7 +886,9 @@
     return '<details class="panel data-source-diagnostics" id="weekly-source-panel"><summary>数据源诊断</summary>' +
       '<div class="data-source-diagnostics-body"><h3>周报数据源核对</h3><p>查看后端实际连接的周报表及字段配置。</p>' +
       '<button class="button button-secondary" type="button" id="weekly-source-button">查看当前连接的周报表</button>' +
-      '<div id="weekly-source-result" aria-live="polite"></div><h3>ER2 原生权限核验</h3><p>查看目录、当前页和子页协作者、分享设置及读取异常。</p>' +
+      '<div id="weekly-source-result" aria-live="polite"></div><h3>项目主数据核对</h3><p>检查正式项目、兼容记录和关系派生名单的一致性。</p>' +
+      '<button class="button button-secondary" type="button" id="project-consistency-button">核对项目主数据</button><div id="project-consistency-result" aria-live="polite"></div>' +
+      '<h3>ER2 原生权限核验</h3><p>查看目录、当前页和子页协作者、分享设置及读取异常。</p>' +
       '<label>页面链接或节点编号<input id="permission-audit-node" type="text" maxlength="300" placeholder="留空查看 ER2 顶层目录"></label>' +
       '<button class="button button-secondary" type="button" id="permission-audit-button">核验权限</button><div id="permission-audit-result" aria-live="polite"></div></div></details>';
   }
@@ -919,6 +921,7 @@
     elements.app.querySelectorAll('[data-open-learning-inbox]').forEach(button => button.addEventListener('click', () => learningUI()?.open(true)));
     const sourceButton = elements.app.querySelector('#weekly-source-button');
     if (sourceButton) sourceButton.addEventListener('click', showWeeklySource);
+    elements.app.querySelector('#project-consistency-button')?.addEventListener('click', showProjectConsistency);
     elements.app.querySelector('#permission-audit-button')?.addEventListener('click', () => {
       let node = elements.app.querySelector('#permission-audit-node').value.trim();
       if (node.startsWith('https://')) { try { const u = new URL(node); if (u.origin !== 'https://lcnywl4yrecr.feishu.cn' || !/^\/wiki\/[A-Za-z0-9]+$/.test(u.pathname)) throw Error(); node = u.pathname.split('/').pop(); } catch (_) { showToast('请输入 ER2 飞书知识库页面链接'); return; } }
@@ -1499,6 +1502,20 @@
     renderActiveView();
     if (elements.onboardingDialog.open) renderOnboardingDialog();
   });
+  async function showProjectConsistency() {
+    if (state.activeRole !== 'manager' || !state.dashboard?.profile?.roles?.includes('manager')) return;
+    const output = document.getElementById('project-consistency-result'), owner = state.dashboard.profile.sub;
+    if (!output) return;
+    const current = () => output.isConnected && state.activeRole === 'manager' && state.dashboard?.profile?.sub === owner && state.dashboard.profile.roles.includes('manager');
+    output.textContent = '正在核对…';
+    try {
+      const result = await loadRead('/api/admin/projects/consistency');
+      if (!current()) return;
+      output.innerHTML = '<p>本次仅核对；未写入汇总字段或修改飞书权限。</p><pre></pre>';
+      output.querySelector('pre').textContent = JSON.stringify(result, null, 2);
+    } catch (e) { if (current()) output.textContent = e.message || '项目主数据核对未完成。'; }
+  }
+
   async function showPermissionAudit(node = '', cursor = '') {
     if (!state.dashboard?.profile?.roles?.includes('manager')) return;
     const output = document.getElementById('permission-audit-result'), owner = state.dashboard.profile.sub;
