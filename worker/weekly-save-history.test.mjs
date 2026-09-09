@@ -5,7 +5,7 @@ import { weeklyRevision, weeklyDates } from './src/weekly-history.js';
 import { mockWeeklyCoordinator } from './test-weekly-coordinator.mjs';
 
 const env = { FEISHU_APP_ID: 'save-history-app', FEISHU_APP_SECRET: 'fixture', SESSION_SECRET: 'save-history-session', FRONTEND_URL: 'https://workbench.example/' };
-for (const name of ['MEMBERS', 'AUTH_PROJECTS', 'PROJECT_MEMBERS', 'WEEKLY']) {
+for (const name of ['MEMBERS', 'AUTH_PROJECTS', 'PROJECT_MEMBERS', 'PROJECTS', 'WEEKLY']) {
   env[name + '_TABLE_ID'] = name.toLowerCase(); env[name + '_BASE_APP_TOKEN'] = 'fixture-' + name.toLowerCase();
 }
 const member = n => ({ record_id: 'member-' + n, fields: { '人员编号': 'P-00' + n, '姓名': '测试' + n,

@@ -15,7 +15,7 @@ const records=[],events=[],writes=[];
 w.fetch=async(url,opts={})=>{
   const path=new URL(url).pathname;
   assert.ok(path.startsWith('/api/learning'),'learning UI cannot call weekly, people or project write routes');
-  if(path==='/api/learning')return Response.json({catalog:LEARNING_CATALOG,records,access:{canSubmit:true,canReview:profile.sub==='ou_junjie'}});
+  if(path==='/api/learning')return Response.json({catalog:LEARNING_CATALOG,records,access:{canSubmit:profile.sub!=='ou_professor',canReview:profile.sub==='ou_junjie',canViewAll:['ou_junjie','ou_professor'].includes(profile.sub)}});
   if(path==='/api/learning/inbox')return Response.json({records,next:'',notificationIssues:[]});
   if(path==='/api/learning/record'){
     if(slowResolve===true) return new Promise(resolve=>{slowResolve=resolve;});
@@ -53,6 +53,10 @@ try {
   d.querySelector('[data-inbox-index="0"]').click();await wait(()=>d.querySelector('.learning-form'));
   d.querySelector('.learning-form textarea').value='朱俊杰的回复';d.querySelector('.learning-form').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await wait(()=>d.querySelectorAll('.learning-history article').length===3);
   assert.equal(writes.at(-1).path,'/api/learning/reply');assert.equal(writes.at(-1).body.subject,'ou_student');
+  ui.reset(); profile={sub:'ou_professor',personId:'P-001',name:'陈铮一'};drafts.bind(profile.sub);
+  await ui.open(true);d.querySelector('[data-inbox-index="0"]').click();await wait(()=>d.querySelectorAll('.learning-history article').length===3);
+  assert.equal(d.querySelector('.learning-form'),null,'professor sees original and replies without a reviewer form');
+  assert.ok(d.querySelector('[data-learning-inbox]'));assert.equal(d.querySelector('[data-learning-mine]'),null);
   assert.deepEqual(errors,[]);
   globalThis.console.log('PASS learning modal: ten linked lessons, one required field, text escaping, loss/retry, append-only history, reopen, account switch and reviewer reply; weekly form/draft unchanged');
 } finally {dom.window.close();}

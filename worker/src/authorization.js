@@ -1,5 +1,5 @@
 // Authoritative ER2 authorization. No legacy role, name or project-code fallback.
-export const AUTH_BINDINGS = ['MEMBERS_TABLE_ID', 'AUTH_PROJECTS_TABLE_ID', 'PROJECT_MEMBERS_TABLE_ID'];
+export const AUTH_BINDINGS = ['MEMBERS_TABLE_ID', 'AUTH_PROJECTS_TABLE_ID', 'PROJECT_MEMBERS_TABLE_ID', 'PROJECTS_TABLE_ID'];
 export const text = value => Array.isArray(value) ? value.map(text).join('') : String(value && typeof value === 'object' ? value.text ?? value.name ?? value.value ?? '' : value ?? '').trim();
 const values = value => (Array.isArray(value) ? value : value ? [value] : []).map(text).filter(Boolean);
 // Explicit user-approved matrix; personnel labels are not an ordinal scale.
@@ -25,6 +25,11 @@ export function personNumber(record) {
   return a && b && a !== b ? '' : a || b;
 }
 export function authError(status, message) { return Object.assign(new Error(message), { status }); }
+export function isInternalMember(context) {
+  const fields = context?.memberRecord?.fields || {};
+  return fields['人员边界'] === '团队内' && fields['成员类别'] !== '临时';
+}
+export const isAdministrator = context => isInternalMember(context) && context.duties?.includes('管理员') === true;
 export function strictBinding(env, key) {
   const prefix = key.replace(/_TABLE_ID$/, '');
   const appToken = String(env[prefix + '_BASE_APP_TOKEN'] || '').trim();
@@ -72,17 +77,19 @@ export function authority(people, projects, relations, openId, now = Date.now())
   if (!text(f['姓名']) || f['人员状态'] !== '在组' || !['团队内', '团队外'].includes(f['人员边界']) || f['是否启用'] === false || f['离组时间']) throw authError(403, '人员资料无效或账号已停用');
   const duties = values(f['系统职责']);
   if (!['PI', 'RA', '管理员', '博士', '硕士', '本科生', '联合培养', '企业伙伴', '临时'].includes(f['成员类别'])) throw authError(403, '成员类别无效');
-  const roles = f['成员类别'] === 'PI' && f['人员边界'] === '团队内' ? ['teacher'] : ['student'];
-  if (f['人员边界'] === '团队内' && duties.includes('管理员')) roles.push('manager');
-  if (f['人员边界'] === '团队内' && (f['成员类别'] === 'PI' || duties.includes('课程审核'))) roles.push('teacher');
+  const internal = f['人员边界'] === '团队内' && f['成员类别'] !== '临时';
+  const roles = internal ? (f['成员类别'] === 'PI' ? ['teacher'] : ['student']) : ['collaborator'];
+  if (internal && duties.includes('管理员')) roles.push('manager');
+  if (internal && (f['成员类别'] === 'PI' || duties.includes('课程审核'))) roles.push('teacher');
   const projectMap = new Map(), invalid = new Set();
   for (const project of projects) {
     const id = text(project.fields?.['项目编号']);
     if (!/^PRJ-\d{3,}$/.test(id)) continue;
-    if (projectMap.has(id)) invalid.add(id);
+    if (projectMap.has(id) || project.definitionBlocked === true) invalid.add(id);
     projectMap.set(id, project);
   }
   const grants = {}, counts = new Map();
+  const invalidDefinitions = new Set(invalid);
   const candidates = relations.filter(r => refs(r.fields?.['关联人员']).includes(record.record_id));
   for (const relation of candidates) {
     const rf = relation.fields || {}, personRefs = refs(rf['关联人员']), projectRefs = refs(rf['关联项目']);
@@ -97,13 +104,14 @@ export function authority(people, projects, relations, openId, now = Date.now())
     const start = date(rf['加入日期']), end = date(rf['权限到期日'], true);
     const hasApprover = qualifiedApproval(people, rf['审批人']);
     const level = ({ '只读': 1, '编辑': 2, '管理': 3 })[text(rf['权限级别'])] || 0;
-    if (invalid.has(id) || !level || rf['授权状态'] !== '有效' || rf['工作台授权确认'] !== '已确认' || ['待变更', '待撤回', '已撤回'].includes(rf['权限落实状态']) || !hasApprover || rf['成员边界'] !== f['人员边界'] || !Number.isFinite(start) || !Number.isFinite(end) || end < start || now < start || now > end) continue;
+    if (invalid.has(id) || !level || rf['授权状态'] !== '有效' || rf['工作台授权确认'] !== '已确认' || rf['权限落实状态'] !== '已落实' || !hasApprover || rf['成员边界'] !== f['人员边界'] || !Number.isFinite(start) || !Number.isFinite(end) || end < start || now < start || now > end) continue;
     if (!confidentialityAllows(text(f['保密等级']), text(project?.fields?.['保密等级']))) continue;
     const statuses = ['项目阶段', '项目状态', '状态'].map(k => text(project.fields?.[k])).filter(Boolean);
     const status = new Set(statuses).size === 1 ? statuses[0] : '';
-    if (!['执行中', '进行中', '暂停'].includes(status)) continue;
+    const archiveRead = ['归档', '已归档', '已结束'].includes(status) && rf['归档查阅例外'] === true;
+    if (!['执行中', '进行中', '暂停'].includes(status) && !archiveRead) continue;
     // Paused projects remain readable but cannot be changed.
-    grants[id] = { level: status === '暂停' ? 1 : level, relationId: relation.record_id, expiresAt: end, projectRecordId: project.record_id };
+    grants[id] = { level: status === '暂停' || archiveRead ? 1 : Math.min(level, 2), relationId: relation.record_id, expiresAt: end, projectRecordId: project.record_id };
   }
   // The approved model is one person/one project. Duplicates fail closed, not highest-wins.
   for (const [id, count] of counts) if (count > 1 || invalid.has(id)) delete grants[id];
@@ -111,11 +119,17 @@ export function authority(people, projects, relations, openId, now = Date.now())
   const supervisor = people.find(p => supervisorRefs.includes(p.record_id));
   const directSupervisors = Array.isArray(f['直属负责人']) ? f['直属负责人'] : [];
   const directId = directSupervisors.length === 1 ? String(directSupervisors[0]?.open_id || directSupervisors[0]?.id || '') : '';
-  return { personId, sub: openId, name: text(f['姓名']), roles: [...new Set(roles)], duties: f['人员边界'] === '团队内' ? duties : [],
+  const projectPolicies = Object.fromEntries([...projectMap].filter(([id]) => !invalidDefinitions.has(id)).map(([id, p]) => {
+    const statuses = ['项目阶段', '项目状态', '状态'].map(k => text(p.fields?.[k])).filter(Boolean);
+    return [id, { writable: new Set(statuses).size === 1 && ['执行中', '进行中'].includes(statuses[0]) }];
+  }));
+  return { personId, sub: openId, name: text(f['姓名']), roles: [...new Set(roles)], duties: internal ? duties : [], projectPolicies,
     teacherOpenId: supervisor ? identity(supervisor) : /^ou_[\w-]+$/.test(directId) ? directId : '', projectCode: '', track: '', grants, memberRecord: record };
 }
 export function canProject(context, id, action = 'read') {
   const required = { read: 1, edit: 2, manage: 3 }[action];
+  if (required && /^PRJ-\d{3,}$/.test(id) && isAdministrator(context) && Object.hasOwn(context.projectPolicies || {}, id))
+    return action === 'read' || context.projectPolicies[id].writable;
   return Boolean(required && /^PRJ-\d{3,}$/.test(id) && context?.grants?.[id]?.level >= required && context.grants[id].expiresAt >= Date.now());
 }
 export function requireProject(context, id, action = 'read') {

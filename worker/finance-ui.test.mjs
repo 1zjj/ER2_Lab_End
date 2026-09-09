@@ -25,11 +25,11 @@ for(const sub of ['ou_pi','ou_student','ou_finance','ou_delegate','ou_admin']){
   v.eval(source);v.document.querySelector('main').innerHTML=v.ER2Finance.card();
   await v.ER2Finance.create({apiBase:'https://api.test',getSession:()=>'test-session',getProfile:()=>({personId:actor.personId})}).mount();
   const root=v.document.querySelector('[data-finance-card-actions]');
-  assert.equal(Boolean(root.querySelector('[data-finance="summary"]')),sub==='ou_pi',sub+' monthly button');
+  assert.equal(Boolean(root.querySelector('[data-finance="summary"]')),['ou_pi','ou_delegate','ou_admin'].includes(sub),sub+' monthly button');
   assert.equal(Boolean(root.querySelector('[data-finance="review"]')),['ou_finance','ou_delegate'].includes(sub),sub+' review button');
   assert.equal(Boolean(root.querySelector('[data-finance="setup"]')),['ou_pi','ou_delegate','ou_admin'].includes(sub),sub+' configuration button');
   for(const action of ['purchase','claim','records'])assert.ok(root.querySelector('[data-finance="'+action+'"]'));
-  if(sub==='ou_pi'){
+  if(access.canSummary){
     root.querySelector('[data-finance="summary"]').click();await new Promise(resolve=>setImmediate(resolve));
     assert.equal(urls.filter(url=>url.includes('/summary?')).length,1);
     assert.match(v.document.querySelector('[data-finance-summary]').textContent,/123\.00/);
@@ -43,4 +43,4 @@ for(const sub of ['ou_pi','ou_student','ou_finance','ou_delegate','ou_admin']){
   }
   roleDom.window.close();
 }
-console.log('PASS professor-only monthly UI and actions; student, finance, delegate and administrator permissions preserved');
+console.log('PASS administrator monthly UI and actions; student, finance, delegate and administrator permissions preserved');

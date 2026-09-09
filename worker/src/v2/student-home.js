@@ -1,5 +1,5 @@
 export function enrichStudentDashboard(dashboard = {}) {
-  if (!dashboard?.student) return dashboard;
+  if (!dashboard?.student || dashboard.collaborator) return dashboard;
   return {
     ...dashboard,
     student: {

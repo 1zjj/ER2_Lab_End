@@ -29,7 +29,7 @@ const request=(path,body)=>new Request('https://worker.test/api/learning'+path, 
 const run=(sub,path,body)=>executeLearning(request(path,body),env,storage,async()=>context(sub)).then(r=>r.json());
 const submit=(lesson,extra={})=>({requestId:'request-learning-'+lesson,trackId:'A',lessonId:lesson,gains:'本课学习收获 '+lesson,...extra});
 assert.equal(learningAccess(context('ou_professor').actor,people,env).canReview,false);
-assert.equal(learningAccess(context('ou_other').actor,people,env).canReview,false,'Another manager or course reviewer cannot read students');
+assert.equal(learningAccess(context('ou_other').actor,people,env).canReview,false,'Another manager cannot reply as the designated reviewer');
 assert.equal(learningRecipient(people,env,'reviewer').sub,'ou_junjie');
 assert.equal(learningRecipient(people,env,'professor').sub,'ou_professor');
 assert.throws(()=>learningInput(submit('01',{gains:' '}),'submit'));
@@ -45,8 +45,8 @@ assert.deepEqual((await run('ou_student','/submit',submit('01'))).event,first.ev
 await assert.rejects(run('ou_student','/submit',submit('01',{gains:'different'})),e=>e.status===409);
 await assert.rejects(run('ou_student','/submit',submit('01',{requestId:'another-learning-request'})),e=>e.status===409);
 for(const sub of ['ou_other','ou_professor']) {
-  await assert.rejects(run(sub,'/record?subject=ou_student&track=A&lesson=01'),e=>e.status===403);
-  await assert.rejects(run(sub,'/inbox'),e=>e.status===403);
+  assert.equal((await run(sub,'/record?subject=ou_student&track=A&lesson=01')).record.subject,'ou_student');
+  assert.equal((await run(sub,'/inbox')).records.length,1);
   await assert.rejects(run(sub,'/reply',{requestId:'bad-reply-request-1',trackId:'A',lessonId:'01',subject:'ou_student',text:'bad'}),e=>e.status===403);
 }
 for(let n=2;n<=10;n++) await run('ou_student','/submit',submit(String(n).padStart(2,'0')));
