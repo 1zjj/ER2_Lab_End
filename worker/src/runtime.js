@@ -14,6 +14,7 @@ import { AUTH_BINDINGS, strictBinding } from './authorization.js';
 import { BUILD_INFO } from './build-info.js';
 import { courseCapabilities } from './capabilities.js';
 import { READ_VERSION } from './read-performance.js';
+import { routePermissionAudit } from './permission-audit.js';
 
 export const AI_STATUS = Object.freeze({ enabled: false, status: 'paused', configurationRetained: true });
 let deepHealthCache = { value: null, expiresAt: 0 };
@@ -59,6 +60,7 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
+    if (request.method !== 'OPTIONS' && path === '/api/admin/permissions/audit') return routePermissionAudit(request, env);
     if (request.method !== 'OPTIONS' && /^\/api\/finance(?:\/|$)/.test(path)) return routeFinance(request, env);
     if (request.method !== 'OPTIONS' && /^\/api\/learning(?:\/|$)/.test(path)) return routeLearning(request, env);
     if (request.method !== 'OPTIONS' && /^\/api\/ai(?:\/|$)/.test(path)) return aiPaused(request, env);

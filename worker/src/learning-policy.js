@@ -1,11 +1,11 @@
-import { authority, identity, personNumber, authError } from './authorization.js';
+import { authority, identity, personNumber, authError, isInternalMember, isAdministrator } from './authorization.js';
 import { LEARNING_CATALOG } from './learning-catalog.js';
 
 export function learningActor(people, sub) {
   // Common teaching material does not consume project grants. Only the existing
   // authoritative member identity/status rules are reused; no fields are written.
   const actor = authority(people, [], [], sub);
-  if (actor.memberRecord.fields['人员边界'] !== '团队内') throw authError(403, '普通课程当前仅向在组的团队内成员开放');
+  if (!isInternalMember(actor)) throw authError(403, '普通课程当前仅向在组的正式团队内成员开放');
   return actor;
 }
 export function learningRecipient(people, env, kind) {
@@ -22,7 +22,7 @@ export function learningRecipient(people, env, kind) {
 export function learningAccess(actor, people, env) {
   let reviewer;
   try { reviewer = learningRecipient(people, env, 'reviewer'); } catch (_) {}
-  return { canSubmit: actor.roles.includes('student'), canReview: reviewer?.sub === actor.sub };
+  return { canSubmit: actor.roles.includes('student'), canReview: reviewer?.sub === actor.sub, canViewAll: isAdministrator(actor) };
 }
 export function learningLesson(trackId, lessonId) {
   const track = LEARNING_CATALOG.tracks.find(t => t.id === trackId && t.available);

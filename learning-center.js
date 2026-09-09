@@ -29,7 +29,7 @@
     function renderTabs() {
       const el = dialog.querySelector('[data-learning-tabs]');
       el.innerHTML = (model.access.canSubmit ? '<button class="button button-secondary" data-learning-mine>我的学习</button>' : '') +
-        (model.access.canReview ? '<button class="button button-secondary" data-learning-inbox>学生学习记录</button>' : '');
+        (model.access.canReview || model.access.canViewAll ? '<button class="button button-secondary" data-learning-inbox>学生学习记录</button>' : '');
       el.querySelector('[data-learning-mine]')?.addEventListener('click', () => { view++; mode = 'mine'; renderCourses(); });
       el.querySelector('[data-learning-inbox]')?.addEventListener('click', () => { mode = 'inbox'; renderInbox(); });
     }
@@ -40,7 +40,7 @@
     }
     function renderCourses() {
       selection = null; pending = false; progress();
-      dialog.querySelector('[data-learning-detail]').innerHTML = '<p>选择课程后，可阅读知识库教材、提交学习记录和查看回复。</p><p class="muted">提交内容仅本人和朱俊杰可查看。教授只接收 Track 全部完成提醒。</p>';
+      dialog.querySelector('[data-learning-detail]').innerHTML = '<p>选择课程后，可阅读知识库教材、提交学习记录和查看回复。</p><p class="muted">提交内容由本人、管理员和指定课程审核人查看。朱俊杰可回复；教授接收 Track 全部完成提醒。</p>';
       dialog.querySelector('[data-learning-nav]').innerHTML = model.catalog.tracks.map(t => '<details class="learning-track"' + (t.id === 'A' ? ' open' : '') + '><summary>' + escape(t.title) + '</summary>' +
         (t.available ? t.lessons.map(l => { const record = model.records.find(r => r.trackId === t.id && r.lessonId === l.id);
           return '<button type="button" class="learning-lesson-button" data-learning-lesson="' + escape(t.id + ':' + l.id) + '"><span>Lesson ' + escape(l.id) + ' · ' + escape(l.title) + '</span><small>' + (record ? record.lastKind === 'reply' ? '已提交 · 有回复' : '已提交' : '待提交') + '</small></button>'; }).join('') : '<p class="muted">待开放，暂不计入学习进度。</p>') + '</details>').join('');
@@ -56,7 +56,7 @@
         const data = await api('/api/learning/inbox' + (cursor ? '?cursor=' + encodeURIComponent(cursor) : ''));
         if (!alive(g) || v !== view) return;
         const rows = accumulated.concat(data.records);
-        status(data.notificationIssues.length ? '有 ' + data.notificationIssues.length + ' 条通知未确认送达；学习记录已保存。' : '仅朱俊杰可查看和回复；学生不需要等待回复。');
+        status(data.notificationIssues.length ? '有 ' + data.notificationIssues.length + ' 条通知未确认送达；学习记录已保存。' : '管理员可查看；朱俊杰可回复。学生不需要等待回复。');
         dialog.querySelector('[data-learning-detail]').innerHTML = '<p>选择一条记录查看学生原文和历史回复。</p>';
         const nav = dialog.querySelector('[data-learning-nav]');
         nav.innerHTML = rows.length ? rows.map((r, i) => '<button type="button" class="learning-lesson-button" data-inbox-index="' + i + '"><span>' + escape(r.name) + ' · ' + escape(r.trackId) + ' / ' + escape(r.lessonId) + '</span><small>' + (r.lastKind === 'reply' ? '已回复' : '待查看 / 回复') + ' · ' + escape(date(r.updatedAt)) + '</small></button>').join('') : '<p>暂时没有学习记录。</p>';
@@ -139,7 +139,7 @@
       owner = profile.sub; const g = ++generation; mode = inbox ? 'inbox' : 'mine'; shell(); dialog.showModal();
       try {
         const result = await api('/api/learning'); if (!alive(g)) return; model = result;
-        if (inbox && !model.access.canReview) throw new Error('当前账号没有查看其他学生学习记录的权限');
+        if (inbox && !model.access.canReview && !model.access.canViewAll) throw new Error('当前账号没有查看其他学生学习记录的权限');
         renderTabs(); if (mode === 'inbox') await renderInbox(); else renderCourses();
       } catch (e) { if (alive(g)) {
         retry(e.message, () => open(inbox));

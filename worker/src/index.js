@@ -2,7 +2,7 @@ import { weeklyHash, weeklyRevision, weeklyDates, historyPage } from './weekly-h
 import { evidenceText, serializeWeekly, weeklyValues, weeklyMatches, weeklyCompatibility, WEEKLY_VERSION } from './weekly-write.js';
 import { weeklyRoster, isWeeklySubmitted, hasWeeklyIssue, weeklyAutomationConfiguration } from './weekly-policy.js';
 import { recordPage } from './feishu-record-page.js';
-import { authority, AUTH_BINDINGS, strictBinding, identity, canProject, requireProject, businessProjectId, visibleProjects, hasProjectScope } from './authorization.js';
+import { authority, AUTH_BINDINGS, strictBinding, identity, canProject, requireProject, businessProjectId, visibleProjects, hasProjectScope, isInternalMember, isAdministrator } from './authorization.js';
 import { resolveTableBinding as resolveBinding } from './v2/bindings.js';
 import { courseCapabilities } from './capabilities.js';
 import { readScope, readOptions, measureRead, readHeaders } from './read-performance.js';
@@ -77,6 +77,8 @@ export default {
         ? await requireMemberIdentity(env, session) : await requireActiveMember(env, session);
       if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(request.method) && url.pathname.startsWith('/api/')) enforceWriteRateLimit(session.sub);
       if (url.pathname === '/api/me' && request.method === 'GET') return json(request, env, { profile: { sub: session.sub, personId: session.personId, name: session.name, roles: session.roles } });
+      if (!isInternalMember(session) && !['/api/dashboard', '/api/projects'].includes(url.pathname) && !url.pathname.startsWith('/api/projects/'))
+        throw httpError(403, '当前协作者仅可访问明确授权的项目');
       if (url.pathname.startsWith('/api/courses/') && request.method === 'POST' && !courseCapabilities(env).submissionEnabled)
         return json(request, env, { code: 'COURSE_UNAVAILABLE', message: '课程提交暂未开放，请在本周工作记录中填写学习与方法。' }, 503);
       if (url.pathname === '/api/admin/weekly-source' && request.method === 'GET') return await weeklySource(request, env, session);
@@ -166,6 +168,11 @@ async function dashboard(request, env, session) {
   const role = session.roles.includes(requestedRole) ? requestedRole : session.roles[0];
   if (!role) throw httpError(403, '账号没有可用角色');
   const tenantToken = await getTenantToken(env);
+  if (!isInternalMember(session)) {
+    const projects = visibleProjects(session, await listRecords(env, tenantToken, 'PROJECTS_TABLE_ID')).map(r => projectView(r, session));
+    return json(request, env, { profile: { sub: session.sub, personId: session.personId, name: session.name, roles: session.roles },
+      collaborator: true, student: { projects }, catalog: projects.filter(p => p.url).map(p => ({ title: p.title, url: p.url, category: '项目', subtitle: '进入项目' })), moduleErrors: {}, capabilities: { internal: false } });
+  }
   const moduleErrors = {};
   const optional = async (name, binding) => {
     try { return await listRecords(env, tenantToken, binding, { budgetMs: 6000 }); }
@@ -201,7 +208,7 @@ async function dashboard(request, env, session) {
     ? buildManager(members, permittedProjects, permittedCourses, env)
     : { stats: {}, automations: [] };
   const literature = moduleErrors.literature ? null : buildLiterature(session, currentWeek, literatureRecords);
-  const catalog = buildCatalog(session, permittedLinks);
+  const catalog = buildCatalog(session, permittedLinks).concat(student.projects.filter(p => p.url).map(p => ({ title: p.title, url: p.url, category: '项目', subtitle: '进入项目' })));
   const coursesCapability = courseCapabilities(env);
   if (!coursesCapability.enabled) teacher.courseReview = { visible: false, canConfirm: false, pending: 0, submissions: [] };
   if (moduleErrors.projects) manager.stats.projects = null;
@@ -1455,7 +1462,7 @@ function projectView(record, session) {
   const id = businessProjectId(record);
   return { projectId: id, code: id, title: field(record, '项目名称', '名称'),
     milestone: field(record, '当前里程碑'), blocker: field(record, '最近阻塞'),
-    progress: Number(field(record, '进度')) || 0, permission: session.grants[id]?.level || 0,
+    progress: Number(field(record, '进度')) || 0, permission: isAdministrator(session) ? (canProject(session, id, 'manage') ? 3 : 1) : session.grants[id]?.level || 0,
     url: projectHomepage(record) };
 }
 

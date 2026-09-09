@@ -14,8 +14,8 @@ let assets=0;const service={equipmentMatches:async d=>d.lines.map((l,index)=>({i
 const run=(sub,path,body)=>executeFinance(new Request('https://worker.test/api/finance'+path,body?{method:'POST',body:JSON.stringify(body)}:{}),env,storage,async()=>context(sub),async()=>service).then(r=>r.json());
 const draft={kind:'claim',lines:[{name:'传感器',quantity:'2',unitPrice:'99.50',purchaseDate:'2026-08-25'}],requestId:'finance-valid-request',submit:true};
 assert.equal(context('ou_finance').access.canReview,true);assert.equal(context('ou_other').access.canReview,false);assert.equal(context('ou_pi').access.canReview,false);assert.equal(context('ou_admin').access.canReview,true);
-for(const sub of ['ou_student','ou_finance','ou_admin','ou_other']){
-  assert.equal(context(sub).access.canSummary,false,'monthly spending is reserved for the configured professor');
+for(const sub of ['ou_student','ou_finance']){
+  assert.equal(context(sub).access.canSummary,false,'monthly spending requires current administrator duty');
   await assert.rejects(run(sub,'/summary?month=2026-08'),e=>e.status===403);
 }
 assert.equal(context('ou_pi').access.canSummary,true);
@@ -29,7 +29,15 @@ const payload=devicePayload(draft.lines[0],'ou_student',fields);assert.equal(pay
 const saved=await run('ou_student','/save',draft);assert.equal(saved.document.totalCents,19900);assert.equal(assets,0);assert.deepEqual(await run('ou_student','/save',draft),saved);
 await assert.rejects(run('ou_student','/save',{...draft,lines:[{...draft.lines[0],name:'不同'}]}),e=>e.status===409);
 const id=saved.document.id;
-for(const sub of ['ou_other','ou_pi'])await assert.rejects(run(sub,'/record?id='+id),e=>e.status===404);
+// Global visibility never becomes permission to impersonate the record owner.
+const privateDraft=await run('ou_student','/save',{...draft,submit:false,requestId:'private-draft-visibility'});
+for(const sub of ['ou_admin','ou_pi']) {
+  assert.equal((await run(sub,'/record?id='+privateDraft.document.id)).document.status,'draft');
+  await assert.rejects(run(sub,'/save',{...draft,id:privateDraft.document.id,revision:1,submit:false,requestId:'impersonation-'+sub}),e=>e.status===404);
+}
+await assert.rejects(run('ou_finance','/record?id='+privateDraft.document.id),e=>e.status===404);
+for(const sub of ['ou_other','ou_pi','ou_admin']){assert.equal((await run(sub,'/record?id='+id)).document.id,id);assert.equal((await run(sub,'/records?all=true')).records.length,2);}
+await assert.rejects(run('ou_finance','/records?all=true'),e=>e.status===403);
 await assert.rejects(run('ou_student','/records?review=true'),e=>e.status===403);
 await assert.rejects(run('ou_student','/review',{id,revision:1,action:'approve',requestId:'illegal-self-review'}),e=>e.status===403);
 await assert.rejects(run('ou_finance','/review',{id,revision:1,action:'return',reason:'',requestId:'empty-return-reason'}),e=>e.status===400);
@@ -43,11 +51,11 @@ await run('ou_finance','/review',{id,revision:3,action:'approve',requestId:'appr
 const summary=monthlySummary([reviewed.document,{kind:'purchase',status:'sent',totalCents:500000}], '2026-08');assert.equal(summary.totalCents,19900);
 assert.equal((await run('ou_pi','/summary?month=2026-08')).totalCents,19900);
 env.FINANCE_PROFESSOR_PERSON_ID='P-005';
-await assert.rejects(run('ou_pi','/summary?month=2026-08'),e=>e.status===403);
+assert.equal((await run('ou_pi','/summary?month=2026-08')).totalCents,19900);
 assert.equal((await run('ou_other','/summary?month=2026-08')).totalCents,19900);
 env.FINANCE_PROFESSOR_PERSON_ID='P-001';
 people[0].fields['人员状态']='离组';await assert.rejects(run('ou_pi','/summary?month=2026-08'),e=>e.status===403);people[0].fields['人员状态']='在组';
-console.log('PASS professor-only monthly summary, direct endpoint denial, reassignment and membership revocation');
+console.log('PASS administrator financial visibility, restricted endpoints, independent notification recipient and membership revocation');
 people[3].fields['系统职责']=[];await assert.rejects(run('ou_finance','/records?review=true'),e=>e.status===403);
 await assert.rejects(run('ou_finance','/review',{id,revision:3,action:'approve',requestId:'approve-with-record'}),e=>e.status===404||e.status===403);
 people[3].fields['系统职责']=['财务'];

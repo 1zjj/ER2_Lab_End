@@ -7,7 +7,8 @@
   const roleMeta = {
     student: { label: '学生个人页', short: '学' },
     teacher: { label: '教师汇总页', short: '教' },
-    manager: { label: '管理配置', short: '管' }
+    manager: { label: '管理配置', short: '管' },
+    collaborator: { label: '项目协作', short: '协' }
   };
   const onboardingSteps = [
     { id: 'workbench', icon: '⌁', title: '认识工作台', detail: '了解学习中心、周报和文献阅读入口。',
@@ -160,8 +161,8 @@
         ]
       },
       project: {
-        code: 'P03',
-        title: 'PatchNav',
+        code: 'DEMO-A',
+        title: '演示项目 A',
         milestone: '真机地图稳定性验证',
         progress: 62,
         blocker: '动态障碍附近 costmap 局部跳变；下一步完成参数对照实验。',
@@ -169,7 +170,7 @@
       },
       tasks: [
         { title: '完成 Lesson 03 实验', detail: '提交 rqt_graph、TF 检查与结果截图', type: '课程' },
-        { title: '更新 P03 项目证据', detail: '记录 costmap 跳变现象与复现实验', type: '项目' },
+        { title: '更新演示项目 A 证据', detail: '记录 costmap 跳变现象与复现实验', type: '项目' },
         { title: '提交本周工作记录', detail: '进展、证据、阻塞和下一步', type: '周报' }
       ],
       links: [
@@ -185,13 +186,13 @@
     teacher: {
       stats: { submitted: 2, missing: 1, blocked: 1 },
       students: [
-        { id: 'stu-a', name: '学生 A', project: 'P03 PatchNav', status: '未提交', blocker: 'costmap 局部跳变', tone: 'orange' },
-        { id: 'stu-b', name: '学生 B', project: 'P01 双臂协同', status: '已提交', blocker: '无', tone: 'green' },
-        { id: 'stu-c', name: '学生 C', project: 'P05 Go2 感知', status: '已提交', blocker: '标定误差偏高', tone: 'red' }
+        { id: 'stu-a', name: '学生 A', project: '演示项目 A', status: '未提交', blocker: 'costmap 局部跳变', tone: 'orange' },
+        { id: 'stu-b', name: '学生 B', project: '演示项目 B', status: '已提交', blocker: '无', tone: 'green' },
+        { id: 'stu-c', name: '学生 C', project: '演示项目 C', status: '已提交', blocker: '标定误差偏高', tone: 'red' }
       ],
       commonIssues: [
         '两名学生需要统一 ROS/TF 证据提交格式',
-        'P03 的动态障碍 costmap 稳定性需要安排复现实验',
+        '演示项目 A 的动态障碍 costmap 稳定性需要安排复现实验',
         'Lesson 03 建议增加真机安全检查清单'
       ],
       courseReview: { visible: true, canConfirm: true, viewerLabel: '朱俊杰确认页', pending: 1, submissions: [] }
@@ -210,8 +211,8 @@
       minimum: 3,
       completed: false,
       items: [
-        { id: 'demo-1', title: 'Learning Transferable Visual Models From Natural Language Supervision', submitter: '郑斯哲', role: '学生', weekId: '2026-W36', date: '2026-09-03', authors: 'Radford et al.', venue: 'ICML', year: '2021', direction: '视觉语言', type: '精读', contribution: '通过大规模图文对比学习获得可迁移的零样本视觉识别能力。', noteUrl: '', paperUrl: 'https://arxiv.org/abs/2103.00020', attachmentUrl: '', submittedAt: '2026-09-03T12:30:00.000Z' },
-        { id: 'demo-2', title: 'Diffusion Policy: Visuomotor Policy Learning via Action Diffusion', submitter: '朱俊杰', role: '教师 / 管理员', weekId: '2026-W36', date: '2026-09-02', authors: 'Chi et al.', venue: 'RSS', year: '2023', direction: '具身智能', type: '复现', contribution: '把动作序列建模为条件扩散过程，提高多模态机器人操作策略的表达能力。', noteUrl: '', paperUrl: 'https://arxiv.org/abs/2303.04137', attachmentUrl: '', submittedAt: '2026-09-02T09:10:00.000Z' }
+        { id: 'demo-1', title: 'Learning Transferable Visual Models From Natural Language Supervision', submitter: '学生 A', role: '学生', weekId: '2026-W36', date: '2026-09-03', authors: 'Radford et al.', venue: 'ICML', year: '2021', direction: '视觉语言', type: '精读', contribution: '通过大规模图文对比学习获得可迁移的零样本视觉识别能力。', noteUrl: '', paperUrl: 'https://arxiv.org/abs/2103.00020', attachmentUrl: '', submittedAt: '2026-09-03T12:30:00.000Z' },
+        { id: 'demo-2', title: 'Diffusion Policy: Visuomotor Policy Learning via Action Diffusion', submitter: '教师 A', role: '教师 / 管理员', weekId: '2026-W36', date: '2026-09-02', authors: 'Chi et al.', venue: 'RSS', year: '2023', direction: '具身智能', type: '复现', contribution: '把动作序列建模为条件扩散过程，提高多模态机器人操作策略的表达能力。', noteUrl: '', paperUrl: 'https://arxiv.org/abs/2303.04137', attachmentUrl: '', submittedAt: '2026-09-02T09:10:00.000Z' }
       ]
     }
   };
@@ -427,7 +428,8 @@
       memberGuide.bind(DEMO_MODE ? 'demo' : data.profile.sub);
       state.learningCenterOpen = false;
       state.dashboard = data;
-      if (Array.isArray(data.catalog) && data.catalog.length) state.catalog = mergeCatalog(state.catalog, data.catalog);
+      if (!DEMO_MODE) state.catalog = Array.isArray(data.catalog) ? data.catalog : [];
+      else if (Array.isArray(data.catalog)) state.catalog = mergeCatalog(state.catalog, data.catalog);
       const roles = Array.isArray(data.profile.roles) ? data.profile.roles.filter(function (item) { return roleMeta[item]; }) : ['student'];
       state.activeRole = roles.includes(role) ? role : (roles.includes(state.activeRole) ? state.activeRole : roles[0]);
       renderAccount();
@@ -439,7 +441,7 @@
       elements.app.hidden = false;
       if (new URLSearchParams(location.search).get('page') === 'weekly' && roles.includes('student')) openReportDialog();
       const learningPage = new URLSearchParams(location.search).get('page');
-      if (!DEMO_MODE && window.ER2LearningCenter && ['learning', 'learning-inbox'].includes(learningPage))
+      if (!DEMO_MODE && !data.collaborator && window.ER2LearningCenter && ['learning', 'learning-inbox'].includes(learningPage))
         learningUI().open(learningPage === 'learning-inbox');
     } catch (error) {
       if (!current()) return;
@@ -694,7 +696,7 @@
   }
 
   function renderCourseReviewPanel() {
-    if (!DEMO_MODE && window.ER2LearningCenter) return state.dashboard?.profile?.personId === 'P-002' ? '<section class="panel"><div class="panel-title"><h2>学生学习记录</h2></div><p>查看逐课原文并回复学生，回复不影响学习进度。</p><button class="button button-secondary" type="button" data-open-learning-inbox>查看学习记录</button></section>' : '';
+    if (!DEMO_MODE && window.ER2LearningCenter) return state.dashboard?.profile?.roles?.includes('manager') || state.dashboard?.profile?.personId === 'P-002' ? '<section class="panel"><div class="panel-title"><h2>学生学习记录</h2></div><p>查看逐课原文和历史回复。课程审核人可追加回复。</p><button class="button button-secondary" type="button" data-open-learning-inbox>查看学习记录</button></section>' : '';
     if (state.dashboard.moduleErrors?.courses || !courseSubmissionAvailable()) return '';
     const review = state.dashboard.teacher && state.dashboard.teacher.courseReview;
     if (!review || !review.visible) return '';
@@ -750,6 +752,11 @@
   }
 
   function renderActiveView() {
+    if (state.dashboard.collaborator) {
+      const projects = state.dashboard.student.projects || [];
+      elements.app.innerHTML = '<section class="panel"><h2>我的项目</h2>' + (projects.length ? projects.map(p => '<article><h3>' + escapeHtml(p.title) + '</h3>' + (safeUrl(p.url) !== '#' ? '<a class="button button-secondary" target="_blank" rel="noopener noreferrer" href="' + escapeHtml(safeUrl(p.url)) + '">进入项目</a>' : '<p>项目入口待配置。</p>') + '</article>').join('') : '<p>暂无已授权项目。</p>') + '</section>';
+      return;
+    }
     if (state.dashboard.weeklyOnly) { renderWeeklyOnly(); return; }
     if (state.activeRole === 'teacher') elements.app.innerHTML = renderTeacher();
     else if (state.activeRole === 'manager') elements.app.innerHTML = renderManager();
@@ -879,7 +886,9 @@
     return '<details class="panel data-source-diagnostics" id="weekly-source-panel"><summary>数据源诊断</summary>' +
       '<div class="data-source-diagnostics-body"><h3>周报数据源核对</h3><p>查看后端实际连接的周报表及字段配置。</p>' +
       '<button class="button button-secondary" type="button" id="weekly-source-button">查看当前连接的周报表</button>' +
-      '<div id="weekly-source-result" aria-live="polite"></div></div></details>';
+      '<div id="weekly-source-result" aria-live="polite"></div><h3>ER2 原生权限核验</h3><p>查看目录、当前页和子页协作者、分享设置及读取异常。</p>' +
+      '<label>页面链接或节点编号<input id="permission-audit-node" type="text" maxlength="300" placeholder="留空查看 ER2 顶层目录"></label>' +
+      '<button class="button button-secondary" type="button" id="permission-audit-button">核验权限</button><div id="permission-audit-result" aria-live="polite"></div></div></details>';
   }
 
   function renderManager() {
@@ -910,6 +919,11 @@
     elements.app.querySelectorAll('[data-open-learning-inbox]').forEach(button => button.addEventListener('click', () => learningUI()?.open(true)));
     const sourceButton = elements.app.querySelector('#weekly-source-button');
     if (sourceButton) sourceButton.addEventListener('click', showWeeklySource);
+    elements.app.querySelector('#permission-audit-button')?.addEventListener('click', () => {
+      let node = elements.app.querySelector('#permission-audit-node').value.trim();
+      if (node.startsWith('https://')) { try { const u = new URL(node); if (u.origin !== 'https://lcnywl4yrecr.feishu.cn' || !/^\/wiki\/[A-Za-z0-9]+$/.test(u.pathname)) throw Error(); node = u.pathname.split('/').pop(); } catch (_) { showToast('请输入 ER2 飞书知识库页面链接'); return; } }
+      showPermissionAudit(node);
+    });
     elements.app.querySelectorAll('[data-open-learning-center]').forEach(function (button) {
       button.addEventListener('click', openLearningCenter);
     });
@@ -1485,6 +1499,24 @@
     renderActiveView();
     if (elements.onboardingDialog.open) renderOnboardingDialog();
   });
+  async function showPermissionAudit(node = '', cursor = '') {
+    if (!state.dashboard?.profile?.roles?.includes('manager')) return;
+    const output = document.getElementById('permission-audit-result'), owner = state.dashboard.profile.sub;
+    if (!output) return;
+    const current = () => output.isConnected && state.dashboard?.profile?.sub === owner && state.dashboard.profile.roles.includes('manager');
+    output.textContent = '正在核验…';
+    try {
+      const result = await loadRead('/api/admin/permissions/audit?' + new URLSearchParams({ node, cursor }));
+      if (!current()) return;
+      output.innerHTML = '<p>' + (result.readComplete ? '已读回当前批次。' : '部分读取失败，尚未完成核验。') + '实际账号访问、附件和引用对象仍需核验。</p>' +
+        '<div data-permission-children></div><details open><summary>原生权限读回</summary><pre></pre></details>';
+      output.querySelector('pre').textContent = JSON.stringify(result, null, 2);
+      const children = output.querySelector('[data-permission-children]');
+      for (const child of result.children) { const b = document.createElement('button'); b.className = 'button button-secondary'; b.textContent = child.title || child.node_token; b.onclick = () => showPermissionAudit(child.node_token); children.appendChild(b); }
+      if (result.hasMore) { const b = document.createElement('button'); b.className = 'button button-secondary'; b.textContent = '下一批目录'; b.onclick = () => showPermissionAudit(node, result.next); children.appendChild(b); }
+    } catch (e) { if (current()) output.textContent = e.message || '核验失败，未确认任何访问权限。'; }
+  }
+
   async function showWeeklySource() {
     if (state.activeRole !== 'manager' || !state.dashboard?.profile?.roles?.includes('manager')) return;
     const output = document.getElementById('weekly-source-result');
@@ -1535,10 +1567,10 @@
     location.href = API_BASE + '/auth/launch?returnTo=' + encodeURIComponent(location.origin + location.pathname);
   });
 
-  const catalogRequest = fetch('./data/catalog.json')
+  const catalogRequest = (DEMO_MODE ? fetch('./data/catalog.json') : Promise.resolve({ ok: false }))
     .then(function (response) { return response.ok ? response.json() : []; })
     .then(function (data) {
-      state.catalog = mergeCatalog(Array.isArray(data) ? data : [], state.dashboard?.catalog || []);
+      if (DEMO_MODE) state.catalog = mergeCatalog(Array.isArray(data) ? data : [], state.dashboard?.catalog || []);
       hydrateDemoLinks();
     })
     .catch(function () { /* Search metadata must not delay or clear live data. */ });
