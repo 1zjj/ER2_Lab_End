@@ -372,9 +372,13 @@ async function saveLiterature(request, env, session) {
   try {
     const id = created.code === 0 && created.data?.record?.record_id;
     if (!id) throw new Error('Missing confirmed literature record ID');
-    const readBack = await feishuRequest('/bitable/v1/apps/' + app + '/tables/' + binding.tableId + '/records/' + encodeURIComponent(id), { bearer: tenantToken });
-    record = readBack.data?.record;
-    if (readBack.code !== 0 || !literatureMatches(record, expected)) throw new Error('Literature readback mismatch');
+    // Re-read through the same table-record capability used for the feed and
+    // retry reconciliation, without assuming the app also has a dedicated
+    // single-record retrieval capability.
+    const confirmed = (await listRecords(env, tenantToken, 'LITERATURE_TABLE_ID'))
+      .filter(item => item.record_id === id);
+    record = confirmed[0];
+    if (confirmed.length !== 1 || !literatureMatches(record, expected)) throw new Error('Literature readback mismatch');
   } catch (error) { throw Object.assign(error, { status: 502, code: 'LITERATURE_READBACK_FAILED' }); }
   return json(request, env, {
     ok: true, readBackVerified: true, recordId: record.record_id,
