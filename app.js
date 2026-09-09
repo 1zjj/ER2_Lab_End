@@ -826,7 +826,9 @@
   }
 
   function studentHomeView(student) {
-    if (!student?.home) return null;
+    if (!student) return null;
+    if (state.dashboard?.progressive && window.ER2BuildStudentHome) return window.ER2BuildStudentHome(state.dashboard);
+    if (!student.home) return null;
     // A confirmed weekly save updates student.report before the next dashboard
     // read. Do not let the older home summary overwrite that confirmed status.
     const home = student.home;
