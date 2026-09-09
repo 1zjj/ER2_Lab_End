@@ -83,6 +83,7 @@ async function test(name, fn) { reset(); await fn(); count++; console.log('PASS 
 try {
   await test('weekly source locator is restricted to current managers', async () => {
     assert.equal((await call(1, '/api/admin/weekly-source')).status, 403);
+    assert.equal((await call(1, '/api/admin/literature-source')).status, 403);
     const response = await call(9, '/api/admin/weekly-source');
     assert.equal(response.status, 200);
     const data = await response.json();

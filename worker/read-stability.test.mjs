@@ -1,3 +1,4 @@
+import { LITERATURE_FIELDS } from './src/literature-write.js';
 import assert from 'node:assert/strict';
 import service from './src/runtime.js';
 import { feishuRequest } from './src/index.js';
@@ -18,6 +19,7 @@ const projects = [{ record_id: 'p1', fields: { '项目编号': 'PRJ-001', '项�
 const relations = [{ record_id: 'r1', fields: { '关联人员': ['person-1'], '关联项目': ['p1'], '权限级别': '编辑',
   '授权状态': '有效', '工作台授权确认': '已确认', '权限落实状态': '已落实', '成员边界': '团队内',
   '加入日期': '2020-01-01', '权限到期日': '2099-01-01', '审批人': [{ id: 'ou_9' }] } }];
+const literatureRows = [];
 let rows = [], calls = [], writes = 0, failed = '', holdMember, onRead;
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async (input, options = {}) => {
@@ -26,11 +28,12 @@ globalThis.fetch = async (input, options = {}) => {
   const match = url.pathname.match(/\/tables\/([^/]+)\/(records|fields)(?:\/([^/]+))?$/);
   assert.ok(match, url.pathname); const [, table, kind, id] = match;
   calls.push(table + ':' + kind + ':' + options.method);
-  if (kind === 'fields') return Response.json({ code: 0, data: { items: Object.entries(WEEKLY_FIELDS)
+  if (kind === 'fields') return Response.json({ code: 0, data: { items: Object.entries(table === 'literature' ? LITERATURE_FIELDS : WEEKLY_FIELDS)
     .map(([field_name, types]) => ({ field_name, type: types[0] })), has_more: false } });
   if (options.method === 'GET') {
     if (failed === table) return Response.json({ code: 99991672, msg: 'synthetic rejection' });
-    const items = { members: people, auth_projects: projects, project_members: relations, weekly: rows }[table] || [];
+    const items = { members: people, auth_projects: projects, project_members: relations, weekly: rows, literature: literatureRows }[table] || [];
+    if (id) return Response.json({ code: 0, data: { record: items.find(r => r.record_id === id) } });
     const result = Response.json({ code: 0, data: { items: structuredClone(items), has_more: false } });
     if (onRead) onRead(table);
     if (table === 'members' && holdMember) { const wait = holdMember; holdMember = null; await wait(); }
@@ -41,6 +44,7 @@ globalThis.fetch = async (input, options = {}) => {
   const record = id ? rows.find(r => r.record_id === id) : { record_id: 'record-' + writes, fields: {} };
   Object.assign(record.fields, JSON.parse(options.body).fields);
   if (table === 'weekly' && !id) rows.push(record);
+  if (table === 'literature' && !id) literatureRows.push(record);
   return Response.json({ code: 0, data: { record } }, { status: 200 });
 };
 async function request(path, n = 1, body) {

@@ -124,7 +124,7 @@
   </dialog>
 
   <dialog class="modal literature-modal" id="literature-dialog">
-    <form id="literature-form">
+    <form id="literature-form" novalidate>
       <div class="modal-head">
         <div><p class="kicker">LITERATURE READING</p><h2>提交文献阅读</h2><p id="literature-week-label"></p></div>
         <button class="icon-button" type="button" data-close-dialog="literature-dialog" aria-label="关闭">×</button>
@@ -146,9 +146,9 @@
         <label class="field-wide">飞书阅读笔记链接 *<input name="noteUrl" type="url" required placeholder="https://...（表格、公式和图片写在飞书文档内）"></label>
         <label class="field-wide">论文附件或飞书云盘链接<input name="attachmentUrl" type="url" placeholder="https://...（PDF/大文件先上传飞书）"></label>
         <p class="form-hint field-wide">一周至少提交 3 篇，但不限制上限；所有已登录的学生、教师和管理员都可以提交并互相查看。</p>
-        <p class="form-error field-wide" id="literature-error" role="alert" hidden></p>
       </div>
       <div class="modal-actions">
+        <p class="form-error" id="literature-error" role="alert" hidden></p>
         <button class="button button-secondary" type="button" data-close-dialog="literature-dialog">取消</button>
         <button class="button button-primary" id="literature-submit" type="submit">提交阅读记录</button>
       </div>

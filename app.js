@@ -333,6 +333,8 @@
     const sourceResult = document.getElementById('weekly-source-result');
     if (sourcePanel) sourcePanel.hidden = true;
     if (sourceResult) sourceResult.textContent = '';
+    const literatureSourceResult = document.getElementById('literature-source-result');
+    if (literatureSourceResult) literatureSourceResult.textContent = '';
     document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
     elements.app.hidden = true;
     showError('访问权限需要重新核验', '请重新登录；若账号已停用，请联系管理员核对。');
@@ -879,7 +881,9 @@
     return '<details class="panel data-source-diagnostics" id="weekly-source-panel"><summary>数据源诊断</summary>' +
       '<div class="data-source-diagnostics-body"><h3>周报数据源核对</h3><p>查看后端实际连接的周报表及字段配置。</p>' +
       '<button class="button button-secondary" type="button" id="weekly-source-button">查看当前连接的周报表</button>' +
-      '<div id="weekly-source-result" aria-live="polite"></div></div></details>';
+      '<div id="weekly-source-result" aria-live="polite"></div>' +
+      '<h3>文献数据源核对</h3><button class="button button-secondary" type="button" id="literature-source-button">查看当前连接的文献表</button>' +
+      '<div id="literature-source-result" aria-live="polite"></div></div></details>';
   }
 
   function renderManager() {
@@ -909,7 +913,9 @@
     });
     elements.app.querySelectorAll('[data-open-learning-inbox]').forEach(button => button.addEventListener('click', () => learningUI()?.open(true)));
     const sourceButton = elements.app.querySelector('#weekly-source-button');
-    if (sourceButton) sourceButton.addEventListener('click', showWeeklySource);
+    if (sourceButton) sourceButton.addEventListener('click', () => showWeeklySource());
+    const literatureSourceButton = elements.app.querySelector('#literature-source-button');
+    if (literatureSourceButton) literatureSourceButton.addEventListener('click', () => showWeeklySource('literature'));
     elements.app.querySelectorAll('[data-open-learning-center]').forEach(function (button) {
       button.addEventListener('click', openLearningCenter);
     });
@@ -1249,15 +1255,43 @@
 
   async function submitLiterature(event) {
     event.preventDefault();
-    if (!elements.literatureForm.reportValidity()) return;
-    const fields = Object.fromEntries(new FormData(elements.literatureForm).entries());
-    fields.requestId = pendingRequestId('er2-request-literature', 'literature');
+    if (elements.literatureSubmit.disabled) return;
+    const owner = state.dashboard?.profile?.sub, session = state.session;
+    const stillOwns = () => state.dashboard?.profile?.sub === owner && state.session === session;
+    const form = elements.literatureForm;
+    let lockedInputs = [];
     elements.literatureSubmit.disabled = true;
     elements.literatureSubmit.textContent = '正在提交…';
     elements.literatureError.hidden = true;
     try {
+      for (const name of ['paperUrl', 'noteUrl', 'attachmentUrl']) {
+        const input = form.elements.namedItem(name);
+        let value = input.value.trim();
+        if (value && !/^https?:\/\//i.test(value) && /^[\w.-]+\.[A-Za-z]{2,}(?:[\/?#].*)?$/.test(value)) value = 'https://' + value;
+        input.value = value;
+        input.setCustomValidity(value && !/^https:\/\//i.test(value) ? '请填写以 https:// 开头的链接' : '');
+      }
+      for (const input of Array.from(form.elements)) {
+        if (!input.willValidate) continue;
+        if ((input.required && !input.value.trim()) || !input.validity.valid) {
+          const label = input.closest('label')?.firstChild?.textContent?.replace('*', '').trim() || '此项';
+          input.focus(); input.scrollIntoView?.({ block: 'center' });
+          throw new Error((input.validity.valueMissing || (input.required && !input.value.trim())) ? '请填写' + label : '请检查' + label + '：' + input.validationMessage);
+        }
+      }
+      const fields = Object.fromEntries(new FormData(form).entries());
+      const intent = JSON.stringify(fields);
+      if (privateDrafts.get('er2-literature-intent', draftScope()) !== intent) {
+        privateDrafts.remove('er2-request-literature', draftScope());
+        privateDrafts.set('er2-literature-intent', draftScope(), intent);
+      }
+      fields.requestId = pendingRequestId('er2-request-literature', 'literature');
+      saveDraft(form, draftKeys.literature);
+      lockedInputs = Array.from(form.querySelectorAll('input, textarea, select')).filter(input => !input.disabled);
+      lockedInputs.forEach(input => { input.disabled = true; });
       if (DEMO_MODE) {
         await new Promise(function (resolve) { setTimeout(resolve, 420); });
+        if (!stillOwns()) return;
         const saved = readDemoLiterature();
         const item = Object.assign({}, fields, {
           id: 'demo-' + Date.now(),
@@ -1283,18 +1317,24 @@
           },
           body: JSON.stringify(Object.assign({ weekId: state.dashboard.week.id }, fields))
         });
+        if (!stillOwns()) return;
+        if (!result.ok || result.readBackVerified !== true || !result.recordId || !result.literature || !Array.isArray(result.literature.items) || !Number.isFinite(result.literature.mineCount))
+          throw new Error('尚未确认保存结果，请保留填写内容后重试');
         state.dashboard.literature = result.literature;
       }
       closeDialog(elements.literatureDialog);
       elements.literatureForm.reset();
       clearDraft(draftKeys.literature);
       privateDrafts.remove('er2-request-literature', draftScope());
+      privateDrafts.remove('er2-literature-intent', draftScope());
       renderActiveView();
       showToast('文献阅读已提交，课题组成员现在可以查看');
     } catch (error) {
+      if (!stillOwns()) return;
       elements.literatureError.textContent = error.message || '提交失败，请稍后重试';
       elements.literatureError.hidden = false;
     } finally {
+      lockedInputs.forEach(input => { input.disabled = false; });
       elements.literatureSubmit.disabled = false;
       elements.literatureSubmit.textContent = '提交阅读记录';
     }
@@ -1485,21 +1525,21 @@
     renderActiveView();
     if (elements.onboardingDialog.open) renderOnboardingDialog();
   });
-  async function showWeeklySource() {
+  async function showWeeklySource(kind = 'weekly') {
     if (state.activeRole !== 'manager' || !state.dashboard?.profile?.roles?.includes('manager')) return;
-    const output = document.getElementById('weekly-source-result');
-    const button = document.getElementById('weekly-source-button');
+    const output = document.getElementById(kind + '-source-result');
+    const button = document.getElementById(kind + '-source-button');
     if (!output || !button || button.disabled) return;
     const owner = state.dashboard.profile.sub;
     const stillVisible = () => state.activeRole === 'manager' && state.dashboard?.profile?.sub === owner &&
-      state.dashboard?.profile?.roles?.includes('manager') && document.getElementById('weekly-source-result') === output;
+      state.dashboard?.profile?.roles?.includes('manager') && document.getElementById(kind + '-source-result') === output;
     button.disabled = true;
     output.textContent = '正在读取服务器实际配置…';
     try {
-      const source = await request('/api/admin/weekly-source' + (config.feishuDocsOrigin ? '?docsOrigin=' + encodeURIComponent(config.feishuDocsOrigin) : ''));
+      const source = await request('/api/admin/' + kind + '-source' + (config.feishuDocsOrigin ? '?docsOrigin=' + encodeURIComponent(config.feishuDocsOrigin) : ''));
       if (!stillVisible()) return;
       output.innerHTML = '<p>' + escapeHtml(source.baseName + ' / ' + source.tableName) + '</p><p>表 ID：' + escapeHtml(source.tableId) + '</p>' +
-        (source.tableUrl ? availableLink(source.tableUrl, '打开实际连接的周报表', 'button button-secondary') : '<p>未返回直达地址，请核对飞书文档域名配置。</p>') +
+        (source.tableUrl ? availableLink(source.tableUrl, '打开实际连接的' + (kind === 'literature' ? '文献表' : '周报表'), 'button button-secondary') : '<p>未返回直达地址，请核对飞书文档域名配置。</p>') +
         (source.schema ? '<p>' + (source.schema.ok ? '当前写入字段检查通过；仍需实际提交验收。' : escapeHtml('待修复字段：' + source.schema.missing.concat(source.schema.incompatible).join('、'))) + '</p>' : '');
     } catch (error) { if (stillVisible()) output.textContent = error.message; }
     finally { button.disabled = false; }

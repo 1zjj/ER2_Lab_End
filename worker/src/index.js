@@ -1,3 +1,4 @@
+import { literatureCompatibility, literatureText, serializeLiterature, literatureMatches } from './literature-write.js';
 import { weeklyHash, weeklyRevision, weeklyDates, historyPage } from './weekly-history.js';
 import { evidenceText, serializeWeekly, weeklyValues, weeklyMatches, weeklyCompatibility, WEEKLY_VERSION } from './weekly-write.js';
 import { weeklyRoster, isWeeklySubmitted, hasWeeklyIssue, weeklyAutomationConfiguration } from './weekly-policy.js';
@@ -72,13 +73,14 @@ export default {
       if (url.pathname === '/auth/callback') return await authCallback(request, env);
 
       let session = await requireSession(request, env);
-      const personalRoutes = ['/api/me', '/api/weekly', '/api/reports/history', '/api/reports', '/api/admin/weekly-source'];
+      const personalRoutes = ['/api/me', '/api/weekly', '/api/reports/history', '/api/reports', '/api/admin/weekly-source', '/api/admin/literature-source'];
       if (url.pathname.startsWith('/api/')) session = personalRoutes.includes(url.pathname)
         ? await requireMemberIdentity(env, session) : await requireActiveMember(env, session);
       if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(request.method) && url.pathname.startsWith('/api/')) enforceWriteRateLimit(session.sub);
       if (url.pathname === '/api/me' && request.method === 'GET') return json(request, env, { profile: { sub: session.sub, personId: session.personId, name: session.name, roles: session.roles } });
       if (url.pathname.startsWith('/api/courses/') && request.method === 'POST' && !courseCapabilities(env).submissionEnabled)
         return json(request, env, { code: 'COURSE_UNAVAILABLE', message: '课程提交暂未开放，请在本周工作记录中填写学习与方法。' }, 503);
+      if (url.pathname === '/api/admin/literature-source' && request.method === 'GET') return await weeklySource(request, env, session, 'LITERATURE_TABLE_ID');
       if (url.pathname === '/api/admin/weekly-source' && request.method === 'GET') return await weeklySource(request, env, session);
       if (/^\/api\/projects(?:\/|$)/.test(url.pathname)) return await projectApi(request, env, session);
       if (url.pathname === '/api/reports/history' && request.method === 'GET') return await reportHistory(request, env, session);
@@ -94,7 +96,7 @@ export default {
       return json(request, env, { message: '接口不存在' }, 404);
     } catch (error) {
       const status = Number(error.status || 500);
-      const messages = { WEEKLY_COORDINATOR_MISSING: '周报保存保护尚未就绪，请稍后重试', WEEKLY_WRITE_UNCERTAIN: '上次保存结果仍在核对，草稿已保留；请稍后重试，若持续出现请联系管理员', WEEKLY_SCHEMA_MISMATCH: '周报存储字段尚未统一，请联系管理员完成配置', WEEKLY_EVIDENCE_COLUMN_TYPE: '产出字段仍是旧的单链接类型，暂不能保存说明和多个链接', WEEKLY_BINDING_MISSING: '周报存储尚未配置', WEEKLY_READBACK_FAILED: '保存请求已处理，但尚未确认读回结果；请保留草稿后重试' };
+      const messages = { LITERATURE_SCHEMA_MISMATCH: '文献表字段配置不兼容，请联系管理员检查文献数据源；填写内容已保留', LITERATURE_WRITE_FAILED: '文献保存失败，请联系管理员检查文献表字段和应用写入权限；填写内容已保留', LITERATURE_READBACK_FAILED: '尚未确认文献保存结果，填写内容已保留；请稍后重试核对', WEEKLY_COORDINATOR_MISSING: '周报保存保护尚未就绪，请稍后重试', WEEKLY_WRITE_UNCERTAIN: '上次保存结果仍在核对，草稿已保留；请稍后重试，若持续出现请联系管理员', WEEKLY_SCHEMA_MISMATCH: '周报存储字段尚未统一，请联系管理员完成配置', WEEKLY_EVIDENCE_COLUMN_TYPE: '产出字段仍是旧的单链接类型，暂不能保存说明和多个链接', WEEKLY_BINDING_MISSING: '周报存储尚未配置', WEEKLY_READBACK_FAILED: '保存请求已处理，但尚未确认读回结果；请保留草稿后重试' };
       const message = status >= 500 ? (messages[error.code] || (error.binding ? '数据读取失败（' + error.binding.replace('_TABLE_ID', '') + '），请将下方诊断编号提供给管理员' : '服务暂时不可用，请稍后重试')) : error.message;
       if (status >= 500) console.error(error);
       return json(request, env, { message, code: error.code || (error.binding ? 'TABLE_READ_FAILED' : 'REQUEST_FAILED'),
@@ -225,7 +227,7 @@ function buildLiterature(session, week, records) {
       venue: field(record, '会议或期刊') || '',
       year: field(record, '发表年份') || '',
       doi: field(record, 'DOI或arXiv') || '',
-      paperUrl: field(record, '论文链接') || '',
+      paperUrl: literatureText(record.fields?.['论文链接']) || '',
       direction: field(record, '研究方向') || '',
       type: field(record, '阅读类型') || '',
       contribution: field(record, '一句话贡献') || '',
@@ -233,8 +235,8 @@ function buildLiterature(session, week, records) {
       method: field(record, '方法摘要') || '',
       review: field(record, '个人评价') || '',
       projectRelation: field(record, '与项目关系') || '',
-      noteUrl: field(record, '阅读笔记链接') || '',
-      attachmentUrl: field(record, '论文附件链接') || '',
+      noteUrl: literatureText(record.fields?.['阅读笔记链接']) || '',
+      attachmentUrl: literatureText(record.fields?.['论文附件链接']) || '',
       submittedAt,
       timestamp: parseRecordTime(submittedAt || rawDate)
     };
@@ -302,22 +304,6 @@ async function saveLiterature(request, env, session) {
   if (year !== '' && (!Number.isInteger(year) || year < 1800 || year > 2200)) throw httpError(400, '发表年份不正确');
   const tenantToken = await getTenantToken(env);
   const existingRecords = await listRecords(env, tenantToken, 'LITERATURE_TABLE_ID');
-  const duplicate = existingRecords.find((record) =>
-    (String(field(record, '提交人OpenID')) === String(session.sub) && clean(field(record, '请求ID')) === businessRequestId) || (
-      String(field(record, '提交人OpenID')) === String(session.sub) &&
-      String(field(record, '周次')) === currentWeek.id &&
-      clean(field(record, '论文标题')).toLowerCase() === clean(body.title).toLowerCase() &&
-      clean(field(record, '阅读笔记链接')) === clean(body.noteUrl)
-    )
-  );
-  if (duplicate) {
-    return json(request, env, {
-      ok: true,
-      deduplicated: true,
-      recordId: duplicate.record_id,
-      literature: buildLiterature(session, currentWeek, existingRecords)
-    });
-  }
   const fields = {
     '论文标题': clean(body.title),
     '请求ID': businessRequestId,
@@ -344,14 +330,44 @@ async function saveLiterature(request, env, session) {
     '提交状态': '已提交',
     '提交时间': new Date().toISOString()
   };
-  if (year === '') delete fields['发表年份'];
+  const binding = resolveTableBinding(env, 'LITERATURE_TABLE_ID');
+  const app = await resolveBitableAppToken(binding, tenantToken);
+  const serialized = serializeLiterature(await weeklySchema(app, binding.tableId, tenantToken), fields);
+  const duplicate = existingRecords.find((record) =>
+    (String(field(record, '提交人OpenID')) === String(session.sub) && clean(field(record, '请求ID')) === businessRequestId) || (
+      String(field(record, '提交人OpenID')) === String(session.sub) &&
+      String(field(record, '周次')) === currentWeek.id &&
+      clean(field(record, '论文标题')).toLowerCase() === clean(body.title).toLowerCase() &&
+      clean(literatureText(record.fields?.['阅读笔记链接'])) === clean(body.noteUrl)
+    )
+  );
+  if (duplicate) {
+    const comparable = { ...serialized };
+    for (const key of ['请求ID', '提交时间', '阅读日期', '提交人姓名', '提交人角色']) delete comparable[key];
+    if (!literatureMatches(duplicate, comparable)) throw httpError(409, '这篇文献已有不同内容的记录，请先核对已提交记录；当前填写内容已保留');
+    return json(request, env, {
+      ok: true,
+      deduplicated: true,
+      readBackVerified: true,
+      recordId: duplicate.record_id,
+      literature: buildLiterature(session, currentWeek, existingRecords)
+    });
+  }
   await requireActiveMember(env, session);
-  const created = await createRecord(env, tenantToken, 'LITERATURE_TABLE_ID', fields);
-  const records = [created.data?.record || { record_id: created.data?.record?.record_id || '', fields }, ...existingRecords];
+  let created;
+  try { created = await createRecord(env, tenantToken, 'LITERATURE_TABLE_ID', serialized); }
+  catch (error) { throw Object.assign(error, { code: 'LITERATURE_WRITE_FAILED' }); }
+  let record;
+  try {
+    const id = created.code === 0 && created.data?.record?.record_id;
+    if (!id) throw new Error('Missing confirmed literature record ID');
+    const readBack = await feishuRequest('/bitable/v1/apps/' + app + '/tables/' + binding.tableId + '/records/' + encodeURIComponent(id), { bearer: tenantToken });
+    record = readBack.data?.record;
+    if (readBack.code !== 0 || !literatureMatches(record, serialized)) throw new Error('Literature readback mismatch');
+  } catch (error) { throw Object.assign(error, { status: 502, code: 'LITERATURE_READBACK_FAILED' }); }
   return json(request, env, {
-    ok: true,
-    recordId: created.data?.record?.record_id || '',
-    literature: buildLiterature(session, currentWeek, records)
+    ok: true, readBackVerified: true, recordId: record.record_id,
+    literature: buildLiterature(session, currentWeek, [record, ...existingRecords])
   }, 201);
 }
 
@@ -917,10 +933,10 @@ async function weeklyPage(request, env, session) {
     teacher: { students: teacher.students, stats: teacher.stats } });
 }
 
-async function weeklySource(request, env, session) {
+async function weeklySource(request, env, session, tableKey = 'WEEKLY_TABLE_ID') {
   if (!session.roles.includes('manager')) throw httpError(403, '仅管理员可以查看数据源配置');
-  const binding = resolveTableBinding(env, 'WEEKLY_TABLE_ID');
-  if (!binding.tableId || (!binding.appToken && !binding.wikiToken)) throw httpError(503, '周报数据源未配置');
+  const binding = resolveTableBinding(env, tableKey);
+  if (!binding.tableId || (!binding.appToken && !binding.wikiToken)) throw httpError(503, '数据源未配置');
   const token = await getTenantToken(env);
   const app = await resolveBitableAppToken(binding, token);
   const prefix = '/bitable/v1/apps/' + encodeURIComponent(app);
@@ -936,7 +952,7 @@ async function weeklySource(request, env, session) {
     if (data.has_more !== true || !page || seen.has(page)) throw httpError(502, '数据表目录分页不完整');
     seen.add(page);
   } while (page);
-  if (!target) throw httpError(404, '当前配置的周报表不在目标多维表格中');
+  if (!target) throw httpError(404, '当前配置的数据表不在目标多维表格中');
   let tableUrl = '';
   try {
     const requestedOrigin = new URL(request.url).searchParams.get('docsOrigin') || env.FEISHU_DOCS_ORIGIN;
@@ -951,7 +967,7 @@ async function weeklySource(request, env, session) {
   return json(request, env, { readOnly: true, tableId: binding.tableId,
     tableName: target.name || '', baseName: meta?.name || '', tableUrl,
     bindingSource: binding.source || '', recordsRead: false, weeklyVersion: WEEKLY_VERSION,
-    schema: weeklyCompatibility(await weeklySchema(app, binding.tableId, token)) });
+    schema: (tableKey === 'LITERATURE_TABLE_ID' ? literatureCompatibility : weeklyCompatibility)(await weeklySchema(app, binding.tableId, token)) });
 }
 
 async function coordinateWeeklySave(request, env, session) {
