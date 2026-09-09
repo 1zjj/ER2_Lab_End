@@ -3,7 +3,7 @@ window.ER2_CONFIG = Object.freeze({
   demo: false,
   feishuDocsOrigin: 'https://lcnywl4yrecr.feishu.cn',
   learningCenterUrl: 'https://lcnywl4yrecr.feishu.cn/wiki/AMikwNK58iWRCbkvoBJcQ7Q3nmc',
-  feishuWikiUrl: ''
+  feishuWikiUrl: 'https://lcnywl4yrecr.feishu.cn/wiki/EqjMwpl6mi6l1SkeP0CckVkcnbD?from=from_copylink'
 });
 
 window.addEventListener('DOMContentLoaded', function () {
