@@ -1,3 +1,4 @@
+import { LITERATURE_FIELDS } from './src/literature-write.js';
 import assert from 'node:assert/strict';
 import service from './src/index.js';
 
@@ -156,6 +157,8 @@ globalThis.fetch = async (url, options = {}) => {
     postedMember = JSON.parse(options.body).fields;
     return Response.json({ code: 0, data: { record: { record_id: 'rec_new_member', fields: postedMember } } });
   }
+  if (String(url).includes('/tables/tbl_literature/fields')) return Response.json({ code: 0, data: { items: Object.entries(LITERATURE_FIELDS).map(([field_name, types]) => ({ field_name, type: types[0] })), has_more: false } });
+  if (String(url).includes('/tables/tbl_literature/records/rec_new') && options.method === 'GET') return Response.json({ code: 0, data: { record: literatureItems.find(r => r.record_id === 'rec_new') } });
   if (String(url).includes('/tables/tbl_literature/records') && options.method === 'POST') {
     postedLiterature = JSON.parse(options.body).fields;
     literatureItems.unshift({ record_id: 'rec_new', fields: postedLiterature });

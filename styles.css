@@ -744,3 +744,6 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
 .history-filters select, .history-filters input { width: 145px; min-height: 42px; border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; background: #fff; color: var(--ink); font: inherit; }
 .history-filters p { width: 100%; margin: 0; color: var(--muted); font-size: 14px; }
 @media (max-width: 600px) { .history-filters { padding: 14px 18px; gap: 10px; } .history-filters select, .history-filters input { width: 120px; } }
+
+.literature-modal .modal-actions { flex-wrap: wrap; }
+.literature-modal .modal-actions .form-error { flex: 0 0 100%; margin: 0; }
