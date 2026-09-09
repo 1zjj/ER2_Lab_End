@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
+import {buildStudentHome} from './src/v2/student-home.js';
 import { readFileSync } from 'node:fs';
 import { JSDOM, VirtualConsole } from 'jsdom';
 const source = readFileSync(new URL('../app.js', import.meta.url), 'utf8');
@@ -18,6 +19,7 @@ async function setup({deniedStorage=false,missingScript=false}={}) {
  const dom=new JSDOM(html,{url:'https://fixture.test/#session=fixture-token',runScripts:'outside-only',virtualConsole});const w=dom.window;
  w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};w.HTMLDialogElement.prototype.close=function(){this.open=false;};w.scrollTo=()=>{};w.confirm=()=>true;w.AbortSignal=AbortSignal;
  if(deniedStorage)Object.defineProperty(w,'sessionStorage',{get(){throw new w.DOMException('denied','SecurityError');}});
+ w.eval(readFileSync(new URL('../config.js',import.meta.url),'utf8'));
  w.ER2_CONFIG={demo:false,apiBase:'https://api.test',feishuWikiUrl:'https://lcnywl4yrecr.feishu.cn/wiki/fixture'};
  for(const name of ['weekly','projects','literature','extras']) pending.set(name,deferred());
  w.fetch=async (url,options={})=>{
@@ -44,6 +46,9 @@ async function setup({deniedStorage=false,missingScript=false}={}) {
  const {w,dom,errors,requests,responses,pending}=await setup({deniedStorage:true});
  try{
   await settle(()=>!w.document.querySelector('#app-root').hidden);
+  const complete={...structuredClone(bootstrap),moduleLoading:{},literature:reading.literature};
+  const clientHome=JSON.parse(JSON.stringify(w.ER2BuildStudentHome(complete)));delete clientHome.moduleLoading;
+  assert.deepEqual(clientHome,buildStudentHome(complete),'Loaded home summary stays equivalent to the original server model');
   assert.equal(w.document.querySelector('#account-name').textContent,'合成用户');
   assert.ok(w.document.querySelector('[data-open-learning-center]'),'Learning available while other reads are pending');
   assert.match(w.document.querySelector('.weekly-home-card').textContent,/正在读取/);
@@ -51,6 +56,9 @@ async function setup({deniedStorage=false,missingScript=false}={}) {
   pending.get('weekly').resolve(weekly);pending.get('literature').resolve(reading);pending.get('extras').resolve(extras);
   await settle(()=>w.document.querySelector('[data-open-report]')&&w.document.querySelector('[data-open-literature]'));
   assert.match(w.document.querySelector('.home-todos').textContent,/合成任务/);
+  assert.ok(w.document.querySelector('[data-home-action="report"]'),'Original weekly todo button remains');
+  assert.ok(w.document.querySelector('[data-home-action="literature"]'),'Original literature todo button remains');
+  assert.ok(w.document.querySelector('[data-home-action="project"]'),'Original project todo button remains');
   assert.match(w.document.querySelector('.project-home-card').textContent,/正在读取/,'A slow project read must not block weekly or literature');
   assert.equal(requests.filter(r=>r.path==='/api/finance').length,1,'Module paints do not multiply finance calls');
   const save=deferred(),refresh=deferred();responses.set('/api/reports',()=>save.promise);responses.set('/api/weekly',()=>refresh.promise);
