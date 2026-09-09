@@ -6,35 +6,51 @@
   const button=(action,label,primary=false,extra='')=>`<button type="button" class="button ${primary?'button-primary':'button-secondary'}" data-finance="${action}" ${extra}>${label}</button>`;
   function card(){return '<section class="panel finance-card" aria-labelledby="finance-title"><p class="kicker">APPLICATIONS</p><div class="panel-title"><h2 id="finance-title">预算与报销</h2></div><p>购买前告知老师；报销确认后自动登记设备。</p><div data-finance-card-actions><span class="finance-muted">正在核验办理权限…</span></div></section>';}
   function create(options){
-    let meta=null,dialog=null,current=null,files=[],busy=false,dirty=false,listReview=false,page=0,lastWrite=null,identity='',epoch=0,autoOpened=false;
+    let meta=null,dialog=null,current=null,files=[],busy=false,dirty=false,listReview=false,page=0,lastWrite=null,identity='',epoch=0,autoOpened=false,sessionEpoch=0,dialogEpoch=0,operation=0,reading=false,mountedRoot=null,retryRead=null;
     const apiBase=String(options.apiBase||'').replace(/\/$/,'');
     const profile=()=>options.getProfile()||{};
     async function api(path,body,extra={}){
-      const session=options.getSession();if(!session)throw Error('请先登录');
+      const session=options.getSession(),authGeneration=sessionEpoch,viewGeneration=dialogEpoch;if(!session)throw Error('请先登录');
+      const valid=()=>session===options.getSession()&&authGeneration===sessionEpoch&&(extra.card||viewGeneration===dialogEpoch);
+      const assertCurrent=()=>{if(!valid()){const e=Error('读取已取消');e.name='AbortError';throw e;}};
       const headers={Authorization:'Bearer '+session,...extra.headers};
       if(body!==undefined&&!(body instanceof FormData))headers['Content-Type']='application/json';
-      const response=await fetch(apiBase+'/api/finance'+path,{method:body===undefined?'GET':'POST',headers,body:body===undefined?undefined:body instanceof FormData?body:JSON.stringify(body),signal:AbortSignal.timeout(65000)});
-      if(session!==options.getSession())throw Error('登录身份已变化，请重新打开');
-      if(extra.binary){if(!response.ok){const e=await response.json().catch(()=>({}));throw Error(e.message||'资料无法下载');}return response.blob();}
+      const response=await fetch(apiBase+'/api/finance'+path,{method:body===undefined?'GET':'POST',headers,body:body===undefined?undefined:body instanceof FormData?body:JSON.stringify(body),signal:AbortSignal.timeout(body===undefined?25000:65000)});
+      assertCurrent();
+      if(extra.binary){if(!response.ok){const e=await response.json().catch(()=>({}));throw Error(e.message||'资料无法下载');}const blob=await response.blob();assertCurrent();return blob;}
       const value=await response.json().catch(()=>({}));
+      assertCurrent();
       if(!response.ok){if(response.status===401)options.onUnauthorized?.();const err=Error(value.message||'财务服务暂时不可用');err.status=response.status;throw err;}return value;
     }
     async function write(path,body){const content=JSON.stringify({path,body});if(!lastWrite||lastWrite.content!==content)lastWrite={content,id:crypto.randomUUID()};const result=await api(path,{...body,requestId:lastWrite.id});lastWrite=null;return result;}
     function message(text,error=false){const el=dialog?.querySelector('[data-finance-message]');if(el){el.textContent=text;el.classList.toggle('finance-error',error);}}
-    async function run(fn){if(busy)return;busy=true;const controls=[...dialog.querySelectorAll('button,input,textarea,select')].map(el=>[el,el.disabled]);controls.forEach(([el])=>el.disabled=true);try{await fn();}catch(e){message(e.name==='TimeoutError'?'等待结果超时，请先查看我的记录，或保留当前内容重试。':e.message,true);}finally{busy=false;controls.forEach(([el,disabled])=>{if(el.isConnected)el.disabled=disabled;});}}
+    async function run(fn,readOnly=false){
+      if(busy)return;busy=true;reading=readOnly;const id=++operation;
+      const controls=[...dialog.querySelectorAll('button,input,textarea,select')].filter(el=>!(readOnly&&el.dataset.finance==='close')).map(el=>[el,el.disabled]);
+      controls.forEach(([el])=>el.disabled=true);
+      try{await fn();}catch(e){
+        if(id!==operation||e.name==='AbortError')return;
+        if(readOnly){
+          const body=dialog.querySelector('.finance-body');
+          if(body&&/^(正在载入|正在读取配置)/.test(body.textContent))body.innerHTML='<p>暂时无法读取。</p>';
+          if(retryRead&&!dialog.querySelector('[data-finance="retry-read"]'))body?.insertAdjacentHTML('beforeend',button('retry-read','重新读取'));
+        }
+        message(e.name==='TimeoutError'?(readOnly?'读取超时，请重新读取。':'等待结果超时，请先查看我的记录，或保留当前内容重试。'):e.message,true);
+      }finally{if(id===operation){busy=false;reading=false;controls.forEach(([el,disabled])=>{if(el.isConnected)el.disabled=disabled;});}}
+    }
     function ensureDialog(){if(dialog)return;dialog=document.createElement('dialog');dialog.className='finance-dialog';dialog.setAttribute('aria-labelledby','finance-dialog-title');document.body.append(dialog);
       dialog.addEventListener('cancel',event=>{event.preventDefault();close();});dialog.addEventListener('click',event=>{const b=event.target.closest('[data-finance]');if(b&&!b.disabled)handle(b.dataset.finance,b);});
       dialog.addEventListener('input',()=>{dirty=true;total();});
       dialog.addEventListener('change',event=>{if(event.target.matches('[data-finance-upload]'))upload(event.target);});
       dialog.addEventListener('submit',event=>{event.preventDefault();save(true);});
     }
-    function close(){if(busy)return;if(dirty&&!window.confirm('当前内容尚未保存，确定关闭？'))return;dialog.close();dialog.innerHTML='';current=null;files=[];dirty=false;}
+    function close(){if(busy&&!reading)return;if(dirty&&!window.confirm('当前内容尚未保存，确定关闭？'))return;dialogEpoch++;operation++;busy=false;reading=false;dialog.close();dialog.innerHTML='';current=null;files=[];dirty=false;}
     function shell(title,content){ensureDialog();dialog.innerHTML=`<div class="finance-head"><div><p class="kicker">预算与报销</p><h2 id="finance-dialog-title">${escape(title)}</h2></div>${button('close','关闭')}</div><div class="finance-body">${content}</div><p class="finance-message" data-finance-message role="status" aria-live="polite"></p>`;if(!dialog.open)dialog.showModal();}
-    async function mount(){
-      const actor=profile().personId||'';if(identity!==actor){identity=actor;meta=null;current=null;lastWrite=null;files=[];dirty=false;autoOpened=false;dialog?.close();if(dialog)dialog.innerHTML='';}
-      const generation=++epoch,root=document.querySelector('[data-finance-card-actions]');if(!root)return;
+    async function mount(reuse=false){
+      const actor=profile().personId||'';if(identity!==actor){identity=actor;sessionEpoch++;dialogEpoch++;mountedRoot=null;meta=null;current=null;lastWrite=null;files=[];dirty=false;autoOpened=false;dialog?.close();if(dialog)dialog.innerHTML='';}
+      const root=document.querySelector('[data-finance-card-actions]');if(!root||(reuse&&mountedRoot===root))return;mountedRoot=root;const generation=++epoch;
       root.onclick=event=>{const b=event.target.closest('[data-finance]');if(b)handle(b.dataset.finance,b);};
-      try{const loaded=await api('');if(generation!==epoch||!root.isConnected)return;meta=loaded;
+      try{const loaded=await api('',undefined,{card:true});if(generation!==epoch||!root.isConnected)return;meta=loaded;
         root.innerHTML='<div class="finance-actions">'+(meta.access.canSubmit?button('purchase','采购申请',false,meta.ready?'':'disabled')+button('claim','费用报销',true,meta.ready?'':'disabled')+button('records','我的记录'):'')+
           (meta.access.canReview?button('review','审核'+(meta.pending?' · '+meta.pending:'')):'')+(meta.access.canSummary?button('summary','月度花费'):'')+'</div>'+
           (!meta.ready?'<p class="finance-muted">财务权限与设备清单正在准备，完成后开放办理。</p>':'')+(meta.access.canConfigure?'<details class="finance-admin"><summary>财务设置</summary>'+button('setup','查看财务配置')+'</details>':'');
@@ -67,22 +83,24 @@
       else Object.assign(data,{content:form.elements.content.value,estimate:form.elements.estimate.value,purpose:form.elements.purpose.value});return data;
     }
     function total(){const form=dialog?.querySelector('[data-finance-form]');if(!form)return;const data=readForm();const sum=data.kind==='claim'?data.lines.reduce((sum,l)=>sum+Math.round(Number(l.quantity||0)*Math.round(Number(l.unitPrice||0)*100)),0):Math.round(Number(data.estimate||0)*100);const el=dialog.querySelector('[data-finance-total]');if(el)el.textContent=money(sum);}
-    async function save(submit){const form=dialog.querySelector('[data-finance-form]');if(submit&&!form.reportValidity())return;const data=readForm();await run(async()=>{const r=await write('/save',{...data,submit});dirty=false;renderDocument(r.document,files);message(submit?'已提交，可在我的记录中查看处理进度。':'草稿已保存。');mount();});}
+    async function save(submit){const form=dialog.querySelector('[data-finance-form]');if(submit&&!form.reportValidity())return;const data=readForm();await run(async()=>{const r=await write('/save',{...data,submit});dirty=false;renderDocument(r.document,files);message(submit?'已提交，可在我的记录中查看处理进度。':'草稿已保存。');mountedRoot=null;mount();});}
     async function upload(input){const chosen=[...input.files];if(!chosen.length)return;if(files.length+chosen.length>20){message('每单最多20份资料。',true);return;}
       await run(async()=>{for(const file of chosen){if(file.size>20*1024*1024||!file.size)throw Error('每份资料须为1字节至20MB');const form=new FormData();form.append('file',file);const a=await api('/upload',form,{headers:{'X-Request-ID':crypto.randomUUID()}});files.push(a);dirty=true;renderFiles(false);}message('资料已上传，保存或提交单据后完成关联。');});input.value='';}
-    async function listing(review,newPage=0){if(dirty&&!window.confirm('当前内容未保存，确定离开？'))return;dirty=false;listReview=review;page=newPage;shell(review?'财务审核':'我的记录','<p>正在载入…</p>');await run(async()=>{const r=await api('/records?review='+review+'&page='+page);shell(review?'财务审核':'我的记录',
+    async function listing(review,newPage=0){retryRead=()=>listing(review,newPage);if(dirty&&!window.confirm('当前内容未保存，确定离开？'))return;dirty=false;listReview=review;page=newPage;shell(review?'财务审核':'我的记录','<p>正在载入…</p>');await run(async()=>{const r=await api('/records?review='+review+'&page='+page);shell(review?'财务审核':'我的记录',
       (review?'<p>待审核单据需逐项核实。退回修改不入库；确认已报销后自动入库。</p>':'')+
-      '<div class="finance-records">'+(r.records.length?r.records.map(d=>`<article><div><strong>${escape(d.id)}</strong><p>${escape(d.kind==='claim'?'费用报销':'采购申请')} · ${escape(d.ownerName)} · ${escape(meta.statuses[d.status])}</p>${d.syncError?'<p class="finance-error">'+escape(d.syncError)+'</p>':''}${d.noticeError?'<p class="finance-muted">'+escape(d.noticeError)+'</p>':''}</div><div><strong>${money(d.totalCents)}</strong>${button('detail','查看',false,`data-id="${escape(d.id)}"`)}</div></article>`).join(''):'<p class="finance-muted">暂无记录。</p>')+'</div><div class="finance-actions">'+(page?button('prev','上一页'):'')+(r.more?button('next','下一页'):'')+button(review?'review':'records','刷新列表')+'</div>');});}
-    async function detail(id){await run(async()=>{const r=await api('/record?id='+encodeURIComponent(id));renderDocument(r.document,r.attachments,r.history);});}
+      '<div class="finance-records">'+(r.records.length?r.records.map(d=>`<article><div><strong>${escape(d.id)}</strong><p>${escape(d.kind==='claim'?'费用报销':'采购申请')} · ${escape(d.ownerName)} · ${escape(meta.statuses[d.status])}</p>${d.syncError?'<p class="finance-error">'+escape(d.syncError)+'</p>':''}${d.noticeError?'<p class="finance-muted">'+escape(d.noticeError)+'</p>':''}</div><div><strong>${money(d.totalCents)}</strong>${button('detail','查看',false,`data-id="${escape(d.id)}"`)}</div></article>`).join(''):'<p class="finance-muted">暂无记录。</p>')+'</div><div class="finance-actions">'+(page?button('prev','上一页'):'')+(r.more?button('next','下一页'):'')+button(review?'review':'records','刷新列表')+'</div>');},true);}
+    async function detail(id){retryRead=()=>detail(id);await run(async()=>{const r=await api('/record?id='+encodeURIComponent(id));renderDocument(r.document,r.attachments,r.history);},true);}
     async function review(action){if(action==='approve'&&!current.equipmentChecked){message('请先核对设备清单，避免重复登记。',true);return;}if(action==='return'&&!dialog.querySelector('[data-finance-reason]').value.trim()){message('请填写退回原因。',true);return;}if(action==='approve'&&!window.confirm('确认此单真实、准确且未重复报销，并且已完成报销？确认后将自动登记设备。'))return;
-      const reason=dialog.querySelector('[data-finance-reason]')?.value||'';await run(async()=>{const equipmentDecisions=Object.fromEntries([...dialog.querySelectorAll('[data-equipment-decision]')].map(el=>[el.dataset.equipmentDecision,el.value]));const duplicateReason=dialog.querySelector('[data-duplicate-reason]')?.value||'';const r=await write('/review',{id:current.id,revision:current.revision,action,reason,equipmentDecisions,duplicateReason});renderDocument(r.document,files);message(action==='approve'?'已确认，设备正在登记。可刷新记录查看结果。':'已退回修改。');mount();});}
-    async function summary(month){if(!meta?.access.canSummary)return;const m=month||new Date(Date.now()+8*3600000).toISOString().slice(0,7);shell('月度花费',`<label>采购月份<input type="month" data-finance-month value="${escape(m)}"></label>${button('load-summary','查看汇总')}<div data-finance-summary></div>`);await run(async()=>{const r=await api('/summary?month='+encodeURIComponent(m));dialog.querySelector('[data-finance-summary]').innerHTML=`<div class="finance-total">已确认报销<strong>${money(r.totalCents)}</strong></div><p>尚未确认：${money(r.pendingCents)}。按采购日期归属月份，历史迁入设备不计入本期新增报销。</p><p>${r.syncIssues?'有 '+r.syncIssues+' 张单据正在处理设备入库。':''}</p><div class="finance-table"><table><thead><tr><th>申报人</th><th>名称</th><th>数量</th><th>金额</th></tr></thead><tbody>${r.items.map(l=>`<tr><td>${escape(l.owner)}</td><td>${escape(l.name)}</td><td>${escape(l.quantity)}</td><td>${money(l.amountCents)}</td></tr>`).join('')}</tbody></table></div>`;});}
-    async function setup(){shell('财务配置','<p>正在读取配置…</p>');await run(async()=>{const r=await api('/setup');const binding=r.settings?.equipmentBinding;const equipmentUrl=binding?'https://lcnywl4yrecr.feishu.cn/wiki/'+binding.wiki+'?table='+binding.table:'';
-      shell('财务配置','<p>设备副本通过核验后，财务确认的报销明细将记入该表。</p><label>设备档案表链接<input type="url" data-finance-equipment-url value="'+escape(equipmentUrl)+'" placeholder="粘贴包含具体数据表的飞书链接"></label><label class="finance-check"><input type="checkbox" data-finance-equipment-permissions>已核实设备表仅授权成员可访问，工作台应用可编辑</label><div class="finance-actions">'+button('bind-equipment','核验并绑定设备副本')+button('inspect','核对来源、设备与权限')+button('prepare','准备财务资料表')+'</div><details><summary>当前核对结果</summary><pre data-finance-inspection>'+escape(JSON.stringify(r,null,2))+'</pre></details><p>启用前须完成设备副本核验及四张财务资料表的权限检查。</p><label class="finance-check"><input type="checkbox" data-finance-native>已核实四张财务资料表仅财务及指定管理员可访问</label><label class="finance-check"><input type="checkbox" data-finance-reminders '+(r.settings?.reminders?'checked':'')+'>启用每月20日、27日10:00提醒及次月1日10:00教授汇总（北京时间）</label><div class="finance-actions">'+button('activate','启用办理',true)+button('disable','暂停办理')+'</div>');});}
-    async function setupAction(action){await run(async()=>{const r=await api('/setup',{action,equipmentUrl:dialog.querySelector('[data-finance-equipment-url]')?.value,nativeEquipmentPermissionsVerified:dialog.querySelector('[data-finance-equipment-permissions]')?.checked,nativePermissionsVerified:dialog.querySelector('[data-finance-native]')?.checked,reminders:dialog.querySelector('[data-finance-reminders]')?.checked});dialog.querySelector('[data-finance-inspection]').textContent=JSON.stringify(r,null,2);message('已完成当前操作。');mount();});}
+      const reason=dialog.querySelector('[data-finance-reason]')?.value||'';await run(async()=>{const equipmentDecisions=Object.fromEntries([...dialog.querySelectorAll('[data-equipment-decision]')].map(el=>[el.dataset.equipmentDecision,el.value]));const duplicateReason=dialog.querySelector('[data-duplicate-reason]')?.value||'';const r=await write('/review',{id:current.id,revision:current.revision,action,reason,equipmentDecisions,duplicateReason});renderDocument(r.document,files);message(action==='approve'?'已确认，设备正在登记。可刷新记录查看结果。':'已退回修改。');mountedRoot=null;mount();});}
+    async function summary(month){retryRead=()=>summary(month);if(!meta?.access.canSummary)return;const m=month||new Date(Date.now()+8*3600000).toISOString().slice(0,7);shell('月度花费',`<label>采购月份<input type="month" data-finance-month value="${escape(m)}"></label>${button('load-summary','查看汇总')}<div data-finance-summary></div>`);await run(async()=>{const r=await api('/summary?month='+encodeURIComponent(m));dialog.querySelector('[data-finance-summary]').innerHTML=`<div class="finance-total">已确认报销<strong>${money(r.totalCents)}</strong></div><p>尚未确认：${money(r.pendingCents)}。按采购日期归属月份，历史迁入设备不计入本期新增报销。</p><p>${r.syncIssues?'有 '+r.syncIssues+' 张单据正在处理设备入库。':''}</p><div class="finance-table"><table><thead><tr><th>申报人</th><th>名称</th><th>数量</th><th>金额</th></tr></thead><tbody>${r.items.map(l=>`<tr><td>${escape(l.owner)}</td><td>${escape(l.name)}</td><td>${escape(l.quantity)}</td><td>${money(l.amountCents)}</td></tr>`).join('')}</tbody></table></div>`;},true);}
+    async function setup(){retryRead=()=>setup();shell('财务配置','<p>正在读取配置…</p>');await run(async()=>{const r=await api('/setup');const binding=r.settings?.equipmentBinding;const equipmentUrl=binding?'https://lcnywl4yrecr.feishu.cn/wiki/'+binding.wiki+'?table='+binding.table:'';
+      shell('财务配置','<p>设备副本通过核验后，财务确认的报销明细将记入该表。</p><label>设备档案表链接<input type="url" data-finance-equipment-url value="'+escape(equipmentUrl)+'" placeholder="粘贴包含具体数据表的飞书链接"></label><label class="finance-check"><input type="checkbox" data-finance-equipment-permissions>已核实设备表仅授权成员可访问，工作台应用可编辑</label><div class="finance-actions">'+button('bind-equipment','核验并绑定设备副本')+button('inspect','核对来源、设备与权限')+button('prepare','准备财务资料表')+'</div><details><summary>当前核对结果</summary><pre data-finance-inspection>'+escape(JSON.stringify(r,null,2))+'</pre></details><p>启用前须完成设备副本核验及四张财务资料表的权限检查。</p><label class="finance-check"><input type="checkbox" data-finance-native>已核实四张财务资料表仅财务及指定管理员可访问</label><label class="finance-check"><input type="checkbox" data-finance-reminders '+(r.settings?.reminders?'checked':'')+'>启用每月20日、27日10:00提醒及次月1日10:00教授汇总（北京时间）</label><div class="finance-actions">'+button('activate','启用办理',true)+button('disable','暂停办理')+'</div>');},true);}
+    async function setupAction(action){await run(async()=>{const r=await api('/setup',{action,equipmentUrl:dialog.querySelector('[data-finance-equipment-url]')?.value,nativeEquipmentPermissionsVerified:dialog.querySelector('[data-finance-equipment-permissions]')?.checked,nativePermissionsVerified:dialog.querySelector('[data-finance-native]')?.checked,reminders:dialog.querySelector('[data-finance-reminders]')?.checked});dialog.querySelector('[data-finance-inspection]').textContent=JSON.stringify(r,null,2);message('已完成当前操作。');mountedRoot=null;mount();});}
     async function handle(action,el){
+      if(action==='close')return close();
       if(busy)return;
-      if(action==='close')return close();if(action==='refresh')return mount();
+      if(action==='retry-read')return retryRead?.();
+      if(action==='refresh'){mountedRoot=null;return mount();}
       if(['claim','purchase'].includes(action)){if(!meta?.ready)return;return renderDocument({kind:action,lines:[blank()],content:'',purpose:'',estimate:null,materials:'',attachmentIds:[],totalCents:0});}
       if(action==='records'||action==='review')return listing(action==='review');
       if(action==='next'||action==='prev')return listing(listReview,page+(action==='next'?1:-1));
@@ -97,7 +115,7 @@
       if(action==='remove-file'){files=files.filter(f=>f.id!==el.dataset.file);renderFiles(false);dirty=true;}
       if(action==='download')return run(async()=>{const f=files.find(f=>f.id===el.dataset.file);const blob=await api('/attachment?document='+encodeURIComponent(current.id)+'&id='+encodeURIComponent(f.id),undefined,{binary:true});const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=f.name;a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);});
     }
-    window.addEventListener('er2-session-denied',()=>{epoch++;meta=null;files=[];current=null;dirty=false;dialog?.close();if(dialog)dialog.innerHTML='';});
+    window.addEventListener('er2-session-denied',()=>{epoch++;sessionEpoch++;dialogEpoch++;operation++;busy=false;reading=false;mountedRoot=null;meta=null;files=[];current=null;dirty=false;dialog?.close();if(dialog)dialog.innerHTML='';});
     window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});
     return {mount};
   }

@@ -1,3 +1,4 @@
+import { mockWeeklyCoordinator } from './test-weekly-coordinator.mjs';
 import assert from 'node:assert/strict';
 import service from './src/runtime.js';
 import { LITERATURE_FIELDS, serializeLiterature, literatureText } from './src/literature-write.js';
@@ -7,6 +8,7 @@ const env = { SESSION_SECRET: 'literature-fixture', FEISHU_APP_ID: 'fixture', FE
 for (const name of ['MEMBERS', 'AUTH_PROJECTS', 'PROJECT_MEMBERS', 'LITERATURE']) {
   env[name + '_TABLE_ID'] = name.toLowerCase(); env[name + '_BASE_APP_TOKEN'] = 'fixture-' + name.toLowerCase();
 }
+env.WEEKLY_WRITES = mockWeeklyCoordinator(env);
 const person = { record_id: 'person-1', fields: { '人员编号': 'P-001', '姓名': '合成学生', '飞书成员': [{ id: 'ou_1' }],
   '人员状态': '在组', '人员边界': '团队内', '成员类别': '博士', '保密等级': '内部' } };
 const rows = []; let writes = 0, mode = '', liveSchema = schema;
@@ -27,7 +29,7 @@ globalThis.fetch = async (input, options = {}) => {
       for (const key of ['阅读笔记链接', '论文链接']) if (record?.fields[key]) record.fields[key].text = '打开文档';
       return Response.json({ code: 0, data: { record } });
     }
-    return Response.json({ code: 0, data: { items: table === 'members' ? [person] : table === 'literature' ? rows : [], has_more: false } });
+    return Response.json({ code: 0, data: { items: table === 'members' ? [person] : table === 'literature' ? rows.map(r => mode === 'readback-mismatch' ? { ...r, fields: { ...r.fields, '一句话贡献': 'incorrect' } } : r) : [], has_more: false } });
   }
   assert.equal(table, 'literature'); assert.equal(options.method, 'POST');
   writes++;
@@ -60,7 +62,7 @@ try {
   liveSchema = schema;
   for (mode of ['missing-id', 'readback-mismatch']) {
     const draft = { ...base, title: mode, requestId: mode };
-    response = await call(draft); assert.equal(response.status, 502); assert.equal((await response.json()).code, 'LITERATURE_READBACK_FAILED');
+    response = await call(draft); assert.equal(response.status, 502); assert.equal((await response.json()).code, mode === 'missing-id' ? 'LITERATURE_WRITE_FAILED' : 'LITERATURE_READBACK_FAILED');
     const before = writes; mode = ''; response = await call(draft);
     assert.equal(response.status, 200); assert.equal((await response.json()).readBackVerified, true); assert.equal(writes, before, 'Retry reconciles already saved record');
   }
@@ -89,6 +91,26 @@ try {
     response = await call({ ...base, requestId: 'invalid-url', noteUrl }); assert.equal(response.status, 400);
   }
   assert.equal(writes, beforeInvalid, 'Invalid URLs and conflicting requests never write');
+  Date.now = () => originalNow() + 122_000;
+  const concurrent = { ...base, requestId: 'concurrent-fixture', title: '合成并发提交' };
+  const countBefore = writes;
+  const results = await Promise.all([call(concurrent), call(concurrent)]);
+  assert.deepEqual(results.map(r=>r.status).sort(), [200,201]);
+  assert.equal(writes, countBefore+1, 'Concurrent identical requests create exactly one record');
+  assert.ok((await results[1].json()).readBackVerified);
+  // A timed-out write with no visible record must fail closed across object restarts.
+  const normalFetch = globalThis.fetch; const uncertain = { ...base, requestId:'uncertain-fixture', title:'合成未确认提交' };
+  globalThis.fetch = async (url, options={}) => {
+    if(options.method==='POST' && new URL(url).pathname.endsWith('/tables/literature/records')) throw Error('synthetic connection loss');
+    return normalFetch(url,options);
+  };
+  try { assert.equal((await call(uncertain)).status,502); }
+  finally { globalThis.fetch = normalFetch; }
+  env.WEEKLY_WRITES.restart();
+  const beforeUncertainRetry = writes;
+  assert.equal((await call(uncertain)).status,503);
+  assert.equal(writes,beforeUncertainRetry,'Uncertain creation cannot be repeated after restart');
+  console.log('PASS durable literature concurrency and uncertain-write restart protection');
   person.fields['人员状态'] = '离组'; const before = writes; assert.equal((await call(base)).status, 403); assert.equal(writes, before);
   const legacy = schema.map(f => ({ ...f, type: ['阅读日期', '提交时间', '阅读笔记链接'].includes(f.field_name) ? 1 : f.type }));
   assert.equal(serializeLiterature(legacy, { '阅读日期': '2026-09-09', '阅读笔记链接': base.noteUrl })['阅读日期'], '2026-09-09');
