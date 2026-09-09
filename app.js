@@ -758,12 +758,18 @@
     else elements.app.innerHTML = renderStudent();
     bindViewActions();
     window.dispatchEvent(new CustomEvent('er2-dashboard-rendered', { detail: { role: state.activeRole, home: studentHomeView(state.dashboard.student) } }));
+    updateModuleNotice();
+  }
+
+  function updateModuleNotice() {
+    elements.app.querySelector('[data-module-notice]')?.remove();
     const errors = state.dashboard.moduleErrors || {};
     const labels = { projects: '项目', courses: '原课程记录', tasks: '待办', links: '知识库入口', literature: '文献阅读' };
     const unavailable = Object.keys(labels).filter(function (key) { return errors[key]; });
     if (unavailable.length) {
       const notice = document.createElement('div');
       notice.className = 'panel'; notice.setAttribute('role', 'status');
+      notice.setAttribute('data-module-notice', '');
       notice.textContent = unavailable.map(function (key) { return labels[key]; }).join('、') + '暂时无法读取，相关统计尚未确认；已读取的周报可正常使用。';
       elements.app.prepend(notice);
     }
@@ -810,7 +816,12 @@
   function renderProjectCard() {
     const dashboard = state.dashboard || {};
     const heading = '<section class="panel project-home-card"><div class="panel-title"><h2>我的项目</h2>';
-    if (dashboard.moduleErrors?.projects) return heading + '</div><p>项目暂时无法读取，请稍后重新载入。</p></section>';
+    if (dashboard.moduleErrors?.projects) {
+      const diagnosis = dashboard.moduleDiagnostics?.projects?.requestId;
+      return heading + '</div><p role="status" data-project-read-status>项目暂时无法读取。' +
+        (diagnosis ? '诊断编号：' + escapeHtml(diagnosis) : '') +
+        '</p><button class="button button-secondary" type="button" data-reload-projects>重新读取项目</button></section>';
+    }
     const projects = (Array.isArray(dashboard.student?.projects) ? dashboard.student.projects : [])
       .filter(project => /^PRJ-\d{3,}$/.test(project.code) && project.permission >= 1)
       .sort((a, b) => a.code.localeCompare(b.code));
@@ -821,6 +832,48 @@
       const entry = url ? '<a class="button button-secondary" href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer" aria-label="进入 ' + escapeHtml(title) + ' 知识库">进入项目</a>' : '<span class="home-v2-module-note">项目入口待配置</span>';
       return '<article class="home-v2-project"><div class="home-v2-project-head"><h3>' + escapeHtml(title) + '</h3>' + entry + '</div></article>';
     }).join('') + '</div></section>';
+  }
+
+  function bindProjectRetry() {
+    const button = elements.app.querySelector('[data-reload-projects]');
+    if (button) button.addEventListener('click', function () { reloadProjects(button); });
+  }
+
+  async function reloadProjects(button) {
+    const panel = button.closest('.project-home-card');
+    const dashboard = state.dashboard;
+    if (button.disabled || !panel || !dashboard?.student || !dashboard.moduleErrors?.projects) return;
+    const session = state.session, owner = dashboard.profile?.sub, role = state.activeRole;
+    const generation = state.loadGeneration;
+    const current = function () {
+      return state.dashboard === dashboard && state.session === session && dashboard.profile?.sub === owner &&
+        state.activeRole === role && state.loadGeneration === generation && elements.app.contains(panel);
+    };
+    const status = panel.querySelector('[data-project-read-status]');
+    button.disabled = true;
+    button.textContent = '正在读取…';
+    panel.setAttribute('aria-busy', 'true');
+    status.textContent = '正在重新读取项目…';
+    try {
+      const result = await request('/api/projects');
+      if (!current()) return;
+      if (!Array.isArray(result?.projects) || !result.projects.every(function (project) {
+        return project && typeof project.code === 'string' && /^PRJ-\d{3,}$/.test(project.code) &&
+          typeof project.title === 'string' && Number.isFinite(project.permission) && project.permission >= 1;
+      })) throw new Error('项目读取结果尚未确认，请重试。');
+      dashboard.student.projects = result.projects;
+      if (dashboard.manager?.stats && Number.isInteger(result.activeCount) && result.activeCount >= 0) dashboard.manager.stats.projects = result.activeCount;
+      delete dashboard.moduleErrors.projects;
+      if (dashboard.moduleDiagnostics) delete dashboard.moduleDiagnostics.projects;
+      panel.outerHTML = renderProjectCard();
+      updateModuleNotice();
+    } catch (error) {
+      if (current()) status.textContent = error.message || '项目暂时无法读取，请重试。';
+    } finally {
+      button.disabled = false;
+      button.textContent = '重新读取项目';
+      panel.removeAttribute('aria-busy');
+    }
   }
 
   function renderStudent() {
@@ -907,6 +960,7 @@
   }
 
   function bindViewActions() {
+    bindProjectRetry();
     try { mountFinance(); } catch (_) { /* Finance setup must not interrupt other homepage actions. */ }
     elements.app.querySelectorAll('[data-reload-dashboard]').forEach(function (button) {
       button.addEventListener('click', function () { if (button.disabled) return; button.disabled = true; loadDashboard(state.activeRole); });

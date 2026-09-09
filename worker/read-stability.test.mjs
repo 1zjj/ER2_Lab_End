@@ -20,6 +20,10 @@ const relations = [{ record_id: 'r1', fields: { '关联人员': ['person-1'], '�
   '授权状态': '有效', '工作台授权确认': '已确认', '权限落实状态': '已落实', '成员边界': '团队内',
   '加入日期': '2020-01-01', '权限到期日': '2099-01-01', '审批人': [{ id: 'ou_9' }] } }];
 const literatureRows = [];
+const businessProjects = [
+  { record_id: 'business-1', fields: { '项目编号': 'PRJ-001', '项目名称': '合成项目', '状态': '执行中' } },
+  { record_id: 'business-hidden', fields: { '项目编号': 'PRJ-999', '项目名称': '不可见项目', '状态': '执行中' } }
+];
 let rows = [], calls = [], writes = 0, failed = '', holdMember, onRead;
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async (input, options = {}) => {
@@ -32,7 +36,7 @@ globalThis.fetch = async (input, options = {}) => {
     .map(([field_name, types]) => ({ field_name, type: types[0] })), has_more: false } });
   if (options.method === 'GET') {
     if (failed === table) return Response.json({ code: 99991672, msg: 'synthetic rejection' });
-    const items = { members: people, auth_projects: projects, project_members: relations, weekly: rows, literature: literatureRows }[table] || [];
+    const items = { members: people, auth_projects: projects, project_members: relations, projects: businessProjects, weekly: rows, literature: literatureRows }[table] || [];
     if (id) return Response.json({ code: 0, data: { record: items.find(r => r.record_id === id) } });
     const result = Response.json({ code: 0, data: { items: structuredClone(items), has_more: false } });
     if (onRead) onRead(table);
@@ -93,6 +97,35 @@ try {
   const failure = await call('/api/literature', 1, { requestId: 'independent-literature', title: '论文', contribution: '贡献', noteUrl: 'https://example.com/note' }, { ...env, WEEKLY_TABLE_ID: '' });
   assert.equal(failure.status, 201);
   console.log('PASS optional failure is explicit, required identity fails closed, literature does not require a weekly table');
+
+  failed = 'projects';
+  const projectFailureResponse = await call('/api/dashboard');
+  const projectFailure = await projectFailureResponse.json();
+  assert.equal(projectFailureResponse.status, 200);
+  assert.ok(projectFailure.moduleErrors.projects); assert.equal(projectFailure.manager.stats.projects, null);
+  assert.equal(projectFailure.moduleDiagnostics.projects.requestId, projectFailureResponse.headers.get('X-Request-ID'));
+  assert.deepEqual(Object.keys(projectFailure.moduleDiagnostics.projects).sort(), ['code', 'requestId', 'upstreamCode']);
+  assert.equal(projectFailure.moduleDiagnostics.projects.code, 'TABLE_READ_FAILED');
+  assert.equal(projectFailure.moduleDiagnostics.projects.upstreamCode, 99991672);
+  assert.equal(JSON.stringify(projectFailure).includes('synthetic rejection'), false, 'No raw upstream error in dashboard');
+  assert.equal((await call('/api/projects')).status, 502, 'Read failure is not a confirmed empty project list');
+  failed = 'weekly'; calls = [];
+  const writesBeforeRetry = writes;
+  const recoveredResponse = await call('/api/projects');
+  const recovered = await recoveredResponse.json(); assert.equal(recoveredResponse.status, 200);
+  assert.deepEqual(recovered.projects.map(p => p.code), ['PRJ-001']); assert.equal(recovered.activeCount, 1);
+  assert.deepEqual(calls.map(c => c.split(':')[0]).sort(), ['auth_projects', 'members', 'project_members', 'projects']);
+  businessProjects[0].fields['状态'] = '归档';
+  const archived = await (await call('/api/projects')).json();
+  assert.equal(archived.projects.length, 1); assert.equal(archived.activeCount, 0, 'Archived project is not counted as active');
+  businessProjects[0].fields['状态'] = '执行中';
+  relations[0].fields['权限到期日'] = '2020-01-01';
+  const withdrawn = await (await call('/api/projects')).json();
+  assert.deepEqual(withdrawn.projects, []); assert.equal(withdrawn.activeCount, 0, 'Fresh grant check after withdrawal');
+  relations[0].fields['权限到期日'] = '2099-01-01';
+  failed = 'project_members'; assert.equal((await call('/api/projects')).status, 502, 'Cannot retry around unavailable authorization');
+  failed = ''; assert.equal(writes, writesBeforeRetry, 'Project retries never write records');
+  console.log('PASS project diagnostics, independent recovery, authorized active counts and revocation on retry');
 
   const beforeWrites = writes;
   let memberReads = 0;

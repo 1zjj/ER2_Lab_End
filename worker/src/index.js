@@ -169,9 +169,19 @@ async function dashboard(request, env, session) {
   if (!role) throw httpError(403, '账号没有可用角色');
   const tenantToken = await getTenantToken(env);
   const moduleErrors = {};
+  const moduleDiagnostics = {};
   const optional = async (name, binding) => {
     try { return await listRecords(env, tenantToken, binding, { budgetMs: 6000 }); }
-    catch (_) { moduleErrors[name] = '暂时无法读取，请稍后重新载入'; return []; }
+    catch (error) {
+      moduleErrors[name] = '暂时无法读取，请稍后重新载入';
+      // Allow only diagnostic metadata, never upstream messages, URLs or records.
+      moduleDiagnostics[name] = {
+        requestId: requestIds.get(request) || '',
+        code: ['READ_TIMEOUT', 'UPSTREAM_UNAVAILABLE'].includes(error.code) ? error.code : 'TABLE_READ_FAILED',
+        ...(Number.isInteger(error.upstreamCode) ? { upstreamCode: error.upstreamCode } : {})
+      };
+      return [];
+    }
   };
   const [memberRecords, reportRecords, projectRecords, courseRecords, taskRecords, linkRecords, literatureRecords] = await Promise.all([
     memberSnapshots.get(session) || listRecords(env, tenantToken, 'MEMBERS_TABLE_ID'),
@@ -207,7 +217,7 @@ async function dashboard(request, env, session) {
   const coursesCapability = courseCapabilities(env);
   if (!coursesCapability.enabled) teacher.courseReview = { visible: false, canConfirm: false, pending: 0, submissions: [] };
   if (moduleErrors.projects) manager.stats.projects = null;
-  return json(request, env, { profile, week: currentWeek, student, teacher, manager, literature, catalog, moduleErrors,
+  return json(request, env, { profile, week: currentWeek, student, teacher, manager, literature, catalog, moduleErrors, moduleDiagnostics,
     capabilities: { courses: coursesCapability } });
 }
 
@@ -661,12 +671,16 @@ function buildTeacher(session, week, members, reports, courses, env) {
   };
 }
 
+function activeProjectCount(projects) {
+  return projects.filter((record) => !['归档', '已结束'].includes(field(record, '状态'))).length;
+}
+
 function buildManager(members, projects, courses, env) {
   const weeklyAutomation = weeklyAutomationConfiguration(env);
   return {
     stats: {
       members: members.filter((member) => member.enabled !== false).length,
-      projects: projects.filter((record) => !['归档', '已结束'].includes(field(record, '状态'))).length,
+      projects: activeProjectCount(projects),
       courses: 1
     },
     automations: [
@@ -1484,7 +1498,10 @@ async function projectApi(request, env, session) {
   strictBinding(env, 'PROJECTS_TABLE_ID');
   const token = await getTenantToken(env);
   const records = await listRecords(env, token, 'PROJECTS_TABLE_ID');
-  if (!id) return json(request, env, { projects: visibleProjects(session, records).map(r => projectView(r, session)) });
+  if (!id) {
+    const permitted = visibleProjects(session, records);
+    return json(request, env, { projects: permitted.map(r => projectView(r, session)), activeCount: activeProjectCount(permitted) });
+  }
   const matches = records.filter(r => businessProjectId(r) === id);
   if (matches.length !== 1) throw httpError(409, '统一项目编号缺失或重复');
   const record = matches[0];
