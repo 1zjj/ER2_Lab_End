@@ -9,7 +9,7 @@ for (const name of ['MEMBERS', 'AUTH_PROJECTS', 'PROJECT_MEMBERS', 'LITERATURE']
 }
 const person = { record_id: 'person-1', fields: { '人员编号': 'P-001', '姓名': '合成学生', '飞书成员': [{ id: 'ou_1' }],
   '人员状态': '在组', '人员边界': '团队内', '成员类别': '博士', '保密等级': '内部' } };
-const rows = []; let writes = 0, mode = '', liveSchema = schema;
+const rows = []; let writes = 0, mode = '', liveSchema = schema, unverifiedId = '';
 const originalFetch = globalThis.fetch, originalNow = Date.now;
 globalThis.fetch = async (input, options = {}) => {
   const url = new URL(input); assert.equal(url.hostname, 'open.feishu.cn');
@@ -20,14 +20,19 @@ globalThis.fetch = async (input, options = {}) => {
   assert.ok(match, url.pathname); const [, table, kind, id] = match;
   if (kind === 'fields') return Response.json({ code: 0, data: { items: liveSchema, has_more: false } });
   if (options.method === 'GET') {
-    if (id) {
-      const record = structuredClone(rows.find(row => row.record_id === id));
+    assert.equal(id, undefined, 'A listing/create grant must not require dedicated record retrieval');
+    let items = structuredClone(table === 'members' ? [person] : table === 'literature' ? rows : []);
+    if (table === 'literature' && unverifiedId) {
+      const record = items.find(row => row.record_id === unverifiedId);
       if (mode === 'readback-mismatch') record.fields['一句话贡献'] = 'incorrect';
-      // Feishu can return a friendly hyperlink label different from its destination.
-      for (const key of ['阅读笔记链接', '论文链接']) if (record?.fields[key]) record.fields[key].text = '打开文档';
-      return Response.json({ code: 0, data: { record } });
+      if (mode === 'readback-missing') items = items.filter(row => row.record_id !== unverifiedId);
+      if (mode === 'readback-duplicate') items.push(structuredClone(record));
+      unverifiedId = '';
     }
-    return Response.json({ code: 0, data: { items: table === 'members' ? [person] : table === 'literature' ? rows : [], has_more: false } });
+    // Feishu can return a friendly hyperlink label different from its destination.
+    for (const record of items) for (const key of ['阅读笔记链接', '论文链接'])
+      if (record.fields[key]) record.fields[key].text = '打开文档';
+    return Response.json({ code: 0, data: { items, has_more: false } });
   }
   assert.equal(table, 'literature'); assert.equal(options.method, 'POST');
   writes++;
@@ -37,6 +42,7 @@ globalThis.fetch = async (input, options = {}) => {
   assert.equal(Object.hasOwn(fields, '论文附件链接'), false, 'Optional blank hyperlink must be omitted');
   if (mode === 'rejected') return Response.json({ code: 1254061, msg: 'synthetic field rejection' });
   const record = { record_id: 'reading-' + writes, fields }; rows.push(record);
+  unverifiedId = record.record_id;
   if (mode === 'missing-id') return Response.json({ code: 0, data: {} });
   return Response.json({ code: 0, data: { record } });
 };
@@ -58,7 +64,7 @@ try {
     assert.equal(response.status, 503); assert.equal((await response.json()).code, 'LITERATURE_SCHEMA_MISMATCH'); assert.equal(writes, 1);
   }
   liveSchema = schema;
-  for (mode of ['missing-id', 'readback-mismatch']) {
+  for (mode of ['missing-id', 'readback-mismatch', 'readback-missing', 'readback-duplicate']) {
     const draft = { ...base, title: mode, requestId: mode };
     response = await call(draft); assert.equal(response.status, 502); assert.equal((await response.json()).code, 'LITERATURE_READBACK_FAILED');
     const before = writes; mode = ''; response = await call(draft);
@@ -83,6 +89,7 @@ try {
     assert.equal(response.status, 200); assert.equal((await response.json()).deduplicated, true); assert.equal(writes, before);
     response = await call({ ...draft, noteUrl: base.noteUrl }); assert.equal(response.status, 409); assert.equal(writes, before);
   }
+  Date.now = () => originalNow() + 122_000;
   const beforeInvalid = writes;
   response = await call({ ...base, noteUrl: '', requestId: base.requestId }); assert.equal(response.status, 409, 'Existing request with a note cannot be reconciled as a blank note');
   for (const noteUrl of ['http://example.com/note', 'javascript:alert(1)', 'not-a-url']) {
