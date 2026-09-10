@@ -27,3 +27,15 @@ assert.deepEqual(partial.issues, [{ scope: 'container', status: 403, code: 10630
 assert.equal((await routePermissionAudit(new Request('https://x/api/admin/permissions/audit'), {})).status, 401);
 await assert.rejects(inspectNativePermissions(env, '../other', '', { call, token: 'fixture' }), e => e.status === 400);
 console.log('PASS native audit: ER2 boundary, current and child permissions, pagination, explicit partial failures, no certification from API success and anonymous rejection');
+fail = '';
+const leafCall = async path => path.includes('get_node') ? { node: { ...(await call(path)).node, has_child: false } }
+  : path.includes('/nodes?') ? { has_more: false } : call(path);
+const leaf = await inspectNativePermissions(env, 'Leaf', '', { call: leafCall, token: 'fixture' });
+assert.equal(leaf.readComplete, true); assert.deepEqual(leaf.children, []); assert.equal(leaf.accessCertified, false);
+for (const badPage of [{}, { has_more: true }, { has_more: false, items: {} }]) {
+  const bad = await inspectNativePermissions(env, 'Leaf', '', { call: path => path.includes('/nodes?') ? badPage : leafCall(path), token: 'fixture' });
+  assert.equal(bad.readComplete, false);
+}
+const nonLeaf = await inspectNativePermissions(env, 'Parent', '', { call: path => path.includes('get_node') ? call(path) : leafCall(path), token: 'fixture' });
+assert.equal(nonLeaf.readComplete, false, 'a missing list does not establish an empty parent');
+console.log('PASS explicit empty leaf pagination; missing, malformed or non-final results still block');

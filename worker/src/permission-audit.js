@@ -43,7 +43,10 @@ export async function inspectNativePermissions(env, nodeToken = '', pageToken = 
     node ? optional('single_page', '/drive/v1/permissions/' + enc(nodeToken) + '/members?type=wiki&perm_type=single_page&fields=name,type,external_label') : null,
     node ? optional('sharing', '/drive/v2/permissions/' + enc(nodeToken) + '/public?type=wiki') : null
   ]);
-  if (children && (!Array.isArray(children.items) || typeof children.has_more !== 'boolean' || children.has_more && !children.page_token))
+  // Feishu may omit items on an empty final page. Accept this only when both
+  // the node and pagination explicitly confirm there are no children.
+  const emptyLeaf = children && children.items == null && children.has_more === false && node?.has_child === false;
+  if (children && ((!Array.isArray(children.items) && !emptyLeaf) || typeof children.has_more !== 'boolean' || children.has_more && !children.page_token))
     issues.push({ scope: 'children', code: 'PAGINATION_INCOMPLETE' });
   for (const [name, result] of [['container', container], ['single_page', singlePage]])
     if (node && result && !Array.isArray(result.items)) issues.push({ scope: name, code: 'MEMBERS_INCOMPLETE' });
