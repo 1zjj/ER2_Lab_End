@@ -3,7 +3,7 @@ import { weeklyHash, weeklyRevision, weeklyDates, historyPage } from './weekly-h
 import { evidenceText, serializeWeekly, weeklyValues, weeklyMatches, weeklyCompatibility, WEEKLY_VERSION } from './weekly-write.js';
 import { weeklyRoster, isWeeklySubmitted, hasWeeklyIssue, weeklyAutomationConfiguration } from './weekly-policy.js';
 import { recordPage } from './feishu-record-page.js';
-import { authority, AUTH_BINDINGS, strictBinding, identity, canProject, requireProject, businessProjectId, visibleProjects, hasProjectScope } from './authorization.js';
+import { authority, AUTH_BINDINGS, strictBinding, identity, canProject, requireProject, businessProjectId, visibleProjects, hasProjectScope, isInternalMember, isAdministrator } from './authorization.js';
 import { resolveTableBinding as resolveBinding } from './v2/bindings.js';
 import { courseCapabilities } from './capabilities.js';
 import { readScope, readOptions, measureRead, readHeaders } from './read-performance.js';
@@ -78,6 +78,7 @@ export default {
         ? await requireMemberIdentity(env, session) : await requireActiveMember(env, session);
       if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(request.method) && url.pathname.startsWith('/api/')) enforceWriteRateLimit(session.sub);
       if (url.pathname === '/api/me' && request.method === 'GET') return json(request, env, { profile: { sub: session.sub, personId: session.personId, name: session.name, roles: session.roles } });
+      if (!isInternalMember(session) && !['/api/dashboard', '/api/dashboard/start', '/api/projects'].includes(url.pathname) && !url.pathname.startsWith('/api/projects/')) throw httpError(403, '当前协作者仅可访问明确授权的项目');
       if (url.pathname.startsWith('/api/courses/') && request.method === 'POST' && !courseCapabilities(env).submissionEnabled)
         return json(request, env, { code: 'COURSE_UNAVAILABLE', message: '课程提交暂未开放，请在本周工作记录中填写学习与方法。' }, 503);
       if (url.pathname === '/api/admin/literature-source' && request.method === 'GET') return await weeklySource(request, env, session, 'LITERATURE_TABLE_ID');
@@ -167,6 +168,7 @@ async function authCallback(request, env) {
 // Identity is the only prerequisite for rendering the shell. Each data module
 // still performs its own fresh authorization before returning any records.
 async function dashboardStart(request, env, session) {
+  if (!isInternalMember(session)) return json(request, env, { progressive: true, collaborator: true, profile: {sub:session.sub,personId:session.personId,name:session.name,roles:session.roles}, student:{projects:[]}, catalog:[], moduleErrors:{}, moduleLoading:{projects:true}, capabilities:{internal:false} });
   const people = memberSnapshots.get(session) || [];
   const members = people.flatMap(record => { try {
     const member = authority(people, [], [], identity(record));
@@ -188,6 +190,11 @@ async function dashboardStart(request, env, session) {
 }
 
 async function dashboard(request, env, session) {
+  if (!isInternalMember(session)) {
+    const records=await listRecords(env,await getTenantToken(env),'PROJECTS_TABLE_ID');
+    const projects=visibleProjects(session,records).map(r=>projectView(r,session));
+    return json(request,env,{collaborator:true,profile:{sub:session.sub,personId:session.personId,name:session.name,roles:session.roles},student:{projects},catalog:projects.map(p=>({title:p.title,url:p.url,category:'项目',subtitle:'进入项目'})),moduleErrors:{},capabilities:{internal:false}});
+  }
   const extrasOnly = new URL(request.url).searchParams.get('section') === 'extras';
   const requestedRole = new URL(request.url).searchParams.get('role');
   const role = session.roles.includes(requestedRole) ? requestedRole : session.roles[0];
@@ -310,6 +317,7 @@ function formatRecordDate(value) {
 }
 
 async function getLiterature(request, env, session) {
+  if (!isInternalMember(session)) throw httpError(403,'组内文献仅向正式团队内成员开放');
   const tenantToken = await getTenantToken(env);
   const records = await listRecords(env, tenantToken, 'LITERATURE_TABLE_ID');
   return json(request, env, { literature: buildLiterature(session, weekInfo(new Date()), records) });
@@ -329,6 +337,7 @@ export async function executeLiteratureRequest(request, env, storage) {
   try {
     if (request.method !== 'POST' || new URL(request.url).pathname !== '/api/literature') throw httpError(404, '接口不存在');
     const session = await requireActiveMember(env, await requireSession(request, env));
+    if (!isInternalMember(session)) throw httpError(403,'组内文献仅向正式团队内成员开放');
     return await saveLiterature(request, env, session, storage);
   } catch (error) {
     const status = Number(error.status || 500);
@@ -1545,7 +1554,7 @@ function projectView(record, session) {
   const id = businessProjectId(record);
   return { projectId: id, code: id, title: field(record, '项目名称', '名称'),
     milestone: field(record, '当前里程碑'), blocker: field(record, '最近阻塞'),
-    progress: Number(field(record, '进度')) || 0, permission: session.grants[id]?.level || 0,
+    progress: Number(field(record, '进度')) || 0, permission: isAdministrator(session) && canProject(session,id) ? (canProject(session,id,'edit') ? 3 : 1) : session.grants[id]?.level || 0,
     url: projectHomepage(record) };
 }
 

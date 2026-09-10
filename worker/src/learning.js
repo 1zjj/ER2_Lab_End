@@ -56,7 +56,8 @@ async function ownRecords(storage, sub, personId = '') {
 function subjectFor(query, context, review = false) {
   const sub = query || context.actor.sub;
   if (!/^ou_[\w-]+$/.test(sub)) throw authError(400, '学习记录归属无效');
-  if ((review || sub !== context.actor.sub) && !context.access.canReview) throw authError(403, '仅学生本人和指定的朱俊杰可查看学习记录');
+  if (review && !context.access.canReview) throw authError(403, '仅指定课程审核人可回复学习记录');
+  if (sub !== context.actor.sub && !context.access.canReview && !context.access.canViewAll) throw authError(403, '仅本人、管理员和指定课程审核人可查看学习记录');
   return sub;
 }
 
@@ -69,7 +70,7 @@ async function readLearning(request, env, storage, context) {
       storage: 'workbench_learning_records', completionRequiresReply: false });
   }
   if (request.method === 'GET' && path === '/api/learning/inbox') {
-    subjectFor('', context, true);
+    if (!access.canReview && !access.canViewAll) throw authError(403, '没有全量学习记录查看权限');
     const cursor = url.searchParams.get('cursor') || '';
     if (cursor && !/^record:ou_[\w-]+:[ABC]:\d{2}$/.test(cursor)) throw authError(400, '分页标识无效');
     const list = await storage.list({ prefix: 'record:', ...(cursor ? { startAfter: cursor } : {}), limit: 51 });

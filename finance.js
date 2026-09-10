@@ -6,7 +6,7 @@
   const button=(action,label,primary=false,extra='')=>`<button type="button" class="button ${primary?'button-primary':'button-secondary'}" data-finance="${action}" ${extra}>${label}</button>`;
   function card(){return '<section class="panel finance-card" aria-labelledby="finance-title"><p class="kicker">APPLICATIONS</p><div class="panel-title"><h2 id="finance-title">预算与报销</h2></div><p>购买前告知老师；报销确认后自动登记设备。</p><div data-finance-card-actions><span class="finance-muted">正在核验办理权限…</span></div></section>';}
   function create(options){
-    let meta=null,dialog=null,current=null,files=[],busy=false,dirty=false,listReview=false,page=0,lastWrite=null,identity='',epoch=0,autoOpened=false,sessionEpoch=0,dialogEpoch=0,operation=0,reading=false,mountedRoot=null,retryRead=null;
+    let meta=null,dialog=null,current=null,files=[],busy=false,dirty=false,listReview=false,listAll=false,page=0,lastWrite=null,identity='',epoch=0,autoOpened=false,sessionEpoch=0,dialogEpoch=0,operation=0,reading=false,mountedRoot=null,retryRead=null;
     const apiBase=String(options.apiBase||'').replace(/\/$/,'');
     const profile=()=>options.getProfile()||{};
     async function api(path,body,extra={}){
@@ -52,7 +52,7 @@
       root.onclick=event=>{const b=event.target.closest('[data-finance]');if(b)handle(b.dataset.finance,b);};
       try{const loaded=await api('',undefined,{card:true});if(generation!==epoch||!root.isConnected)return;meta=loaded;
         root.innerHTML='<div class="finance-actions">'+(meta.access.canSubmit?button('purchase','采购申请',false,meta.ready?'':'disabled')+button('claim','费用报销',true,meta.ready?'':'disabled')+button('records','我的记录'):'')+
-          (meta.access.canReview?button('review','审核'+(meta.pending?' · '+meta.pending:'')):'')+(meta.access.canSummary?button('summary','月度花费'):'')+'</div>'+
+          (meta.access.canReview?button('review','审核'+(meta.pending?' · '+meta.pending:'')):'')+(meta.access.canSummary?button('summary','月度花费'):'')+(meta.access.canViewAll?button('all-records','全部单据'):'')+'</div>'+
           (!meta.ready?'<p class="finance-muted">财务权限与设备清单正在准备，完成后开放办理。</p>':'')+(meta.access.canConfigure?'<details class="finance-admin"><summary>财务设置</summary>'+button('setup','查看财务配置')+'</details>':'');
         if(!autoOpened&&new URL(location.href).searchParams.get('page')==='finance'){autoOpened=true;await listing(false);}
       }catch(e){if(generation===epoch&&root.isConnected)root.innerHTML='<p class="finance-muted">预算与报销暂时无法载入。</p>'+button('refresh','重试');}
@@ -86,9 +86,9 @@
     async function save(submit){const form=dialog.querySelector('[data-finance-form]');if(submit&&!form.reportValidity())return;const data=readForm();await run(async()=>{const r=await write('/save',{...data,submit});dirty=false;renderDocument(r.document,files);message(submit?'已提交，可在我的记录中查看处理进度。':'草稿已保存。');mountedRoot=null;mount();});}
     async function upload(input){const chosen=[...input.files];if(!chosen.length)return;if(files.length+chosen.length>20){message('每单最多20份资料。',true);return;}
       await run(async()=>{for(const file of chosen){if(file.size>20*1024*1024||!file.size)throw Error('每份资料须为1字节至20MB');const form=new FormData();form.append('file',file);const a=await api('/upload',form,{headers:{'X-Request-ID':crypto.randomUUID()}});files.push(a);dirty=true;renderFiles(false);}message('资料已上传，保存或提交单据后完成关联。');});input.value='';}
-    async function listing(review,newPage=0){retryRead=()=>listing(review,newPage);if(dirty&&!window.confirm('当前内容未保存，确定离开？'))return;dirty=false;listReview=review;page=newPage;shell(review?'财务审核':'我的记录','<p>正在载入…</p>');await run(async()=>{const r=await api('/records?review='+review+'&page='+page);shell(review?'财务审核':'我的记录',
+    async function listing(review,newPage=0,all=false){retryRead=()=>listing(review,newPage,all);if(dirty&&!window.confirm('当前内容未保存，确定离开？'))return;dirty=false;listReview=review;listAll=all;page=newPage;shell(all?'全部单据':review?'财务审核':'我的记录','<p>正在载入…</p>');await run(async()=>{const r=await api('/records?review='+review+'&page='+page+(all?'&all=true':''));shell(all?'全部单据':review?'财务审核':'我的记录',
       (review?'<p>待审核单据需逐项核实。退回修改不入库；确认已报销后自动入库。</p>':'')+
-      '<div class="finance-records">'+(r.records.length?r.records.map(d=>`<article><div><strong>${escape(d.id)}</strong><p>${escape(d.kind==='claim'?'费用报销':'采购申请')} · ${escape(d.ownerName)} · ${escape(meta.statuses[d.status])}</p>${d.syncError?'<p class="finance-error">'+escape(d.syncError)+'</p>':''}${d.noticeError?'<p class="finance-muted">'+escape(d.noticeError)+'</p>':''}</div><div><strong>${money(d.totalCents)}</strong>${button('detail','查看',false,`data-id="${escape(d.id)}"`)}</div></article>`).join(''):'<p class="finance-muted">暂无记录。</p>')+'</div><div class="finance-actions">'+(page?button('prev','上一页'):'')+(r.more?button('next','下一页'):'')+button(review?'review':'records','刷新列表')+'</div>');},true);}
+      '<div class="finance-records">'+(r.records.length?r.records.map(d=>`<article><div><strong>${escape(d.id)}</strong><p>${escape(d.kind==='claim'?'费用报销':'采购申请')} · ${escape(d.ownerName)} · ${escape(meta.statuses[d.status])}</p>${d.syncError?'<p class="finance-error">'+escape(d.syncError)+'</p>':''}${d.noticeError?'<p class="finance-muted">'+escape(d.noticeError)+'</p>':''}</div><div><strong>${money(d.totalCents)}</strong>${button('detail','查看',false,`data-id="${escape(d.id)}"`)}</div></article>`).join(''):'<p class="finance-muted">暂无记录。</p>')+'</div><div class="finance-actions">'+(page?button('prev','上一页'):'')+(r.more?button('next','下一页'):'')+button(all?'all-records':review?'review':'records','刷新列表')+'</div>');},true);}
     async function detail(id){retryRead=()=>detail(id);await run(async()=>{const r=await api('/record?id='+encodeURIComponent(id));renderDocument(r.document,r.attachments,r.history);},true);}
     async function review(action){if(action==='approve'&&!current.equipmentChecked){message('请先核对设备清单，避免重复登记。',true);return;}if(action==='return'&&!dialog.querySelector('[data-finance-reason]').value.trim()){message('请填写退回原因。',true);return;}if(action==='approve'&&!window.confirm('确认此单真实、准确且未重复报销，并且已完成报销？确认后将自动登记设备。'))return;
       const reason=dialog.querySelector('[data-finance-reason]')?.value||'';await run(async()=>{const equipmentDecisions=Object.fromEntries([...dialog.querySelectorAll('[data-equipment-decision]')].map(el=>[el.dataset.equipmentDecision,el.value]));const duplicateReason=dialog.querySelector('[data-duplicate-reason]')?.value||'';const r=await write('/review',{id:current.id,revision:current.revision,action,reason,equipmentDecisions,duplicateReason});renderDocument(r.document,files);message(action==='approve'?'已确认，设备正在登记。可刷新记录查看结果。':'已退回修改。');mountedRoot=null;mount();});}
@@ -102,8 +102,9 @@
       if(action==='retry-read')return retryRead?.();
       if(action==='refresh'){mountedRoot=null;return mount();}
       if(['claim','purchase'].includes(action)){if(!meta?.ready)return;return renderDocument({kind:action,lines:[blank()],content:'',purpose:'',estimate:null,materials:'',attachmentIds:[],totalCents:0});}
+      if(action==='all-records')return listing(false,0,true);
       if(action==='records'||action==='review')return listing(action==='review');
-      if(action==='next'||action==='prev')return listing(listReview,page+(action==='next'?1:-1));
+      if(action==='next'||action==='prev')return listing(listReview,page+(action==='next'?1:-1),listAll);
       if(action==='detail')return detail(el.dataset.id);
       if(action==='summary'||action==='load-summary')return summary(dialog?.querySelector('[data-finance-month]')?.value);
       if(action==='setup')return setup();if(['inspect','prepare','activate','disable','bind-equipment'].includes(action))return setupAction(action);

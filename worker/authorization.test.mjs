@@ -257,7 +257,7 @@ try {
   await test('direct cross-project GET and PATCH denied', async () => { assert.equal((await call(1, '/api/projects/PRJ-002')).status, 403); assert.equal((await call(1, '/api/projects/PRJ-002', 'PATCH', { milestone: 'attack' })).status, 403); assert.equal(writes.length, 0); });
   await test('read-only reads but cannot edit', async () => { assert.equal((await call(2, '/api/projects/PRJ-002')).status, 200); assert.equal((await call(2, '/api/projects/PRJ-002', 'PATCH', { milestone: 'x' })).status, 403); });
   await test('editor edits content but cannot manage project title', async () => { assert.equal((await call(1, '/api/projects/PRJ-001', 'PATCH', { milestone: 'verified' })).status, 200); assert.equal((await call(1, '/api/projects/PRJ-001', 'PATCH', { title: 'rename' })).status, 403); assert.equal(writes[0].recordId, 'business1'); });
-  await test('project management includes editing but has no cross-project bypass', async () => { assert.equal((await call(9, '/api/projects/PRJ-001', 'PATCH', { title: '管理修改', blocker: '' })).status, 200); assert.equal((await call(9, '/api/projects/PRJ-002')).status, 403); });
+  await test('administrator reads projects without an individual relationship', async () => { assert.equal((await call(9, '/api/projects/PRJ-001', 'PATCH', { title: '管理修改', blocker: '' })).status, 200); assert.equal((await call(9, '/api/projects/PRJ-002')).status, 200); assert.equal((await call(9, '/api/projects/PRJ-003', 'PATCH', { milestone:'locked' })).status,403); });
   await test('unknown and authorization fields cannot be patched', async () => { assert.equal((await call(1, '/api/projects/PRJ-001', 'PATCH', { '权限级别': '管理' })).status, 400); assert.equal(writes.length, 0); });
   for (const [field, value] of [['工作台授权确认', ''], ['工作台授权确认', '待确认'], ['权限落实状态', '待撤回'], ['授权状态', '待审批'], ['授权状态', '已撤销'], ['权限到期日', '2020-01-01'], ['加入日期', '2099-01-01'], ['加入日期', ''], ['权限到期日', ''], ['审批人', []], ['成员边界', '团队外']]) {
     await test('invalid relation denies: ' + field + '=' + String(value), async () => { relations[0].fields[field] = value; assert.equal((await call(1, '/api/projects/PRJ-001')).status, 403); });
@@ -270,7 +270,7 @@ try {
   await test('conflicting PRJ aliases cannot grant access', async () => { rows.projects[0].fields.ProjectID = 'PRJ-002'; assert.equal((await call(1, '/api/projects/PRJ-001')).status, 409); });
   await test('paused project downgrades to read', async () => { projects[0].fields['项目阶段'] = '暂停'; assert.equal((await call(1, '/api/projects/PRJ-001')).status, 200); assert.equal((await call(1, '/api/projects/PRJ-001', 'PATCH', { milestone: 'x' })).status, 403); });
   await test('conflicting project status denies', async () => { projects[0].fields['状态'] = '已归档'; assert.equal((await call(1, '/api/projects/PRJ-001')).status, 403); });
-  await test('external member cannot inherit global administrator duty', async () => { people[0].fields['人员边界'] = '团队外'; people[0].fields['系统职责'] = ['管理员', '课程审核']; const r = await (await call(1, '/api/me')).json(); assert.deepEqual(r.profile.roles, ['student']); });
+  await test('external member cannot inherit global administrator duty', async () => { people[0].fields['人员边界'] = '团队外'; people[0].fields['系统职责'] = ['管理员', '课程审核']; const r = await (await call(1, '/api/me')).json(); assert.deepEqual(r.profile.roles, ['collaborator']); });
   await test('same-day Feishu numeric expiry includes Shanghai day', async () => {
     const midnight = Math.floor((Date.now() + 8 * 3600000) / 86400000) * 86400000 - 8 * 3600000;
     relations[0].fields['权限到期日'] = midnight;
@@ -343,12 +343,14 @@ try {
     if (mutation === 'multiple') relations[0].fields['审批人'].push({ id: 'ou_8' });
     assert.equal((await call(1, '/api/projects/PRJ-001')).status, 403);
   });
-  await test('administrator may confirm own relationship but confirmation is still required', async () => {
+  await test('administrator global access does not depend on business relationship confirmation', async () => {
     people[0].fields['系统职责'] = ['管理员'];
     relations[0].fields['审批人'] = [{ id: 'ou_1' }];
     assert.equal((await call(1, '/api/projects/PRJ-001')).status, 200);
     relations[0].fields['工作台授权确认'] = '待确认';
-    assert.equal((await call(1, '/api/projects/PRJ-001')).status, 403);
+    assert.equal((await call(1, '/api/projects/PRJ-001')).status, 200);
+    people[0].fields['系统职责']=[];
+    assert.equal((await call(1, '/api/projects/PRJ-001')).status,403);
   });
   await test('ordinary member cannot confirm own relationship', async () => {
     relations[0].fields['审批人'] = [{ id: 'ou_1' }];

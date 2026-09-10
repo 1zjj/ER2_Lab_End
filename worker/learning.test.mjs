@@ -45,10 +45,11 @@ assert.deepEqual((await run('ou_student','/submit',submit('01'))).event,first.ev
 await assert.rejects(run('ou_student','/submit',submit('01',{gains:'different'})),e=>e.status===409);
 await assert.rejects(run('ou_student','/submit',submit('01',{requestId:'another-learning-request'})),e=>e.status===409);
 for(const sub of ['ou_other','ou_professor']) {
-  await assert.rejects(run(sub,'/record?subject=ou_student&track=A&lesson=01'),e=>e.status===403);
-  await assert.rejects(run(sub,'/inbox'),e=>e.status===403);
+  assert.equal((await run(sub,'/record?subject=ou_student&track=A&lesson=01')).record.subject,'ou_student');
+  assert.equal((await run(sub,'/inbox')).records.length,1);
   await assert.rejects(run(sub,'/reply',{requestId:'bad-reply-request-1',trackId:'A',lessonId:'01',subject:'ou_student',text:'bad'}),e=>e.status===403);
 }
+await assert.rejects(run('ou_student','/inbox'),e=>e.status===403);
 for(let n=2;n<=10;n++) await run('ou_student','/submit',submit(String(n).padStart(2,'0')));
 assert.equal((await run('ou_student','')).records.length,10,'all ten complete without any reply');
 assert.equal([...storage.data.keys()].filter(k=>k.startsWith('complete:')).length,1);

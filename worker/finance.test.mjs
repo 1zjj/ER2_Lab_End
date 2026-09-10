@@ -29,7 +29,9 @@ const payload=devicePayload(draft.lines[0],'ou_student',fields);assert.equal(pay
 const saved=await run('ou_student','/save',draft);assert.equal(saved.document.totalCents,19900);assert.equal(assets,0);assert.deepEqual(await run('ou_student','/save',draft),saved);
 await assert.rejects(run('ou_student','/save',{...draft,lines:[{...draft.lines[0],name:'不同'}]}),e=>e.status===409);
 const id=saved.document.id;
-for(const sub of ['ou_other','ou_pi'])await assert.rejects(run(sub,'/record?id='+id),e=>e.status===404);
+for(const sub of ['ou_other','ou_pi']) { assert.equal((await run(sub,'/record?id='+id)).document.id,id); await assert.rejects(run(sub,'/save',{...draft,id,revision:1,requestId:'admin-cannot-edit-others'}),e=>e.status===404); }
+assert.equal((await run('ou_pi','/records?all=true')).records.length,1);
+await assert.rejects(run('ou_finance','/records?all=true'),e=>e.status===403);
 await assert.rejects(run('ou_student','/records?review=true'),e=>e.status===403);
 await assert.rejects(run('ou_student','/review',{id,revision:1,action:'approve',requestId:'illegal-self-review'}),e=>e.status===403);
 await assert.rejects(run('ou_finance','/review',{id,revision:1,action:'return',reason:'',requestId:'empty-return-reason'}),e=>e.status===400);
