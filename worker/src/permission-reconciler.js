@@ -39,7 +39,7 @@ export class PermissionReconciler {
     const observation = target.complete && !target.issues.length ? await this.adapter.observe(target) : null;
     return this.record({ state: target.complete && !target.issues.length && observation?.complete && !observation.issues.length ? 'inspected' : 'blocked',
       targetVersion: target.version, issues: [...target.issues, ...(observation?.issues || [])],
-      resources: target.resources, plannedChanges: observation?.changes || [], appliedVersion: null });
+      resources: target.resources, inventory:observation?.inventory||[], warnings:target.warnings||[], plannedChanges: observation?.changes || [], appliedVersion: null });
   }
   async step() {
     if (!(await this.storage.get('permission:enabled'))) return this.status();

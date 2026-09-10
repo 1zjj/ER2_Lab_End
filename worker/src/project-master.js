@@ -15,7 +15,7 @@ export function canonicalProjectId(record) {
 }
 
 export function projectState(record) {
-  const states = ['项目阶段', '项目状态', '状态'].map(k => text(record?.fields?.[k])).filter(Boolean);
+  const states = ['项目阶段', '项目阶段（自动读取）', '项目状态', '状态'].map(k => text(record?.fields?.[k])).filter(Boolean);
   return states.length && new Set(states).size === 1 ? states[0] : '';
 }
 

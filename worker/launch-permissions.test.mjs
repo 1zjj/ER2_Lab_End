@@ -36,6 +36,11 @@ try{
   const data=await(await call(id,'/api/projects')).json();assert.equal(data.projects.length,1);assert.equal(data.projects[0].permission,3);
  }
  assert.equal((await(await call(3,'/api/projects')).json()).projects.length,0);
+ rows.projects.push({record_id:'new-master',fields:{'统一项目编号':'PRJ-099','项目名称':'新合成项目'}});
+ assert.equal((await(await call(1,'/api/projects')).json()).projects.length,2);
+ assert.equal((await call(1,'/api/projects/PRJ-099')).status,200);
+ assert.equal((await call(3,'/api/projects/PRJ-099')).status,403);
+ rows.projects.pop();
  const copy=structuredClone(people);copy[0].fields['系统职责']=[];assert.equal(canProject(authority(copy,projects,[],'ou_fixture_1'),'PRJ-001'),false);
  people[4].fields['访问到期日']='2000-01-01';assert.equal((await call(5,'/api/dashboard/start')).status,403);
  assert.equal(mutations,0);

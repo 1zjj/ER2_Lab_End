@@ -13,6 +13,8 @@ const compile = (m = master, a = mirrors, r = relations) => canonicalProjectData
 const access = (c, sub = 'ou_member') => authority(people, c.projects, c.relations, sub);
 const change = (records, fields) => records.map(r => ({ ...r, fields: { ...r.fields, ...fields } }));
 
+const flowMaster=structuredClone(master);delete flowMaster[0].fields['项目阶段'];flowMaster[0].fields['项目阶段（自动读取）']=[{text:'执行中',type:'text'}];
+assert.equal(compile(flowMaster).projects[0].definitionBlocked,false,'formula projects the existing flow status without another editable status');
 let c = compile();
 assert.equal(c.projects[0].fields['项目名称'], '正式项目');
 assert.equal(c.relations[0].fields['关联项目'].link_record_ids[0], 'master1');

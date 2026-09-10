@@ -23,7 +23,11 @@ export function nativePermissionAdapter(env, storage) {
     keys.forEach(key=>strictBinding(env,key));
     const token=await getTenantToken(env);
     const [people,master,mirrors,relations]=await Promise.all(keys.map(key=>listRecords(env,token,key)));
-    const catalog=canonicalProjectData(master,mirrors,relations), issues=[...catalog.issues];
+    const catalog=canonicalProjectData(master,mirrors,relations);
+    const linkedIds=v=>!Array.isArray(v)&&Array.isArray(v?.link_record_ids)?v.link_record_ids:(Array.isArray(v)?v:v?[v]:[]).flatMap(x=>typeof x==='string'?[x]:x.record_ids||[x.record_id].filter(Boolean));
+    const pendingOnly=id=>{const mirror=mirrors.find(r=>text(r.fields?.['项目编号'])===id);return mirror&&!relations.some(r=>linkedIds(r.fields?.['关联项目']).includes(mirror.record_id)&&r.fields?.['授权状态']==='有效');};
+    const warnings=catalog.issues.filter(i=>i.code==='MIRROR_TITLE_DRIFT'||i.code==='ORPHAN_MIRROR'&&pendingOnly(i.projectId));
+    const issues=catalog.issues.filter(i=>!warnings.includes(i));
     const admins=[];
     for(const p of people){try {const a=authority(people,[],[],identity(p));if(isAdministrator(a))admins.push(a.sub);}catch(_){}}
     if(admins.length!==2)issues.push({code:'EXPECTED_TWO_ACTIVE_ADMINISTRATORS'});
@@ -42,7 +46,7 @@ export function nativePermissionAdapter(env, storage) {
     const previous=await storage?.get('permission:inventory') || [];
     for(const p of previous)if(!resources.some(r=>r.projectId===p.projectId))issues.push({code:'REMOVED_PROJECT_HAS_NATIVE_RESOURCES',node:p.nodeToken,projectId:p.projectId});
     const stable={resources:resources.sort((a,b)=>a.projectId.localeCompare(b.projectId)),admins:admins.sort(),issues};
-    return {version:await digest(stable),...stable,complete:issues.length===0};
+    return {version:await digest(stable),...stable,warnings,complete:issues.length===0};
   }
   async function observe(target) {
     const issues=[],changes=[],seen=new Set(),inventory=[];

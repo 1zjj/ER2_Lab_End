@@ -1562,11 +1562,17 @@ async function projectApi(request, env, session) {
   const path = new URL(request.url).pathname;
   if (!['GET', 'PATCH'].includes(request.method)) throw httpError(405, '不支持此操作');
   const id = path === '/api/projects' ? '' : path.slice('/api/projects/'.length);
-  if (id) requireProject(session, id, request.method === 'PATCH' ? 'edit' : 'read');
+  if (id && !(isAdministrator(session) && request.method === 'GET')) requireProject(session, id, request.method === 'PATCH' ? 'edit' : 'read');
   else if (request.method !== 'GET') throw httpError(405, '不支持此操作');
   strictBinding(env, 'PROJECTS_TABLE_ID');
   const token = await getTenantToken(env);
   const records = await listRecords(env, token, 'PROJECTS_TABLE_ID');
+  if (isAdministrator(session) && request.method === 'GET') {
+    const policies={...session.projectPolicies};
+    for(const r of records){const key=businessProjectId(r);if(key&&records.filter(x=>businessProjectId(x)===key).length===1&&!Object.hasOwn(policies,key))policies[key]={writable:false};}
+    session={...session,projectPolicies:policies};
+  }
+  if(id)requireProject(session,id,request.method==='PATCH'?'edit':'read');
   if (!id) {
     const permitted = visibleProjects(session, records);
     return json(request, env, { projects: permitted.map(r => projectView(r, session)), activeCount: activeProjectCount(permitted) });
