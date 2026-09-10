@@ -6,6 +6,7 @@ const rows={members:people,projects:[{record_id:'master',fields}],auth_projects:
 const env={FEISHU_APP_ID:'fixture',FEISHU_APP_SECRET:'fixture',MEMBERS_BASE_WIKI_TOKEN:'Anchor'};
 for(const name of Object.keys(rows)){env[name.toUpperCase()+'_TABLE_ID']=name;env[name.toUpperCase()+'_BASE_APP_TOKEN']='fixture';}
 let references=false,foreignOwner=false,publicLink=false,failRead=false,childCount=0,requestCount=0;
+let documentPageCount=1,lateReference=false,repeatedDocumentCursor=false,missingDocumentCursor=false;
 const writes=[],realFetch=globalThis.fetch;
 globalThis.fetch=async(input,options={})=>{
  requestCount++;
@@ -16,7 +17,12 @@ globalThis.fetch=async(input,options={})=>{
  if(path.includes('/tables/'))return result({items:rows[path.split('/tables/')[1].split('/')[0]],has_more:false});
  if(path.endsWith('/get_node'))return result({node:{space_id:'ER2fixture',node_token:u.searchParams.get('token'),node_type:'origin',owner:foreignOwner?'ou_unknown':'ou_test1',obj_type:'docx',obj_token:'DocFixture',parent_node_token:''}});
  if(path.endsWith('/nodes'))return result({items:u.searchParams.get('parent_node_token')==='ProjectFixture'?Array.from({length:childCount},(_,i)=>({node_token:'ChildFixture'+i})):[],has_more:false});
- if(path.includes('/blocks'))return result({items:references?[{file:{token:'attachment'}}]:[],has_more:false});
+ if(path.includes('/blocks')){
+   const page=Number((u.searchParams.get('page_token')||'page:0').split(':')[1]);
+   const more=page<documentPageCount-1;
+   return result({items:references||lateReference&&page===documentPageCount-1?[{file:{token:'attachment'}}]:[{block_id:'block'+page,text:{elements:[]}}],has_more:more,
+     ...(more&&!missingDocumentCursor?{page_token:'page:'+(repeatedDocumentCursor?1:page+1)}:{})});
+ }
  if(path.endsWith('/public'))return result({permission_public:{external_access_entity:'closed',link_share_entity:publicLink?'tenant_readable':'closed',lock_switch:true}});
  if(path.endsWith('/members')){
    if(failRead)return result({});
@@ -50,5 +56,20 @@ try{
  const partial=await adapter.observeBatch(boundedTarget,null);
  const changed=await adapter.observeBatch({...boundedTarget,version:'changed-target'},partial.cursor);
  assert.equal(changed.cursor.index,2,'new target restarts from roots instead of retaining old observations');
+ childCount=0;documentPageCount=3;
+ observed=await adapter.observe(await adapter.target());
+ assert.equal(observed.complete,true);assert.equal(observed.inventory[0].documentPages,3);assert.equal(observed.inventory[0].blockCount,3);
+ lateReference=true;observed=await adapter.observe(await adapter.target());
+ assert.equal(observed.complete,false);assert.ok(observed.issues.some(i=>i.code==='ATTACHMENT_OR_REFERENCE_REQUIRES_AUDIT'),'references on the last page still block certification');
+ lateReference=false;missingDocumentCursor=true;observed=await adapter.observe(await adapter.target());
+ assert.equal(observed.complete,false);assert.ok(observed.issues.some(i=>i.code==='DOCUMENT_INVENTORY_INCOMPLETE'));
+ missingDocumentCursor=false;repeatedDocumentCursor=true;observed=await adapter.observe(await adapter.target());
+ assert.equal(observed.complete,false);assert.equal(observed.inventory[0].documentPages,2,'repeated cursors stop without an unbounded loop');
+ repeatedDocumentCursor=false;documentPageCount=9;observed=await adapter.observe(await adapter.target());
+ assert.equal(observed.complete,false);assert.equal(observed.inventory[0].documentPages,8,'document page limit never certifies a partial inventory');
+ documentPageCount=8;childCount=1;const longTarget=await adapter.target();requestCount=0;
+ observed=await adapter.observeBatch(longTarget,null);assert.equal(observed.complete,true);assert.equal(observed.inventory.length,2);
+ assert.ok(requestCount<=34,'two maximum-size documents preserve a bounded subrequest budget');
+ assert.equal(writes.length,1,'pagination and reference inspection stay read-only');
 }finally{globalThis.fetch=realFetch;}
 console.log('PASS native adapter: approved relation targets, ER2-scoped delete payload, source changes reject queued grants, pending revoke, owner/public/attachment/read failures block certification');
