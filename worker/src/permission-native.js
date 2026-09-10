@@ -77,13 +77,29 @@ export function nativePermissionAdapter(env, storage) {
       try { underlying=await call('/drive/v1/permissions/'+enc(node.obj_token)+'/members?type=docx'); }
       catch(_){issues.push({code:'UNDERLYING_DOCUMENT_READ_FAILED',node:resource.nodeToken});continue;}
       if(!Array.isArray(underlying.items)){issues.push({code:'UNDERLYING_MEMBERS_INCOMPLETE',node:resource.nodeToken});continue;}
-      let blocks;
-      try {blocks=await call('/docx/v1/documents/'+enc(node.obj_token)+'/blocks?page_size=500');}
+      let blocks, documentPages=0, nextPage='', blockItems=[], documentComplete=false;
+      const pageTokens=new Set();
+      // Long documents require pagination too. Bound work per node so a pair
+      // of documents still fits one scan invocation; an exhausted bound never
+      // turns a partial document inventory into a successful observation.
+      try {
+        do {
+          blocks=await call('/docx/v1/documents/'+enc(node.obj_token)+'/blocks?page_size=500'+(nextPage?'&page_token='+enc(nextPage):''));
+          documentPages++;
+          if(!Array.isArray(blocks.items)||typeof blocks.has_more!=='boolean')break;
+          blockItems.push(...blocks.items);
+          if(blocks.has_more===false){documentComplete=true;break;}
+          if(typeof blocks.page_token!=='string'||!blocks.page_token||pageTokens.has(blocks.page_token))break;
+          nextPage=blocks.page_token;pageTokens.add(nextPage);
+        }while(documentPages<8);
+      }
       catch(_){issues.push({code:'DOCUMENT_REFERENCES_UNREADABLE',node:resource.nodeToken});continue;}
-      if(!Array.isArray(blocks.items)||blocks.has_more!==false){issues.push({code:'DOCUMENT_INVENTORY_INCOMPLETE',node:resource.nodeToken});continue;}
+      inventory[inventory.length-1].documentPages=documentPages;
+      inventory[inventory.length-1].blockCount=blockItems.length;
+      if(!documentComplete){issues.push({code:'DOCUMENT_INVENTORY_INCOMPLETE',node:resource.nodeToken,pages:documentPages,blockCount:blockItems.length});continue;}
       // Referenced files and embedded objects have separate permissions. Keep
       // this object blocked until those resources have an explicit inventory.
-      if(blocks.items.some(b=>b.file||b.image||b.bitable||b.sheet||b.iframe||b.view||JSON.stringify(b).includes('feishu.cn/')))
+      if(blockItems.some(b=>b.file||b.image||b.bitable||b.sheet||b.iframe||b.view||JSON.stringify(b).includes('feishu.cn/')))
         issues.push({code:'ATTACHMENT_OR_REFERENCE_REQUIRES_AUDIT',node:resource.nodeToken});
       for(const [scope,members,type,token] of [['container',snapshot.container,'wiki',node.node_token],['single_page',snapshot.singlePage,'wiki',node.node_token],['document',underlying.items,'docx',node.obj_token]]){
         const present=new Set();
