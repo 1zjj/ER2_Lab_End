@@ -22,11 +22,16 @@ assert.equal(context('ou_pi').access.canSummary,true);
 assert.equal(canView(context('ou_finance').actor,context('ou_finance').access,{owner:'ou_student',kind:'claim',status:'draft'}),false);
 assert.equal(canView(context('ou_finance').actor,context('ou_finance').access,{owner:'ou_student',kind:'purchase',status:'sent'}),false);
 assert.throws(()=>requireReview(context('ou_finance').actor,context('ou_finance').access,{owner:'previous_finance_account',personId:'P-004'}),e=>e.status===403);
-for(const field of ['name','quantity','unitPrice','purchaseDate'])assert.throws(()=>validateDocument({...draft,lines:[{...draft.lines[0],[field]:''}]}));
+for(const field of ['name','quantity','unitPrice','purchaseDate','contact'])assert.throws(()=>validateDocument({...draft,lines:[{...draft.lines[0],[field]:''}]}));
 for(const [field,value]of [['quantity','0'],['quantity','-1'],['unitPrice','3.456'],['purchaseDate','2026-02-30'],['purchaseDate','2099-01-01']])assert.throws(()=>validateDocument({...draft,lines:[{...draft.lines[0],[field]:value}]}));
 assert.throws(()=>validateDocument({...draft,owner:'ou_other'}));assert.throws(()=>validateDocument({...draft,lines:[{...draft.lines[0],类型:'其他'}]}));
 for(const contact of [17,{},[], 'x'.repeat(501)])assert.throws(()=>validateDocument({...draft,lines:[{...draft.lines[0],contact}]}));
-assert.equal(validateDocument({...draft,lines:[{...draft.lines[0],contact:undefined}]}).lines[0].contact,'');
+for(const contact of [undefined,null,'','  \t\n ']){
+  const body={...draft,lines:[{...draft.lines[0],contact}]};
+  assert.throws(()=>validateDocument(body),e=>e.status===400&&e.message==='第1项请填写联络人');
+  assert.equal(validateDocument(body,false).lines[0].contact,'','Incomplete claims remain saveable as drafts');
+}
+assert.throws(()=>validateDocument({...draft,lines:[draft.lines[0],{...draft.lines[0],contact:''}]}),/第2项请填写联络人/);
 assert.equal(validateDocument({...draft,lines:[{...draft.lines[0],contact:'  合成店铺  '}]}).lines[0].contact,'合成店铺');
 const payload=devicePayload(draft.lines[0],'ou_student',fields);assert.equal(payload['数量'],'2');assert.equal(payload['采购价格（单价）'],99.5);assert.equal(payload['采购进度'],'完成采购');assert.equal(payload['已报销'],'是');assert.deepEqual(payload['采购经办人'],[{id:'ou_student'}]);assert.equal(Object.keys(payload).length,8);assert.equal(payload['联络人'],draft.lines[0].contact);assert.equal(Object.hasOwn(devicePayload({...draft.lines[0],contact:''},'ou_student',fields),'联络人'),false);
 const saved=await run('ou_student','/save',draft);assert.equal(saved.document.totalCents,19900);assert.equal(assets,0);assert.deepEqual(await run('ou_student','/save',draft),saved);
@@ -84,3 +89,18 @@ await processFinanceJobs(env,storage,async()=>({...service,inventory:async()=>{t
 assert.equal((await storage.get('doc:'+failed.document.id)).status,'sync_error','failed writes cannot be reported completed');
 await assert.rejects(run('ou_finance','/review',{id:failed.document.id,revision:1,action:'approve',requestId:'second-distinct-review'}),e=>e.status===409);
 console.log('PASS failed inventory never reports completion and distinct repeat approval is rejected');
+
+// Enforce the new rule at both write boundaries without changing old records on read.
+const requiredStorage=new Storage();await requiredStorage.put('settings',{ready:true,equipmentBinding:EQUIPMENT,equipmentVerified:EQUIPMENT});
+const requiredRun=(sub,path,body)=>executeFinance(new Request('https://worker.test/api/finance'+path,body?{method:'POST',body:JSON.stringify(body)}:{}),env,requiredStorage,async()=>context(sub),async()=>service).then(r=>r.json());
+const noContact={...draft,lines:[{...draft.lines[0],contact:''}],requestId:'missing-required-contact'};
+await assert.rejects(requiredRun('ou_student','/save',noContact),e=>e.status===400&&e.message.includes('请填写联络人'));
+assert.equal((await requiredStorage.list({prefix:'doc:'})).size,0);
+const incomplete=await requiredRun('ou_student','/save',{...noContact,submit:false});
+assert.equal(incomplete.document.status,'draft');
+const legacy={...incomplete.document,status:'submitted'};await requiredStorage.put('doc:'+legacy.id,legacy);
+assert.equal((await requiredRun('ou_finance','/record?id='+legacy.id)).document.lines[0].contact,'');
+await assert.rejects(requiredRun('ou_finance','/review',{id:legacy.id,revision:legacy.revision,action:'approve',requestId:'legacy-missing-contact'}),e=>e.status===400&&e.message.includes('请填写联络人'));
+assert.deepEqual(await requiredStorage.get('doc:'+legacy.id),legacy);
+assert.equal((await requiredStorage.list({prefix:'job:'})).size,0);
+console.log('PASS required contact on submission and approval, incomplete drafts and historical record reads');
