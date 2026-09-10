@@ -10,9 +10,9 @@ const mf=new mfRuntime.Miniflare(mfRuntime.convertV4MiniflareOptions?mfRuntime.c
 try{
   for(const path of ['','/setup','/records?review=true','/attachment'])assert.equal((await mf.dispatchFetch('https://worker.test/api/finance'+path)).status,401);
   const payload=Buffer.from(JSON.stringify({purpose:'session',sub:'ou_student',exp:Math.floor(Date.now()/1000)+3600})).toString('base64url'),key=await crypto.subtle.importKey('raw',new TextEncoder().encode(bindings.SESSION_SECRET),{name:'HMAC',hash:'SHA-256'},false,['sign']),sig=Buffer.from(await crypto.subtle.sign('HMAC',key,new TextEncoder().encode(payload))).toString('base64url');
-  const headers={Authorization:'Bearer '+payload+'.'+sig,'Content-Type':'application/json'},body={requestId:'concurrent-draft-request',kind:'claim',submit:false,lines:[{name:'设备',quantity:'',unitPrice:'',purchaseDate:''}]};
+  const headers={Authorization:'Bearer '+payload+'.'+sig,'Content-Type':'application/json'},body={requestId:'concurrent-draft-request',kind:'claim',submit:false,lines:[{name:'设备',quantity:'',unitPrice:'',purchaseDate:'',contact:'合成联系人'}]};
   const responses=await Promise.all([1,2].map(()=>mf.dispatchFetch('https://worker.test/api/finance/save',{method:'POST',headers,body:JSON.stringify(body)})));let ids=[];
-  for(const r of responses){const d=await r.json();assert.equal(r.status,200,JSON.stringify(d));ids.push(d.document.id);}assert.equal(ids[0],ids[1]);
+  for(const r of responses){const d=await r.json();assert.equal(r.status,200,JSON.stringify(d));ids.push(d.document.id);assert.equal(d.document.lines[0].contact,'合成联系人');}assert.equal(ids[0],ids[1]);
   const records=await(await mf.dispatchFetch('https://worker.test/api/finance/records',{headers})).json();assert.equal(records.records.length,1);
   assert.equal((await mf.dispatchFetch('https://worker.test/api/finance/setup',{headers})).status,403);
   members[0].fields['人员状态']='离组';assert.equal((await mf.dispatchFetch('https://worker.test/api/finance/record?id='+ids[0],{headers})).status,403);

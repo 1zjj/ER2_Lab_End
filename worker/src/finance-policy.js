@@ -10,7 +10,7 @@ export const STATUS = Object.freeze({ draft:'草稿', submitted:'待财务审核
 export const F = Object.freeze({
   purchase: { name:'工作台采购申请', fields:{'申请编号':1,'申请人':11,'人员编号':1,'购买内容':1,'预计金额':2,'用途':1,'资料说明':1,'资料附件':17,'提交时间':5,'系统状态':1,'来源ID':1} },
   claim: { name:'工作台报销单', fields:{'报销编号':1,'申报人':11,'人员编号':1,'合计金额':2,'处理状态':1,'资料说明':1,'资料附件':17,'提交时间':5,'审核人':11,'审核时间':5,'退回原因':1,'来源ID':1} },
-  line: { name:'工作台报销明细', fields:{'明细编号':1,'报销编号':1,'名称':1,'数量':2,'采购价格（单价）':2,'采购日期':5,'金额':2,'设备记录ID':1,'来源ID':1} },
+  line: { name:'工作台报销明细', fields:{'明细编号':1,'报销编号':1,'名称':1,'数量':2,'采购价格（单价）':2,'采购日期':5,'联络人':1,'金额':2,'设备记录ID':1,'来源ID':1} },
   log: { name:'工作台财务操作记录', fields:{'操作编号':1,'单据编号':1,'操作人':11,'时间':5,'操作':1,'说明':1,'来源ID':1} }
 });
 
@@ -70,7 +70,7 @@ export function validateDocument(body, strict=true, now=Date.now()) {
   } else {
     if(!Array.isArray(body.lines)||body.lines.length<1||body.lines.length>50)throw authError(400,'请登记1至50项购买明细');
     d.lines=body.lines.map((line,i)=>{
-      if(!line||Object.keys(line).some(k=>!['name','quantity','unitPrice','purchaseDate'].includes(k)))throw authError(400,'购买明细包含未支持的字段');
+      if(!line||Object.keys(line).some(k=>!['name','quantity','unitPrice','purchaseDate','contact'].includes(k)))throw authError(400,'购买明细包含未支持的字段');
       const name=short(line.name||'',300,`第${i+1}项缺少名称`,strict);
       const quantity=String(line.quantity??'');
       if((strict||quantity!=='')&&(!/^(0|[1-9]\d{0,6})(\.\d{1,3})?$/.test(quantity)||Number(quantity)<=0))throw authError(400,`第${i+1}项数量必须为正数`);
@@ -78,7 +78,8 @@ export function validateDocument(body, strict=true, now=Date.now()) {
       if(strict&&cents===null)throw authError(400,`第${i+1}项缺少单价`);
       const purchaseDate=line.purchaseDate||'';
       if((strict||purchaseDate)&&!validDate(purchaseDate,now))throw authError(400,`第${i+1}项请填写有效的实际采购日期`);
-      return {name,quantity,unitPrice:cents===null?'':(cents/100).toFixed(2),purchaseDate,amountCents:Math.round(Number(quantity||0)*(cents||0))};
+      const contact=short(line.contact??'',500,`第${i+1}项联络人须为文本，最多500字`,false);
+      return {name,quantity,unitPrice:cents===null?'':(cents/100).toFixed(2),purchaseDate,contact,amountCents:Math.round(Number(quantity||0)*(cents||0))};
     });
     d.totalCents=d.lines.reduce((s,l)=>s+l.amountCents,0);
     if(!Number.isSafeInteger(d.totalCents)||d.totalCents>1e12)throw authError(400,'整单金额超出范围');
@@ -99,8 +100,11 @@ export function devicePayload(line,owner,fields) {
     throw authError(503,'设备字段类型不兼容：'+name);
   };
   const user=byName.get('采购经办人');if(user?.type!==11)throw authError(503,'采购经办人必须为飞书成员字段');
+  const contact=short(line.contact??'',500,'联络人须为文本，最多500字',false);
+  if(contact&&byName.get('联络人')?.type!==1)throw authError(503,'设备联络人必须为文本字段');
   return {'文本':cast('文本',line.name),'数量':cast('数量',line.quantity),'采购价格（单价）':cast('采购价格（单价）',line.unitPrice),
-    '采购日期':cast('采购日期',line.purchaseDate),'采购进度':cast('采购进度','完成采购'),'已报销':cast('已报销','是'),'采购经办人':[{id:owner}]};
+    '采购日期':cast('采购日期',line.purchaseDate),'采购进度':cast('采购进度','完成采购'),'已报销':cast('已报销','是'),'采购经办人':[{id:owner}],
+    ...(contact?{'联络人':contact}:{})};
 }
 // Keep the existing device views readable without changing their definitions.
 export function legacyDeviceName(name,fields) {

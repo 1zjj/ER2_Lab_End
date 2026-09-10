@@ -5,17 +5,18 @@ class Storage {
  data=new Map();async get(k){return Array.isArray(k)?new Map(k.filter(x=>this.data.has(x)).map(x=>[x,structuredClone(this.data.get(x))])):structuredClone(this.data.get(k));}
  async put(k,v){this.data.set(k,structuredClone(v));}async delete(k){return this.data.delete(k);}async list({prefix=''}){return new Map([...this.data].filter(([k])=>k.startsWith(prefix)).map(([k,v])=>[k,structuredClone(v)]));}
 }
-const fields=[['文本',1],['数量',1],['采购价格（单价）',2],['采购日期',5],['采购经办人',11],['采购进度',3],['已报销',3],['设备名称',1]].map(([field_name,type])=>({field_name,type,property:{options:[{name:'完成采购'},{name:'是'}]}}));
-const line={name:'仪器',quantity:'2',unitPrice:'99.50',purchaseDate:'2026-08-25',amountCents:19900};
+const fields=[['文本',1],['联络人',1],['数量',1],['采购价格（单价）',2],['采购日期',5],['采购经办人',11],['采购进度',3],['已报销',3],['设备名称',1]].map(([field_name,type])=>({field_name,type,property:{options:[{name:'完成采购'},{name:'是'}]}}));
+const line={name:'仪器',quantity:'2',unitPrice:'99.50',purchaseDate:'2026-08-25',contact:'合成供应商 / 联系人',amountCents:19900};
 const claim=(id,n=1)=>({id,kind:'claim',owner:'ou_user',personId:'P-003',ownerName:'申报人',revision:1,status:'approved',approvedBy:'ou_reviewer',approvedAt:'2026-09-01T00:00:00Z',attachmentIds:[],materials:'',totalCents:n*19900,lines:Array.from({length:n},(_,i)=>({...line,name:'仪器'+i}))});
-async function fixture(){
+async function fixture({contactSchema='ready'}={}){
+ const lineFields=fields.filter(f=>contactSchema!=='missing'||f.field_name!=='联络人').map(f=>({...f,type:f.field_name==='联络人'&&contactSchema==='wrong'?11:f.type}));
  const data=new Map(),calls=[],storage=new Storage(),bindings=Object.fromEntries(Object.keys(F).map(k=>[k,'tbl'+k]));let failRead=false,counter=0;
  const call=async(path,method='GET',body)=>{
   const u=new URL('https://mock'+path);calls.push({path,method,body});
   if(u.pathname.startsWith('/wiki/')){const w=u.searchParams.get('token');return {data:{node:{obj_type:'bitable',obj_token:w===SOURCE.wiki?'source':w===EQUIPMENT.wiki?'equipment':'finance',space_id:w===SOURCE.wiki?'joey':'er2'}}};}
   if(u.pathname==='/bitable/v1/apps/finance/tables')return {data:{items:Object.entries(F).map(([k,s])=>({table_id:bindings[k],name:s.name})),has_more:false}};
   const match=u.pathname.match(/^\/bitable\/v1\/apps\/([^/]+)\/tables\/([^/]+)\/(fields|records)(?:\/([^/]+))?$/);assert.ok(match,path);const [,app,table,kind,id]=match;
-  if(kind==='fields')return {data:{items:fields,has_more:false}};
+  if(kind==='fields'){if(method==='POST'){assert.equal(app,'finance');assert.equal(table,'tblline');assert.deepEqual(body,{field_name:'联络人',type:1});lineFields.push({...body});return {data:{field:body}};}return {data:{items:app==='finance'&&table==='tblline'?lineFields:fields,has_more:false}};}
   const key=app+':'+table;if(!data.has(key))data.set(key,new Map());const rows=data.get(key);
   if(id==='search'){const condition=body.filter.conditions[0];return {data:{items:[...rows.values()].filter(r=>r.fields[condition.field_name]===condition.value[0]),has_more:false}};}
   if(method==='GET'){if(id){if(failRead){failRead=false;throw Error('interrupted readback');}return {data:{record:structuredClone(rows.get(id))}};}return {data:{items:structuredClone([...rows.values()]),has_more:false}};}
@@ -28,16 +29,28 @@ async function fixture(){
 }
 const f=await fixture(),d=claim('EXP-LARGE',50);let loops=0;
 while(true){const before=f.calls.length,done=await f.service.inventory(d,f.storage);assert.ok(f.calls.length-before<=10,'bounded calls per inventory batch');loops++;if(done)break;assert.ok(loops<20);}
-assert.equal(loops,13);assert.equal(f.data.get('equipment:'+EQUIPMENT.table).size,50);const writes=f.calls.filter(c=>c.method==='POST').length;await f.service.inventory(d,f.storage);assert.equal(f.calls.filter(c=>c.method==='POST').length,writes);
+assert.equal(loops,13);assert.equal(f.data.get('equipment:'+EQUIPMENT.table).size,50);assert.ok([...f.data.get('equipment:'+EQUIPMENT.table).values()].every(r=>r.fields['联络人']===line.contact));const writes=f.calls.filter(c=>c.method==='POST').length;await f.service.inventory(d,f.storage);assert.equal(f.calls.filter(c=>c.method==='POST').length,writes);
 const interrupted=await fixture(),one=claim('EXP-INTERRUPTED');interrupted.failNextRead();await assert.rejects(interrupted.service.inventory(one,interrupted.storage));assert.equal((await interrupted.storage.get('asset:EXP-INTERRUPTED:0')).verified,false);await interrupted.service.inventory(one,interrupted.storage);assert.equal(interrupted.data.get('equipment:'+EQUIPMENT.table).size,1,'readback retry never duplicates an asset');
 const linked=await fixture(),existing={record_id:'recExisting',fields:{...devicePayload(one.lines[0],one.owner,fields),'已报销':'否','类型':'手工分类','主要参数':'保留参数','图片':[{file_token:'existingphoto'}]}};linked.data.set('equipment:'+EQUIPMENT.table,new Map([[existing.record_id,existing]]));await linked.storage.put('asset:'+one.id+':0',{recordId:existing.record_id,needsUpdate:true});await linked.service.inventory(one,linked.storage);assert.equal(existing.fields['已报销'],'是');assert.equal(existing.fields['设备名称'],one.lines[0].name);assert.equal(existing.fields['主要参数'],'保留参数');assert.equal(existing.fields['类型'],'手工分类');assert.deepEqual(existing.fields['图片'],[{file_token:'existingphoto'}]);assert.equal(linked.calls.filter(c=>c.method==='POST').length,0,'linking an existing device only updates that record');
 const expired=await fixture();await expired.storage.put('intent:asset:'+one.id+':0',{startedAt:Date.now()-46*60000,payload:devicePayload(one.lines[0],one.owner,fields)});await assert.rejects(expired.service.inventory(one,expired.storage),e=>e.status===409);assert.equal(expired.calls.filter(c=>c.method==='POST').length,0);
 const archive=await fixture(),logs=[{id:'audit-1',documentId:d.id,actor:d.owner,time:'2026-08-26T00:00:00Z',action:'确认已报销',note:''}];loops=0;
-while(true){const before=archive.calls.length,done=await archive.service.mirror(d,archive.bindings,archive.storage,logs);assert.ok(archive.calls.length-before<=13,'bounded calls per mirror batch');loops++;if(done)break;assert.ok(loops<10);}
-assert.equal(archive.data.get('finance:tblclaim').size,1);assert.equal(archive.data.get('finance:tblline').size,50);assert.equal(archive.data.get('finance:tbllog').size,1);const before=archive.calls.filter(c=>c.method==='POST').length;await archive.service.mirror(d,archive.bindings,archive.storage,logs);assert.equal(archive.calls.filter(c=>c.method==='POST').length,before);
+while(true){const before=archive.calls.length,done=await archive.service.mirror(d,archive.bindings,archive.storage,logs);assert.ok(archive.calls.length-before<=24,'bounded calls per mirror batch');loops++;if(done)break;assert.ok(loops<10);}
+assert.equal(archive.data.get('finance:tblclaim').size,1);assert.equal(archive.data.get('finance:tblline').size,50);assert.ok([...archive.data.get('finance:tblline').values()].every(r=>r.fields['联络人']===line.contact));assert.equal(archive.data.get('finance:tbllog').size,1);const before=archive.calls.filter(c=>c.method==='POST').length;await archive.service.mirror(d,archive.bindings,archive.storage,logs);assert.equal(archive.calls.filter(c=>c.method==='POST').length,before);
 // An old ambiguous archive retry adopts the unique receipt rather than creating again.
 await archive.storage.delete('mirror:'+d.id);await archive.storage.put('archive-intent:mirror:'+d.id,{startedAt:Date.now()-46*60000});await archive.service.mirror(d,archive.bindings,archive.storage,logs);assert.equal(archive.data.get('finance:tblclaim').size,1);assert.ok(archive.calls.some(c=>c.path.includes('/records/search')));
 console.log('PASS finance adapter bounded 50-item batches, exact inventory readback, interrupted-write recovery, existing-asset preservation, expired-create protection and archive recovery');
+
+
+const missingContact=await fixture({contactSchema:'missing'});await missingContact.service.mirror(one,missingContact.bindings,missingContact.storage);
+assert.equal(missingContact.calls.filter(c=>c.method==='POST'&&c.path.endsWith('/fields')).length,1,'Add only the missing contact text column');
+assert.equal([...missingContact.data.get('finance:tblline').values()][0].fields['联络人'],line.contact);
+const wrongContact=await fixture({contactSchema:'wrong'});await assert.rejects(wrongContact.service.mirror(one,wrongContact.bindings,wrongContact.storage),e=>e.status===503);
+assert.equal(wrongContact.calls.filter(c=>c.method!=='GET').length,0,'Do not overwrite incompatible fields or write incomplete archives');
+const blankContact=await fixture(),blankClaim=claim('EXP-BLANK-CONTACT');delete blankClaim.lines[0].contact;
+const oldDevice={record_id:'recOldContact',fields:{...devicePayload(blankClaim.lines[0],blankClaim.owner,fields),'已报销':'否','联络人':'既有合成联系人'}};
+blankContact.data.set('equipment:'+EQUIPMENT.table,new Map([[oldDevice.record_id,oldDevice]]));await blankContact.storage.put('asset:'+blankClaim.id+':0',{recordId:oldDevice.record_id,needsUpdate:true});
+await blankContact.service.inventory(blankClaim,blankContact.storage);assert.equal(oldDevice.fields['联络人'],'既有合成联系人','Legacy or blank contacts never erase an existing equipment contact');
+console.log('PASS contact schema upgrade/readback, archive and equipment mapping, old claim compatibility and existing contact preservation');
 
 // Explicit empty pagination is valid; incomplete reads must still block migration.
 let listReply={data:{total:0,has_more:false}},readCalls=[],permissionReply={external_access:false,link_share_entity:'closed'};
