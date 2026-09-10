@@ -21,8 +21,8 @@ const relations = [{ record_id: 'r1', fields: { '关联人员': ['person-1'], '�
   '加入日期': '2020-01-01', '权限到期日': '2099-01-01', '审批人': [{ id: 'ou_9' }] } }];
 const literatureRows = [];
 const businessProjects = [
-  { record_id: 'business-1', fields: { '项目编号': 'PRJ-001', '项目名称': '合成项目', '状态': '执行中' } },
-  { record_id: 'business-hidden', fields: { '项目编号': 'PRJ-999', '项目名称': '不可见项目', '状态': '执行中' } }
+  { record_id: 'business-1', fields: { '项目编号': 'PRJ-001', '项目名称': '合成项目', '状态': '执行中','保密等级':'内部' } },
+  { record_id: 'business-hidden', fields: { '项目编号': 'PRJ-999', '项目名称': '不可见项目', '状态': '执行中','保密等级':'内部' } }
 ];
 let rows = [], calls = [], writes = 0, failed = '', holdMember, onRead;
 const originalFetch = globalThis.fetch;
@@ -132,10 +132,10 @@ try {
   const recovered = await recoveredResponse.json(); assert.equal(recoveredResponse.status, 200);
   assert.deepEqual(recovered.projects.map(p => p.code), ['PRJ-001']); assert.equal(recovered.activeCount, 1);
   assert.deepEqual(calls.map(c => c.split(':')[0]).sort(), ['auth_projects', 'members', 'project_members', 'projects']);
-  businessProjects[0].fields['状态'] = '归档';
+  businessProjects[0].fields['状态'] = projects[0].fields['项目阶段'] = '归档';
   const archived = await (await call('/api/projects')).json();
-  assert.equal(archived.projects.length, 1); assert.equal(archived.activeCount, 0, 'Archived project is not counted as active');
-  businessProjects[0].fields['状态'] = '执行中';
+  assert.equal(archived.projects.length, 0); assert.equal(archived.activeCount, 0, 'Archived project without an explicit read exception is hidden');
+  businessProjects[0].fields['状态'] = projects[0].fields['项目阶段'] = '执行中';
   relations[0].fields['权限到期日'] = '2020-01-01';
   const withdrawn = await (await call('/api/projects')).json();
   assert.deepEqual(withdrawn.projects, []); assert.equal(withdrawn.activeCount, 0, 'Fresh grant check after withdrawal');

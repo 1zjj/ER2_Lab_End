@@ -8,7 +8,7 @@ const person=(id,kind,boundary,duties=[])=>({record_id:'person'+id,fields:{'人�
 let people=[person(1,'PI','团队内',['管理员']),person(2,'RA','团队内',['管理员']),person(3,'博士','团队内'),person(4,'企业伙伴','团队外'),person(5,'临时','团队内',['管理员','课程审核'])];
 const projects=[{record_id:'project1',fields:{'项目编号':'PRJ-001','项目阶段':'执行中','保密等级':'内部'}}];
 let relations=[];
-const rows={projects:[{record_id:'master1',fields:{'项目编号':'P01','统一项目编号':'PRJ-001','项目名称':'合成项目','项目主页':'https://lcnywl4yrecr.feishu.cn/wiki/Fixture'}}],literature:[{record_id:'internal-reading',fields:{'论文标题':'内部合成文献','提交时间':Date.now()}}]};
+const rows={projects:[{record_id:'master1',fields:{'项目编号':'P01','统一项目编号':'PRJ-001','项目名称':'合成项目','项目阶段':'执行中','保密等级':'内部','项目主页':'https://lcnywl4yrecr.feishu.cn/wiki/Fixture'}}],literature:[{record_id:'internal-reading',fields:{'论文标题':'内部合成文献','提交时间':Date.now()}}]};
 const realFetch=globalThis.fetch;let mutations=0;
 globalThis.fetch=async(input,options={})=>{
  const url=new URL(input);assert.equal(url.hostname,'open.feishu.cn');
@@ -36,7 +36,7 @@ try{
   const data=await(await call(id,'/api/projects')).json();assert.equal(data.projects.length,1);assert.equal(data.projects[0].permission,3);
  }
  assert.equal((await(await call(3,'/api/projects')).json()).projects.length,0);
- rows.projects.push({record_id:'new-master',fields:{'统一项目编号':'PRJ-099','项目名称':'新合成项目'}});
+ rows.projects.push({record_id:'new-master',fields:{'统一项目编号':'PRJ-099','项目名称':'新合成项目','项目阶段':'执行中','保密等级':'内部'}});
  assert.equal((await(await call(1,'/api/projects')).json()).projects.length,2);
  assert.equal((await call(1,'/api/projects/PRJ-099')).status,200);
  assert.equal((await call(3,'/api/projects/PRJ-099')).status,403);

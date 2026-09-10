@@ -6,6 +6,7 @@ import { recordPage } from './feishu-record-page.js';
 import { authority, AUTH_BINDINGS, strictBinding, identity, canProject, requireProject, businessProjectId, visibleProjects, hasProjectScope, isInternalMember, isAdministrator } from './authorization.js';
 import { resolveTableBinding as resolveBinding } from './v2/bindings.js';
 import { courseCapabilities } from './capabilities.js';
+import { canonicalProjectData, projectState } from './project-master.js';
 import { readScope, readOptions, measureRead, readHeaders } from './read-performance.js';
 const FEISHU_API = 'https://open.feishu.cn/open-apis';
 const FEISHU_AUTHORIZE = 'https://accounts.feishu.cn/open-apis/authen/v1/authorize';
@@ -14,6 +15,7 @@ const requestIds = new WeakMap();
 const writeRateBuckets = new Map();
 const courseConfirmationLocks = new Map();
 const memberSnapshots = new WeakMap();
+const projectSnapshots = new WeakMap();
 let tenantTokenCache = { token: '', expiresAt: 0 };
 const LITERATURE_TABLE_FALLBACK = 'tblyHLZpybGVU364';
 const TRACK_A_ID = 'track-a';
@@ -73,8 +75,8 @@ export default {
       if (url.pathname === '/auth/callback') return await authCallback(request, env);
 
       let session = await requireSession(request, env);
-      const personalRoutes = ['/api/me', '/api/dashboard/start', '/api/weekly', '/api/reports/history', '/api/reports', '/api/admin/weekly-source', '/api/admin/literature-source'];
-      if (url.pathname.startsWith('/api/')) session = personalRoutes.includes(url.pathname)
+      const personalRoutes = ['/api/me', '/api/dashboard/start', '/api/weekly', '/api/reports/history', '/api/reports', '/api/literature', '/api/admin/weekly-source', '/api/admin/literature-source'];
+      if (url.pathname.startsWith('/api/')) session = (personalRoutes.includes(url.pathname)||url.pathname==='/api/dashboard')
         ? await requireMemberIdentity(env, session) : await requireActiveMember(env, session);
       if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(request.method) && url.pathname.startsWith('/api/')) enforceWriteRateLimit(session.sub);
       if (url.pathname === '/api/me' && request.method === 'GET') return json(request, env, { profile: { sub: session.sub, personId: session.personId, name: session.name, roles: session.roles } });
@@ -191,7 +193,8 @@ async function dashboardStart(request, env, session) {
 
 async function dashboard(request, env, session) {
   if (!isInternalMember(session)) {
-    const records=await listRecords(env,await getTenantToken(env),'PROJECTS_TABLE_ID');
+    session=await requireActiveMember(env,session);
+    const records=projectSnapshots.get(session)||await listRecords(env,await getTenantToken(env),'PROJECTS_TABLE_ID');
     const projects=visibleProjects(session,records).map(r=>projectView(r,session));
     return json(request,env,{collaborator:true,profile:{sub:session.sub,personId:session.personId,name:session.name,roles:session.roles},student:{projects},catalog:projects.map(p=>({title:p.title,url:p.url,category:'项目',subtitle:'进入项目'})),moduleErrors:{},capabilities:{internal:false}});
   }
@@ -218,12 +221,21 @@ async function dashboard(request, env, session) {
   const [memberRecords, reportRecords, projectRecords, courseRecords, taskRecords, linkRecords, literatureRecords] = await Promise.all([
     memberSnapshots.get(session) || listRecords(env, tenantToken, 'MEMBERS_TABLE_ID'),
     extrasOnly ? [] : listRecords(env, tenantToken, 'WEEKLY_TABLE_ID'),
-    extrasOnly ? [] : optional('projects', 'PROJECTS_TABLE_ID'),
+    extrasOnly ? [] : (projectSnapshots.get(session)||optional('projects', 'PROJECTS_TABLE_ID')),
     courseCapabilities(env).enabled ? optional('courses', 'COURSES_TABLE_ID') : Promise.resolve([]),
     optional('tasks', 'TASKS_TABLE_ID'),
     optional('links', 'LINKS_TABLE_ID'),
     extrasOnly ? [] : optional('literature', 'LITERATURE_TABLE_ID')
   ]);
+  const scopedRecords=[...projectRecords,...reportRecords,...courseRecords,...taskRecords,...linkRecords];
+  try{session=await accessForRecords(env,session,scopedRecords,extrasOnly?undefined:projectRecords);}
+  catch(error){
+    moduleErrors.projects='项目权限暂时无法读取，请稍后重新载入';
+    for(const [name,records] of [['weekly',reportRecords],['courses',courseRecords],['tasks',taskRecords],['links',linkRecords]])
+      if(records.some(hasProjectScope))moduleErrors[name]='相关项目权限暂时无法核验，请稍后重新载入';
+    // Keep the freshly verified identity. It has no project grants, so scoped
+    // resources stay denied while independent personal modules remain usable.
+  }
   const currentWeek = weekInfo(new Date());
   const members = memberRecords.flatMap(record => { try { const member = authority(memberRecords, [], [], identity(record)); return [{ ...member, openId: member.sub, enabled: true }]; } catch (_) { return []; } });
   const profile = {
@@ -336,7 +348,7 @@ export async function executeLiteratureRequest(request, env, storage) {
   env = readScope(env, request);
   try {
     if (request.method !== 'POST' || new URL(request.url).pathname !== '/api/literature') throw httpError(404, '接口不存在');
-    const session = await requireActiveMember(env, await requireSession(request, env));
+    const session = await requireMemberIdentity(env, await requireSession(request, env));
     if (!isInternalMember(session)) throw httpError(403,'组内文献仅向正式团队内成员开放');
     return await saveLiterature(request, env, session, storage);
   } catch (error) {
@@ -425,7 +437,7 @@ async function saveLiterature(request, env, session, storage) {
   // An ambiguous create must be reconciled before another create is allowed,
   // including after an object restart. Never retry an uncertain POST blindly.
   if (await storage.get('literature:pending')) throw Object.assign(httpError(503, '上次文献保存结果仍在核对'), { code: 'LITERATURE_READBACK_FAILED' });
-  await requireActiveMember(env, session);
+  if(!isInternalMember(await requireMemberIdentity(env,session)))throw httpError(403,'组内文献仅向正式团队内成员开放');
   await storage.put('literature:pending', { requestId: businessRequestId });
   let created;
   try { created = await createRecord(env, tenantToken, 'LITERATURE_TABLE_ID', serialized, true); }
@@ -740,7 +752,7 @@ function buildTeacher(session, week, members, reports, courses, env) {
 }
 
 function activeProjectCount(projects) {
-  return projects.filter((record) => !['归档', '已结束'].includes(field(record, '状态'))).length;
+  return projects.filter(record => ['执行中','进行中'].includes(projectState(record))).length;
 }
 
 function buildManager(members, projects, courses, env) {
@@ -1255,7 +1267,7 @@ async function runScheduledTask(scheduledTime, env) {
   const results = await Promise.allSettled(missing.map(async member => {
     const recipientKey = runKey + '-' + await stableMessageUuid(member.sub);
     if (succeeded(recipientKey)) return;
-    const current = await requireActiveMember(env, { sub: member.sub });
+    const current = await requireMemberIdentity(env, { sub: member.sub });
     if (!current.roles.includes('student')) return;
     await sendText(env, tenantToken, member.sub,
       'ER² Lab提醒：你本周的工作记录尚未提交，请在今天18:00前进入工作台完成。',
@@ -1362,7 +1374,7 @@ async function updateRecord(env, token, tableBinding, recordId, fields, strictWe
 }
 
 async function sendText(env, token, openId, text, uuid = '') {
-  await requireActiveMember(env, { sub: openId });
+  if(!isInternalMember(await requireMemberIdentity(env,{sub:openId})))throw httpError(403,'内部业务通知接收资格已撤销');
   if (!openId) return;
   return feishuRequest('/im/v1/messages?receive_id_type=open_id', {
     method: 'POST',
@@ -1503,9 +1515,11 @@ export async function requireSession(request, env) {
 async function requireActiveMember(env, session) {
   AUTH_BINDINGS.forEach(key => strictBinding(env, key));
   const tenantToken = await getTenantToken(env);
-  const [people, projects, relations] = await Promise.all(AUTH_BINDINGS.map(key => listRecords(env, tenantToken, key)));
-  const current = { ...session, ...authority(people, projects, relations, session.sub) };
+  const [people, master, mirrors, relations] = await Promise.all(AUTH_BINDINGS.map(key => listRecords(env, tenantToken, key)));
+  const catalog = canonicalProjectData(master, mirrors, relations);
+  const current = { ...session, ...authority(people, catalog.projects, catalog.relations, session.sub) };
   memberSnapshots.set(current, people);
+  projectSnapshots.set(current, master);
   return current;
 }
 
@@ -1517,15 +1531,17 @@ async function requireMemberIdentity(env, session) {
   return current;
 }
 
-async function accessForRecords(env, session, records) {
+async function accessForRecords(env, session, records, knownMaster) {
   if (!records.some(hasProjectScope)) return session;
   const people = memberSnapshots.get(session);
   if (!people) return requireActiveMember(env, session);
   const token = await getTenantToken(env);
-  const [projects, relations] = await Promise.all(['AUTH_PROJECTS_TABLE_ID', 'PROJECT_MEMBERS_TABLE_ID']
-    .map(key => { strictBinding(env, key); return listRecords(env, token, key); }));
-  const current = { ...session, ...authority(people, projects, relations, session.sub) };
+  const [master, mirrors, relations] = await Promise.all(['PROJECTS_TABLE_ID','AUTH_PROJECTS_TABLE_ID', 'PROJECT_MEMBERS_TABLE_ID']
+    .map(key => { strictBinding(env, key); return key==='PROJECTS_TABLE_ID'&&knownMaster!==undefined?knownMaster:listRecords(env, token, key); }));
+  const catalog = canonicalProjectData(master, mirrors, relations);
+  const current = { ...session, ...authority(people, catalog.projects, catalog.relations, session.sub) };
   memberSnapshots.set(current, people);
+  projectSnapshots.set(current, master);
   return current;
 }
 
@@ -1566,12 +1582,7 @@ async function projectApi(request, env, session) {
   else if (request.method !== 'GET') throw httpError(405, '不支持此操作');
   strictBinding(env, 'PROJECTS_TABLE_ID');
   const token = await getTenantToken(env);
-  const records = await listRecords(env, token, 'PROJECTS_TABLE_ID');
-  if (isAdministrator(session) && request.method === 'GET') {
-    const policies={...session.projectPolicies};
-    for(const r of records){const key=businessProjectId(r);if(key&&records.filter(x=>businessProjectId(x)===key).length===1&&!Object.hasOwn(policies,key))policies[key]={writable:false};}
-    session={...session,projectPolicies:policies};
-  }
+  const records = projectSnapshots.get(session) || await listRecords(env, token, 'PROJECTS_TABLE_ID');
   if(id)requireProject(session,id,request.method==='PATCH'?'edit':'read');
   if (!id) {
     const permitted = visibleProjects(session, records);
