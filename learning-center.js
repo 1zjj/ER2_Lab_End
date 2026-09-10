@@ -29,7 +29,7 @@
     function renderTabs() {
       const el = dialog.querySelector('[data-learning-tabs]');
       el.innerHTML = (model.access.canSubmit ? '<button class="button button-secondary" data-learning-mine>我的学习</button>' : '') +
-        (model.access.canReview ? '<button class="button button-secondary" data-learning-inbox>学生学习记录</button>' : '');
+        ((model.access.canReview || model.access.canViewAll) ? '<button class="button button-secondary" data-learning-inbox>学生学习记录</button>' : '');
       el.querySelector('[data-learning-mine]')?.addEventListener('click', () => { view++; mode = 'mine'; renderCourses(); });
       el.querySelector('[data-learning-inbox]')?.addEventListener('click', () => { mode = 'inbox'; renderInbox(); });
     }
@@ -40,7 +40,7 @@
     }
     function renderCourses() {
       selection = null; pending = false; progress();
-      dialog.querySelector('[data-learning-detail]').innerHTML = '<p>选择课程后，可阅读知识库教材、提交学习记录和查看回复。</p><p class="muted">提交内容仅本人和朱俊杰可查看。教授只接收 Track 全部完成提醒。</p>';
+      dialog.querySelector('[data-learning-detail]').innerHTML = '<p>选择课程后，可阅读知识库教材、提交学习记录和查看回复。</p><p class="muted">提交内容仅本人和管理员可查看；朱俊杰负责回复，教授接收 Track 全部完成提醒。</p>';
       dialog.querySelector('[data-learning-nav]').innerHTML = model.catalog.tracks.map(t => '<details class="learning-track"' + (t.id === 'A' ? ' open' : '') + '><summary>' + escape(t.title) + '</summary>' +
         (t.available ? t.lessons.map(l => { const record = model.records.find(r => r.trackId === t.id && r.lessonId === l.id);
           return '<button type="button" class="learning-lesson-button" data-learning-lesson="' + escape(t.id + ':' + l.id) + '"><span>Lesson ' + escape(l.id) + ' · ' + escape(l.title) + '</span><small>' + (record ? record.lastKind === 'reply' ? '已提交 · 有回复' : '已提交' : '待提交') + '</small></button>'; }).join('') : '<p class="muted">待开放，暂不计入学习进度。</p>') + '</details>').join('');
@@ -139,7 +139,8 @@
       owner = profile.sub; const g = ++generation; mode = inbox ? 'inbox' : 'mine'; shell(); dialog.showModal();
       try {
         const result = await api('/api/learning'); if (!alive(g)) return; model = result;
-        if (inbox && !model.access.canReview) throw new Error('当前账号没有查看其他学生学习记录的权限');
+        if (inbox && !model.access.canReview && !model.access.canViewAll) throw new Error('当前账号没有查看其他学生学习记录的权限');
+        if (!model.access.canSubmit && model.access.canViewAll) mode='inbox';
         renderTabs(); if (mode === 'inbox') await renderInbox(); else renderCourses();
       } catch (e) { if (alive(g)) {
         retry(e.message, () => open(inbox));

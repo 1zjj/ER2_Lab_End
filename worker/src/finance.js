@@ -1,5 +1,5 @@
 import { requireSession, getTenantToken, listRecords, json } from './index.js';
-import { strictBinding, authError, identity, personNumber } from './authorization.js';
+import { strictBinding, authError, identity, personNumber, isInternalMember } from './authorization.js';
 import { readScope } from './read-performance.js';
 import { FINANCE_VERSION, FINANCE_STORE, STATUS, SOURCE, financeActor, financeAccess, recipient, requireReview, assertView, editable, requestId, validateDocument, monthlySummary, devicePayload } from './finance-policy.js';
 import { financeService } from './finance-feishu.js';
@@ -8,7 +8,7 @@ import { financeReady, equipmentBinding, verifyEquipmentCopy, validateEquipmentS
 export async function financeContext(request, env) {
   const session=await requireSession(request,env); strictBinding(env,'MEMBERS_TABLE_ID');
   const people=await listRecords(env,await getTenantToken(env),'MEMBERS_TABLE_ID');
-  const actor=financeActor(people,session.sub);return {actor,people,access:financeAccess(actor,people,env)};
+  const actor=financeActor(people,session.sub);if(!isInternalMember(actor))throw authError(403,'财务流程仅向正式团队内成员开放');return {actor,people,access:financeAccess(actor,people,env)};
 }
 export function financeError(request,env,error){
   const status=Number(error.status)||503;
@@ -41,8 +41,9 @@ export async function executeFinance(request,env,storage,contextProvider=finance
       reminders:settings.reminders||false});
     if(path==='/records'){
       const review=url.searchParams.get('review')==='true';if(review&&!access.canReview)throw authError(403,'没有财务审核权限');
+      const all=url.searchParams.get('all')==='true';if(all&&!access.canViewAll)throw authError(403,'没有全量财务查看权限');
       const page=Math.max(0,Number(url.searchParams.get('page')||0));if(!Number.isSafeInteger(page))throw authError(400,'分页无效');
-      const rows=(await docs(storage)).filter(d=>review?d.kind==='claim'&&d.status!=='draft':d.owner===actor.sub&&d.personId===actor.personId).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt));
+      const rows=(await docs(storage)).filter(d=>all||(review?d.kind==='claim'&&d.status!=='draft':d.owner===actor.sub&&d.personId===actor.personId)).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt));
       return json(request,env,{records:rows.slice(page*50,page*50+50).map(compact),more:rows.length>(page+1)*50});
     }
     if(path==='/record'){
@@ -94,7 +95,7 @@ export async function executeFinance(request,env,storage,contextProvider=finance
   if(path==='/save'){
     if(!access.canSubmit)throw authError(403,'当前成员不能提交报销');
     const d=validateDocument(body,body.submit===true);let prior=body.id?await storage.get('doc:'+body.id):null;
-    if(body.id){assertView(actor,{...access,canReview:false},prior);if(!editable(prior)||prior.kind!==d.kind)throw authError(409,'这张单据已锁定，不能修改');if(body.revision!==prior.revision)throw authError(409,'记录已更新，请先重新打开核对');}
+    if(body.id){assertView(actor,{...access,canReview:false,canViewAll:false},prior);if(!editable(prior)||prior.kind!==d.kind)throw authError(409,'这张单据已锁定，不能修改');if(body.revision!==prior.revision)throw authError(409,'记录已更新，请先重新打开核对');}
     for(const id of d.attachmentIds){const a=await storage.get('attachment:'+id);if(!a||a.owner!==actor.sub||a.personId!==actor.personId)throw authError(403,'资料归属不匹配');}
     if(d.purchaseId){const p=await storage.get('doc:'+d.purchaseId);if(!p||p.owner!==actor.sub||p.kind!=='purchase')throw authError(400,'只能关联本人的采购申请');}
     if(body.submit&&!access.reviewerReady)throw authError(409,'财务负责人尚未配置，暂不能提交');

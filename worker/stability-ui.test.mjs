@@ -13,7 +13,7 @@ const weekly={profile,week,student:{report:{status:'pending',label:'未提交',r
 const bootstrap={progressive:true,profile,week,student:{...weekly.student,course:{lessons:[]},tasks:[],links:[],projects:[]},teacher:{...weekly.teacher,commonIssues:[],courseReview:{visible:false}},manager:{stats:{members:4,projects:null,courses:1},automations:[]},literature:null,catalog:[],moduleErrors:{},moduleLoading:{weekly:true,projects:true,literature:true,extras:true},capabilities:{courses:{enabled:false}}};
 const extras={...bootstrap,moduleErrors:{},catalog:[],student:{...bootstrap.student,tasks:[{title:'合成任务',detail:'保留待办',type:'项目'}]}};
 const reading={literature:{items:[],mineCount:0,minimum:3}};
-async function setup({deniedStorage=false,missingScript=false}={}) {
+async function setup({deniedStorage=false,missingScript=false,collaborator=false}={}) {
  const errors=[],requests=[],responses=new Map(),pending=new Map();
  const virtualConsole=new VirtualConsole();virtualConsole.on('jsdomError',e=>errors.push(e.message));
  const dom=new JSDOM(html,{url:'https://fixture.test/#session=fixture-token',runScripts:'outside-only',virtualConsole});const w=dom.window;
@@ -28,7 +28,7 @@ async function setup({deniedStorage=false,missingScript=false}={}) {
   let data;
   if(responses.has(path))data=await responses.get(path)(options);
   else if(path==='/data/catalog.json')data=[];
-  else if(path==='/api/dashboard/start')data=structuredClone(bootstrap);
+  else if(path==='/api/dashboard/start')data=collaborator?{progressive:true,collaborator:true,profile:{sub:'external-fixture',personId:'P-901',name:'合成协作者',roles:['collaborator']},student:{projects:[]},catalog:[],moduleErrors:{},moduleLoading:{projects:true}}:structuredClone(bootstrap);
   else if(path==='/api/finance')data={ready:true,statuses:{draft:'草稿'},access:{canSubmit:true,canConfigure:true,canReview:true}};
   else if(path==='/api/weekly')data=await pending.get('weekly').promise;
   else if(path==='/api/projects')data=await pending.get('projects').promise;
@@ -131,3 +131,17 @@ console.log('PASS stability UI: progressive modules, blocked storage, missing sc
  assert.equal(students[0].currentReport.feedback,'甲的建议');assert.equal(students[1].currentReport.feedback,'');assert.equal(closed,0);
 }
 console.log('PASS teacher feedback remains attached to its submitted student/report');
+
+{
+ const {w,dom,errors,requests,pending}=await setup({collaborator:true});
+ try{
+  await settle(()=>!w.document.querySelector('#app-root').hidden);
+  assert.match(w.document.querySelector('#app-root').textContent,/项目协作/);
+  assert.equal(w.document.querySelector('.finance-card'),null);assert.equal(w.document.querySelector('.literature-panel'),null);
+  assert.equal(w.document.querySelector('[data-open-learning-center]'),null);
+  assert.deepEqual(requests.filter(r=>r.path.startsWith('/api/')).map(r=>r.path).sort(),['/api/dashboard/start','/api/projects']);
+  pending.get('projects').resolve({projects:[],activeCount:0});await settle(()=>w.document.querySelector('.project-home-card').textContent.includes('暂无已授权项目'));
+  assert.deepEqual(errors,[]);
+ }finally{dom.window.close();}
+ console.log('PASS collaborator UI only requests authorized project modules');
+}

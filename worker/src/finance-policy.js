@@ -1,4 +1,4 @@
-import { authority, identity, personNumber, authError } from './authorization.js';
+import { authority, identity, personNumber, authError, isInternalMember, isAdministrator } from './authorization.js';
 
 export const FINANCE_VERSION = 'finance-v1';
 export const FINANCE_STORE = 'er2-finance-v1';
@@ -26,9 +26,9 @@ export function financeAccess(actor, people, env) {
   const reviewerId=env.FINANCE_REVIEWER_PERSON_ID || 'P-004';
   let reviewer=null; try {reviewer=recipient(people,reviewerId,'财务');} catch (_) {}
   const delegates=String(env.FINANCE_DELEGATE_PERSON_IDS || '').split(',').filter(Boolean);
-  const internal=actor.memberRecord.fields['人员边界']==='团队内';
+  const internal=isInternalMember(actor), admin=isAdministrator(actor);
   const delegate=internal && delegates.includes(actor.personId) && actor.duties.includes('管理员');
-  return { canSubmit:internal, canReview:actor.sub===reviewer?.sub || delegate, canConfigure:internal && actor.duties.includes('管理员'),
+  return { canSubmit:internal, canReview:internal && (actor.sub===reviewer?.sub || delegate), canConfigure:admin, canViewAll:admin,
     isDelegate:delegate, reviewerReady:Boolean(reviewer), reviewerId, reviewerName:reviewer?.name || '',
     canSummary:internal && actor.personId===(env.FINANCE_PROFESSOR_PERSON_ID || 'P-001') };
 }
@@ -38,7 +38,7 @@ export function requireReview(actor, access, doc) {
   throw authError(403,'不能审核本人提交的报销单，请由代审人员处理');
 }
 export const editable = doc => ['draft','returned'].includes(doc.status);
-export function canView(actor, access, doc) { return doc.owner===actor.sub || access.canReview && doc.kind==='claim' && doc.status!=='draft'; }
+export function canView(actor, access, doc) { return doc.owner===actor.sub || access.canViewAll || access.canReview && doc.kind==='claim' && doc.status!=='draft'; }
 export function assertView(actor,access,doc) {
   if(!doc || !canView(actor,access,doc)) throw authError(404,'单据不存在或无权访问');
   if(doc.owner===actor.sub && doc.personId!==actor.personId) throw authError(403,'账号与原申报人身份不一致');

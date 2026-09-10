@@ -27,6 +27,7 @@ for(const sub of ['ou_pi','ou_student','ou_finance','ou_delegate','ou_admin']){
   const root=v.document.querySelector('[data-finance-card-actions]');
   assert.equal(Boolean(root.querySelector('[data-finance="summary"]')),sub==='ou_pi',sub+' monthly button');
   assert.equal(Boolean(root.querySelector('[data-finance="review"]')),['ou_finance','ou_delegate'].includes(sub),sub+' review button');
+  assert.equal(Boolean(root.querySelector('[data-finance="all-records"]')),access.canViewAll,sub+' all records button');
   assert.equal(Boolean(root.querySelector('[data-finance="setup"]')),['ou_pi','ou_delegate','ou_admin'].includes(sub),sub+' configuration button');
   for(const action of ['purchase','claim','records'])assert.ok(root.querySelector('[data-finance="'+action+'"]'));
   if(sub==='ou_pi'){
@@ -40,6 +41,13 @@ for(const sub of ['ou_pi','ou_student','ou_finance','ou_delegate','ou_admin']){
     await new Promise(resolve=>setImmediate(resolve));
     assert.equal(urls.filter(url=>url.includes('/summary?')).length,0,'unauthorized or stale controls do not open the summary');
     assert.equal(v.document.querySelector('dialog'),null);
+  }
+  if(access.canViewAll){
+    v.fetch=async url=>{urls.push(url);return {ok:true,status:200,json:async()=>({records:[],more:false})};};
+    root.querySelector('[data-finance="all-records"]').click();await new Promise(resolve=>setImmediate(resolve));
+    assert.match(v.document.querySelector('dialog').textContent,/全部单据/);
+    v.document.querySelector('dialog [data-finance="all-records"]').click();await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(urls.filter(url=>url.includes('&all=true')).length,2,'refresh keeps the all-records scope');
   }
   roleDom.window.close();
 }

@@ -7,6 +7,7 @@
   const DEMO_MODE = config.demo !== false || !config.apiBase;
   const API_BASE = String(config.apiBase || '').replace(/\/$/, '');
   const roleMeta = {
+    collaborator: { label: '项目协作', short: '协' },
     student: { label: '学生个人页', short: '学' },
     teacher: { label: '教师汇总页', short: '教' },
     manager: { label: '管理配置', short: '管' }
@@ -461,7 +462,7 @@
       state.learningCenterOpen = false;
       state.dashboard = data;
       state.moduleGeneration = {};
-      state.catalog = mergeCatalog(state.baseCatalog, data.catalog || []);
+      state.catalog = mergeCatalog(data.collaborator ? [] : state.baseCatalog, data.catalog || []);
       const roles = Array.isArray(data.profile.roles) ? data.profile.roles.filter(function (item) { return roleMeta[item]; }) : ['student'];
       state.activeRole = roles.includes(role) ? role : (roles.includes(state.activeRole) ? state.activeRole : roles[0]);
       renderAccount();
@@ -473,9 +474,9 @@
       elements.loading.hidden = true;
       elements.app.hidden = false;
       if (new URLSearchParams(location.search).get('page') === 'weekly' && roles.includes('student')) openReportDialog();
-      if (data.progressive) ['weekly', 'projects', 'literature', 'extras'].forEach(function (name) { reloadModule(name); });
+      if (data.progressive) (data.collaborator ? ['projects'] : ['weekly', 'projects', 'literature', 'extras']).forEach(function (name) { reloadModule(name); });
       const learningPage = new URLSearchParams(location.search).get('page');
-      if (!DEMO_MODE && window.ER2LearningCenter && ['learning', 'learning-inbox'].includes(learningPage))
+      if (!data.collaborator && !DEMO_MODE && window.ER2LearningCenter && ['learning', 'learning-inbox'].includes(learningPage))
         learningUI().open(learningPage === 'learning-inbox');
     } catch (error) {
       if (!current()) return;
@@ -501,7 +502,7 @@
 
   async function reloadModule(name) {
     const paths = { weekly: '/api/weekly', projects: '/api/projects', literature: '/api/literature', extras: '/api/dashboard?section=extras' };
-    if (!paths[name] || !state.dashboard) return;
+    if (!paths[name] || !state.dashboard || state.dashboard.collaborator && name !== 'projects') return;
     const dashboard = state.dashboard, session = state.session, generation = state.loadGeneration;
     const revision = state.moduleGeneration[name] = (state.moduleGeneration[name] || 0) + 1;
     const current = () => state.dashboard === dashboard && state.session === session && generation === state.loadGeneration && revision === state.moduleGeneration[name];
@@ -518,6 +519,7 @@
       } else if (name === 'projects') {
         if (!Array.isArray(result.projects) || !result.projects.every(p => /^PRJ-\d{3,}$/.test(p.code) && p.permission >= 1)) throw new Error('项目读取结果尚未确认');
         dashboard.student.projects = result.projects;
+        if (dashboard.collaborator) { dashboard.catalog=result.projects.map(p=>({title:p.title,url:p.url,category:'项目',subtitle:'进入项目'})); state.catalog=mergeCatalog([],dashboard.catalog); }
         if (dashboard.manager?.stats && Number.isInteger(result.activeCount)) dashboard.manager.stats.projects = result.activeCount;
       } else if (name === 'literature') {
         if (!result.literature || !Array.isArray(result.literature.items)) throw new Error('文献读取结果尚未确认');
@@ -840,6 +842,7 @@
 
   function renderActiveView(preserveModules) {
     if (!state.dashboard) return;
+    if (state.dashboard.collaborator) { elements.app.innerHTML='<section class="welcome"><h1>项目协作</h1><p>仅显示当前已授权的项目。</p></section>'+renderProjectCard(); bindProjectRetry(); elements.app.querySelectorAll('[data-reload-module]').forEach(b=>b.onclick=()=>reloadModule('projects')); updateModuleNotice(); return; }
     const financeCard = preserveModules && elements.app.querySelector('.finance-card');
     if (state.dashboard.weeklyOnly) { renderWeeklyOnly(); return; }
     if (state.activeRole === 'teacher') elements.app.innerHTML = renderTeacher();
@@ -953,6 +956,7 @@
           typeof project.title === 'string' && Number.isFinite(project.permission) && project.permission >= 1;
       })) throw new Error('项目读取结果尚未确认，请重试。');
       dashboard.student.projects = result.projects;
+        if (dashboard.collaborator) { dashboard.catalog=result.projects.map(p=>({title:p.title,url:p.url,category:'项目',subtitle:'进入项目'})); state.catalog=mergeCatalog([],dashboard.catalog); }
       if (dashboard.manager?.stats && Number.isInteger(result.activeCount) && result.activeCount >= 0) dashboard.manager.stats.projects = result.activeCount;
       delete dashboard.moduleErrors.projects;
       if (dashboard.moduleDiagnostics) delete dashboard.moduleDiagnostics.projects;
@@ -1038,7 +1042,9 @@
       '<button class="button button-secondary" type="button" id="weekly-source-button">查看当前连接的周报表</button>' +
       '<div id="weekly-source-result" aria-live="polite"></div>' +
       '<h3>文献数据源核对</h3><button class="button button-secondary" type="button" id="literature-source-button">查看当前连接的文献表</button>' +
-      '<div id="literature-source-result" aria-live="polite"></div></div></details>';
+      '<div id="literature-source-result" aria-live="polite"></div>' +
+      '<h3>权限与项目核对</h3><p>只读取当前配置，不修改成员和文档权限。</p><button class="button button-secondary" type="button" data-permission-read="projects">核对项目关系与数据源</button>' +
+      '<label>ER2 页面链接<input type="url" id="permission-node-url" value="'+escapeHtml(wikiUrl())+'"></label><button class="button button-secondary" type="button" data-permission-read="native">核对页面原生权限</button><pre id="permission-read-result" style="white-space:pre-wrap;overflow-wrap:anywhere" aria-live="polite"></pre></div></details>';
   }
 
   function renderManager() {
@@ -1708,6 +1714,22 @@
     renderActiveView();
     if (elements.onboardingDialog.open) renderOnboardingDialog();
   });
+  document.addEventListener('click', async function(event) {
+    const button=event.target.closest('[data-permission-read]');
+    if (!button || button.disabled || state.activeRole!=='manager' || !state.dashboard?.profile?.roles?.includes('manager')) return;
+    const output=document.getElementById('permission-read-result'), owner=state.dashboard.profile.sub, generation=state.loadGeneration;
+    const current=()=>state.dashboard?.profile?.sub===owner && state.activeRole==='manager' && state.loadGeneration===generation && output.isConnected;
+    let path='/api/admin/project-consistency';
+    if(button.dataset.permissionRead==='native') {
+      try { const url=new URL(document.getElementById('permission-node-url').value); if(url.origin!=='https://lcnywl4yrecr.feishu.cn'||!/^\/wiki\/[A-Za-z0-9]+$/.test(url.pathname)) throw Error(); path='/api/admin/native-permissions?node='+encodeURIComponent(url.pathname.split('/').pop()); }
+      catch(_){output.textContent='请填写 ER2 知识库页面链接。';return;}
+    }
+    button.disabled=true;output.textContent='正在核对…';
+    try { const result=await request(path);if(current())output.textContent=JSON.stringify(result,null,2); }
+    catch(e){if(current())output.textContent=e.message;}
+    finally{if(button.isConnected)button.disabled=false;}
+  });
+
   async function showWeeklySource(kind = 'weekly') {
     if (state.activeRole !== 'manager' || !state.dashboard?.profile?.roles?.includes('manager')) return;
     const output = document.getElementById(kind + '-source-result');
@@ -1762,7 +1784,7 @@
     .then(function (response) { return response.ok ? response.json() : []; })
     .then(function (data) {
       state.baseCatalog = Array.isArray(data) ? data : [];
-      if (state.dashboard) state.catalog = mergeCatalog(state.baseCatalog, state.dashboard.catalog || []);
+      if (state.dashboard) state.catalog = mergeCatalog(state.dashboard.collaborator ? [] : state.baseCatalog, state.dashboard.catalog || []);
       hydrateDemoLinks();
     })
     .catch(function () { /* Search metadata must not delay or clear live data. */ });
