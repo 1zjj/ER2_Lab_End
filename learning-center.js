@@ -56,7 +56,7 @@
         const data = await api('/api/learning/inbox' + (cursor ? '?cursor=' + encodeURIComponent(cursor) : ''));
         if (!alive(g) || v !== view) return;
         const rows = accumulated.concat(data.records);
-        status(data.notificationIssues.length ? '有 ' + data.notificationIssues.length + ' 条通知未确认送达；学习记录已保存。' : '仅朱俊杰可查看和回复；学生不需要等待回复。');
+        status(data.notificationIssues.length ? '有 ' + data.notificationIssues.length + ' 条通知未确认送达；学习记录已保存。' : '管理员可查看；朱俊杰负责回复，学生不需要等待回复。');
         dialog.querySelector('[data-learning-detail]').innerHTML = '<p>选择一条记录查看学生原文和历史回复。</p>';
         const nav = dialog.querySelector('[data-learning-nav]');
         nav.innerHTML = rows.length ? rows.map((r, i) => '<button type="button" class="learning-lesson-button" data-inbox-index="' + i + '"><span>' + escape(r.name) + ' · ' + escape(r.trackId) + ' / ' + escape(r.lessonId) + '</span><small>' + (r.lastKind === 'reply' ? '已回复' : '待查看 / 回复') + ' · ' + escape(date(r.updatedAt)) + '</small></button>').join('') : '<p>暂时没有学习记录。</p>';
