@@ -27,7 +27,7 @@ try{
  for(const id of [4,5]){
   const start=await(await call(id,'/api/dashboard/start')).json();assert.equal(start.collaborator,true);assert.deepEqual(start.profile.roles,['collaborator']);assert.deepEqual(Object.keys(start.moduleLoading),['projects']);
   const full=await(await call(id,'/api/dashboard')).json();assert.equal(full.collaborator,true);assert.equal(JSON.stringify(full).includes('内部合成文献'),false);assert.equal('teacher' in full,false);
-  for(const route of ['/api/literature','/api/weekly','/api/reports/history','/api/admin/native-permissions','/api/admin/project-consistency'])assert.equal((await call(id,route)).status,403,route);
+  for(const route of ['/api/literature','/api/weekly','/api/reports/history','/api/admin/native-permissions','/api/admin/project-consistency','/api/admin/permission-sync'])assert.equal((await call(id,route)).status,403,route);
   assert.equal((await call(id,'/api/literature','POST')).status,403);
   assert.equal((await call(id,'/api/reports','POST')).status,403);
  }

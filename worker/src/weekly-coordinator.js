@@ -1,4 +1,5 @@
 import { executeWeeklyRequest, executeLiteratureRequest } from './index.js';
+import { executePermissionSync, permissionAlarm } from './permission-sync.js';
 
 // One globally unique object per table/person (journals are partitioned by week). The promise queue is needed
 // because outgoing Feishu fetches yield; Durable Object requests can interleave.
@@ -14,9 +15,15 @@ export class WeeklyWriteCoordinator {
     if (request.method === 'GET' && new URL(request.url).pathname === '/_weekly-storage-check') {
       return this.state.storage.get('health').then(() => Response.json({ ok: true }));
     }
-    const execute = new URL(request.url).pathname === '/api/literature' ? executeLiteratureRequest : executeWeeklyRequest;
+    const path = new URL(request.url).pathname;
+    const execute = path === '/api/admin/permission-sync' ? executePermissionSync : path === '/api/literature' ? executeLiteratureRequest : executeWeeklyRequest;
     const result = this.queue.then(() => execute(request, this.env, this.state.storage));
     this.queue = result.catch(() => {});
+    return result;
+  }
+  alarm() {
+    const result=this.queue.then(()=>permissionAlarm(this.state.storage,this.env));
+    this.queue=result.catch(()=>{});
     return result;
   }
 }
