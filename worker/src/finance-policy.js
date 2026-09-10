@@ -79,6 +79,7 @@ export function validateDocument(body, strict=true, now=Date.now()) {
       const purchaseDate=line.purchaseDate||'';
       if((strict||purchaseDate)&&!validDate(purchaseDate,now))throw authError(400,`第${i+1}项请填写有效的实际采购日期`);
       const contact=short(line.contact??'',500,`第${i+1}项联络人须为文本，最多500字`,false);
+      if(strict&&!contact)throw authError(400,`第${i+1}项请填写联络人`);
       return {name,quantity,unitPrice:cents===null?'':(cents/100).toFixed(2),purchaseDate,contact,amountCents:Math.round(Number(quantity||0)*(cents||0))};
     });
     d.totalCents=d.lines.reduce((s,l)=>s+l.amountCents,0);
