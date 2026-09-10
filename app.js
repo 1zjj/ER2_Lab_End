@@ -527,8 +527,10 @@
         Object.assign(dashboard.student, result.student);
         Object.assign(dashboard.teacher, result.teacher);
       } else if (name === 'projects') {
-        if (!Array.isArray(result.projects) || !result.projects.every(p => /^PRJ-\d{3,}$/.test(p.code) && p.permission >= 1)) throw new Error('项目读取结果尚未确认');
-        dashboard.student.projects = result.projects;
+        if (!Array.isArray(result.projects) || !result.projects.every(p => /^PRJ-\d{3,}$/.test(p.code) && p.permission >= 1 &&
+          typeof p.assigned === 'boolean' && ['relationship', 'administrator'].includes(p.accessSource))) throw new Error('项目读取结果尚未确认');
+        dashboard.student.projects = result.projects.filter(project => project.assigned === true);
+        if (dashboard.manager?.stats) dashboard.manager.projects = result.projects;
         if (dashboard.collaborator) { dashboard.catalog=result.projects.map(p=>({title:p.title,url:p.url,category:'项目',subtitle:'进入项目'})); state.catalog=mergeCatalog([],dashboard.catalog); }
         if (dashboard.manager?.stats && Number.isInteger(result.activeCount)) dashboard.manager.stats.projects = result.activeCount;
       } else if (name === 'literature') {
@@ -930,7 +932,7 @@
     const projects = (Array.isArray(dashboard.student?.projects) ? dashboard.student.projects : [])
       .filter(project => /^PRJ-\d{3,}$/.test(project.code) && project.permission >= 1)
       .sort((a, b) => a.code.localeCompare(b.code));
-    if (!projects.length) return heading + '</div><p>暂无已授权项目。</p></section>';
+    if (!projects.length) return heading + '</div><p>暂无正式分配项目。</p></section>';
     return heading + '<span>' + projects.length + ' 个项目</span></div><div class="home-v2-projects">' + projects.map(function (project) {
       const title = [project.code, project.title].filter(Boolean).join(' · ');
       const url = projectHomepageUrl(project.url);
@@ -964,9 +966,11 @@
       if (!current()) return;
       if (!Array.isArray(result?.projects) || !result.projects.every(function (project) {
         return project && typeof project.code === 'string' && /^PRJ-\d{3,}$/.test(project.code) &&
-          typeof project.title === 'string' && Number.isFinite(project.permission) && project.permission >= 1;
+          typeof project.title === 'string' && Number.isFinite(project.permission) && project.permission >= 1 &&
+          typeof project.assigned === 'boolean' && ['relationship', 'administrator'].includes(project.accessSource);
       })) throw new Error('项目读取结果尚未确认，请重试。');
-      dashboard.student.projects = result.projects;
+      dashboard.student.projects = result.projects.filter(project => project.assigned === true);
+      if (dashboard.manager?.stats) dashboard.manager.projects = result.projects;
         if (dashboard.collaborator) { dashboard.catalog=result.projects.map(p=>({title:p.title,url:p.url,category:'项目',subtitle:'进入项目'})); state.catalog=mergeCatalog([],dashboard.catalog); }
       if (dashboard.manager?.stats && Number.isInteger(result.activeCount) && result.activeCount >= 0) dashboard.manager.stats.projects = result.activeCount;
       delete dashboard.moduleErrors.projects;
@@ -1055,12 +1059,28 @@
 
   function renderManager() {
     const data = state.dashboard.manager;
+    const managedProjects = Array.isArray(data.projects) ? data.projects
+      .filter(project => /^PRJ-\d{3,}$/.test(project.code) && project.permission >= 1)
+      .sort((a, b) => a.code.localeCompare(b.code)) : [];
+    const projectOverview = state.dashboard.moduleLoading?.projects
+      ? modulePlaceholder('projects', '项目总览', 'panel')
+      : state.dashboard.moduleErrors?.projects
+        ? modulePlaceholder('projects', '项目总览', 'panel')
+        : '<section class="panel"><div class="panel-title"><h2>项目总览</h2><span>管理员访问 · ' + managedProjects.length + ' 个项目</span></div>' +
+          (managedProjects.length ? '<div class="home-v2-projects">' + managedProjects.map(function (project) {
+            const title = [project.code, project.title].filter(Boolean).join(' · ');
+            const url = projectHomepageUrl(project.url);
+            return '<article class="home-v2-project"><div class="home-v2-project-head"><h3>' + escapeHtml(title) + '</h3>' +
+              (url ? '<a class="button button-secondary" href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">进入项目</a>' : '<span class="home-v2-module-note">项目入口待配置</span>') +
+              '</div><p class="home-v2-module-note">' + (project.assigned ? '本人同时是项目成员' : '通过管理员职责访问') + '</p></article>';
+          }).join('') + '</div>' : '<p>当前没有可管理的项目。</p>') + '</section>';
     return [
       '<section class="welcome"><div><p class="kicker">MANAGEMENT WORKSPACE</p><h1>管理配置</h1><p>人员、项目、课程和自动化的统一状态。</p></div>',
       '<a class="button button-primary" href="' + safeUrl(wikiUrl()) + '">进入飞书管理后台</a></section>',
       '<div class="metric-grid"><article class="metric-card"><span>启用成员</span><strong>' + data.stats.members + '</strong><small>来自飞书人员表</small></article>',
       '<article class="metric-card"><span>进行中项目</span><strong>' + (data.stats.projects == null ? '暂未读到' : data.stats.projects) + '</strong><small>具有负责人和成员</small></article>',
       '<article class="metric-card"><span>正式课程</span><strong>' + data.stats.courses + '</strong><small>Lesson与培训资料</small></article></div>',
+      projectOverview,
       '<section class="panel"><div class="panel-title"><h2>自动化运行状态</h2><span>接入后显示真实日志</span></div><div class="table-wrap"><table><thead><tr><th>自动化</th><th>触发条件</th><th>对象</th><th>状态</th></tr></thead><tbody>',
       data.automations.map(function (item) {
         return '<tr><td>' + escapeHtml(item.name) + '</td><td>' + escapeHtml(item.trigger) + '</td><td>' +

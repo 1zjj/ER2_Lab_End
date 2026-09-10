@@ -253,16 +253,18 @@ async function dashboard(request, env, session) {
     roles: session.roles
   };
   const permittedProjects = visibleProjects(session, projectRecords);
+  const assignedProjects = permittedProjects.filter(record => Boolean(session.grants?.[businessProjectId(record)]));
   const allowedResource = record => !hasProjectScope(record) || canProject(session, businessProjectId(record));
   const permittedReports = reportRecords.filter(allowedResource);
   const permittedCourses = courseRecords.filter(allowedResource);
   const permittedLinks = linkRecords.filter(allowedResource);
-  const student = await buildStudent(session, currentWeek, permittedReports, permittedProjects, permittedCourses, taskRecords.filter(allowedResource), permittedLinks);
-  student.projects = permittedProjects.map(record => projectView(record, session));
+  const student = await buildStudent(session, currentWeek, permittedReports, assignedProjects, permittedCourses, taskRecords.filter(allowedResource), permittedLinks);
+  student.projects = assignedProjects.map(record => projectView(record, session));
   const teacher = buildTeacher(session, currentWeek, members, permittedReports, permittedCourses, env);
   const manager = session.roles.includes('manager')
     ? buildManager(members, permittedProjects, permittedCourses, env)
     : { stats: {}, automations: [] };
+  if (session.roles.includes('manager')) manager.projects = permittedProjects.map(record => projectView(record, session));
   const literature = moduleErrors.literature ? null : buildLiterature(session, currentWeek, literatureRecords);
   const catalog = buildCatalog(session, permittedLinks);
   const coursesCapability = courseCapabilities(env);
@@ -1597,9 +1599,16 @@ function projectHomepage(record) {
 
 function projectView(record, session) {
   const id = businessProjectId(record);
+  const relationshipPermission = session.grants?.[id]?.level || 0;
+  const administratorPermission = isAdministrator(session) && canProject(session, id)
+    ? (canProject(session, id, 'edit') ? 3 : 1) : 0;
+  const assigned = relationshipPermission >= 1;
   return { projectId: id, code: id, title: field(record, '项目名称', '名称'),
     milestone: field(record, '当前里程碑'), blocker: field(record, '最近阻塞'),
-    progress: Number(field(record, '进度')) || 0, permission: isAdministrator(session) && canProject(session,id) ? (canProject(session,id,'edit') ? 3 : 1) : session.grants[id]?.level || 0,
+    progress: Number(field(record, '进度')) || 0,
+    permission: Math.max(relationshipPermission, administratorPermission),
+    assigned,
+    accessSource: assigned ? 'relationship' : administratorPermission ? 'administrator' : '',
     url: projectHomepage(record) };
 }
 

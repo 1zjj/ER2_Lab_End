@@ -218,6 +218,7 @@ try {
     rows.projects[0].fields['项目主页'] = { text: '打开项目', link: 'https://lcnywl4yrecr.feishu.cn/wiki/AllowedProjectHome?from=from_copylink' };
     rows.projects[1].fields['项目主页'] = 'https://lcnywl4yrecr.feishu.cn/wiki/HiddenProjectHome';
     const list = await (await call(1, '/api/projects')).json(); assert.deepEqual(list.projects.map(p => p.code), ['PRJ-001']);
+    assert.equal(list.projects[0].assigned, true); assert.equal(list.projects[0].accessSource, 'relationship');
     assert.equal(list.projects[0].url, 'https://lcnywl4yrecr.feishu.cn/wiki/AllowedProjectHome');
     assert.equal(JSON.stringify(list).includes('HiddenProjectHome'), false);
     const dashboard = await (await call(1, '/api/dashboard')).json(); assert.deepEqual(dashboard.student.projects.map(p => p.code), ['PRJ-001']); assert.deepEqual(dashboard.manager.stats, {});
@@ -226,6 +227,16 @@ try {
     assert.equal(dashboard.student.project.url, list.projects[0].url);
     assert.equal(JSON.stringify(dashboard).includes('HiddenProjectHome'), false);
     assert.equal((await call(1, '/api/projects/PRJ-002')).status, 403);
+    assert.equal(writes.length, 0);
+  });
+  await test('administrator visibility does not fabricate a personal project assignment', async () => {
+    const list = await (await call(8, '/api/projects')).json();
+    assert.deepEqual(list.projects.map(p => p.code), ['PRJ-001', 'PRJ-002', 'PRJ-003']);
+    assert.ok(list.projects.every(p => p.assigned === false && p.accessSource === 'administrator'));
+    const dashboard = await (await call(8, '/api/dashboard')).json();
+    assert.deepEqual(dashboard.student.projects, []);
+    assert.deepEqual(dashboard.manager.projects.map(p => p.code), ['PRJ-001', 'PRJ-002', 'PRJ-003']);
+    assert.equal(dashboard.teacher.students.find(p => p.id === 'ou_8').project, '暂未分配项目');
     assert.equal(writes.length, 0);
   });
   await test('project homepage supports Feishu hyperlink and text cells without using display labels', async () => {

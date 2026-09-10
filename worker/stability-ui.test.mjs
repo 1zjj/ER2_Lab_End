@@ -73,8 +73,20 @@ async function setup({deniedStorage=false,missingScript=false,collaborator=false
   assert.match(w.document.querySelector('#toast').textContent,/已保留/);
   pending.get('projects').resolve(Response.json({message:'synthetic failure'},{status:503}));
   await settle(()=>w.document.querySelector('[data-reload-projects]'));
-  responses.set('/api/projects',()=>({projects:[{code:'PRJ-001',title:'合成项目',permission:1,url:'https://lcnywl4yrecr.feishu.cn/wiki/fixture'}],activeCount:1}));
+  responses.set('/api/projects',()=>({projects:[
+    {code:'PRJ-001',title:'本人项目',permission:1,assigned:true,accessSource:'relationship',url:'https://lcnywl4yrecr.feishu.cn/wiki/fixture'},
+    {code:'PRJ-002',title:'管理项目',permission:3,assigned:false,accessSource:'administrator',url:'https://lcnywl4yrecr.feishu.cn/wiki/adminfixture'}
+  ],activeCount:2}));
   w.document.querySelector('[data-reload-projects]').click();await settle(()=>w.document.querySelector('.project-home-card a'));
+  assert.match(w.document.querySelector('.project-home-card').textContent,/本人项目/);
+  assert.doesNotMatch(w.document.querySelector('.project-home-card').textContent,/管理项目/);
+  w.document.querySelector('[data-role="manager"]').click();
+  assert.match(w.document.querySelector('#app-root').textContent,/项目总览/);
+  assert.match(w.document.querySelector('#app-root').textContent,/本人同时是项目成员/);
+  assert.match(w.document.querySelector('#app-root').textContent,/通过管理员职责访问/);
+  assert.match(w.document.querySelector('#app-root').textContent,/管理项目/);
+  w.document.querySelector('[data-role="student"]').click();
+  await settle(()=>w.document.querySelector('[data-finance="setup"]'));
   assert.equal(form.elements.progress.value,'等待期间继续输入');
   // Revocation invalidates every pending result and all role buttons.
   const setupRead=deferred();responses.set('/api/finance/setup',()=>setupRead.promise);
@@ -140,7 +152,7 @@ console.log('PASS teacher feedback remains attached to its submitted student/rep
   assert.equal(w.document.querySelector('.finance-card'),null);assert.equal(w.document.querySelector('.literature-panel'),null);
   assert.equal(w.document.querySelector('[data-open-learning-center]'),null);
   assert.deepEqual(requests.filter(r=>r.path.startsWith('/api/')).map(r=>r.path).sort(),['/api/dashboard/start','/api/projects']);
-  pending.get('projects').resolve({projects:[],activeCount:0});await settle(()=>w.document.querySelector('.project-home-card').textContent.includes('暂无已授权项目'));
+  pending.get('projects').resolve({projects:[],activeCount:0});await settle(()=>w.document.querySelector('.project-home-card').textContent.includes('暂无正式分配项目'));
   assert.deepEqual(errors,[]);
  }finally{dom.window.close();}
  console.log('PASS collaborator UI only requests authorized project modules');

@@ -6,7 +6,7 @@ const source = readFileSync(new URL('../app.js', import.meta.url), 'utf8');
 const extract = (start, end) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)));
 const code = extract('  function updateModuleNotice(', '  function renderLearningCard(') +
   extract('  function projectHomepageUrl(', '  function renderStudent(');
-const project = { code: 'PRJ-001', title: '合成项目', permission: 1, url: 'https://lcnywl4yrecr.feishu.cn/wiki/fixture' };
+const project = { code: 'PRJ-001', title: '合成项目', permission: 1, assigned: true, accessSource: 'relationship', url: 'https://lcnywl4yrecr.feishu.cn/wiki/fixture' };
 
 async function run(test) {
   const dom = new JSDOM('<main id="app"><section id="weekly"><input value="未提交的草稿"></section><section id="finance">审核</section><div id="projects"></div></main>',
@@ -57,7 +57,7 @@ for (const result of [{}, { projects: null }, { projects: [null] }, { projects: 
     respond(async () => result); await w.reloadProjects(button);
     assert.ok(w.state.dashboard.moduleErrors.projects);
     assert.match(app.querySelector('[data-project-read-status]').textContent, /尚未确认/);
-    assert.equal(button.disabled, false); assert.doesNotMatch(app.textContent, /暂无已授权项目/);
+    assert.equal(button.disabled, false); assert.doesNotMatch(app.textContent, /暂无正式分配项目/);
   });
 }
 await run(async ({ w, app, button, respond }) => {
@@ -67,8 +67,15 @@ await run(async ({ w, app, button, respond }) => {
   assert.equal(button.disabled, false);
   delete w.state.dashboard.moduleErrors.literature;
   respond(async () => ({ projects: [], activeCount: 0 })); await w.reloadProjects(button);
-  assert.match(app.textContent, /暂无已授权项目/); assert.equal(w.state.dashboard.manager.stats.projects, 0);
+  assert.match(app.textContent, /暂无正式分配项目/); assert.equal(w.state.dashboard.manager.stats.projects, 0);
   assert.equal(app.querySelector('[data-module-notice]'), null);
+});
+await run(async ({ w, app, button, respond }) => {
+  respond(async () => ({ projects: [{ ...project, assigned: false, accessSource: 'administrator' }], activeCount: 1 }));
+  await w.reloadProjects(button);
+  assert.deepEqual(w.state.dashboard.student.projects, [], 'Administrator-only visibility is not a personal assignment');
+  assert.equal(w.state.dashboard.manager.projects.length, 1, 'Administrator retains the complete management inventory');
+  assert.match(app.textContent, /暂无正式分配项目/);
 });
 
 for (const change of ['session', 'account', 'role', 'dashboard', 'reload', 'removed', 'denied']) {
