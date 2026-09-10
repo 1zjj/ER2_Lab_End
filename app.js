@@ -361,6 +361,8 @@
     if (sourceResult) sourceResult.textContent = '';
     const literatureSourceResult = document.getElementById('literature-source-result');
     if (literatureSourceResult) literatureSourceResult.textContent = '';
+    const permissionResult = document.getElementById('permission-read-result');
+    if (permissionResult) permissionResult.textContent = '';
     document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
     elements.app.hidden = true;
     showError('访问权限需要重新核验', '请重新登录；若账号已停用，请联系管理员核对。');
@@ -1044,7 +1046,7 @@
       '<h3>文献数据源核对</h3><button class="button button-secondary" type="button" id="literature-source-button">查看当前连接的文献表</button>' +
       '<div id="literature-source-result" aria-live="polite"></div>' +
       '<h3>权限与项目核对</h3><p>只读取当前配置，不修改成员和文档权限。</p><button class="button button-secondary" type="button" data-permission-read="projects">核对项目关系与数据源</button>' +
-      '<label>ER2 页面链接<input type="url" id="permission-node-url" value="'+escapeHtml(wikiUrl())+'"></label><button class="button button-secondary" type="button" data-permission-read="native">核对页面原生权限</button><pre id="permission-read-result" style="white-space:pre-wrap;overflow-wrap:anywhere" aria-live="polite"></pre></div></details>';
+      '<label>ER2 页面链接<input type="url" id="permission-node-url" value="'+escapeHtml(wikiUrl())+'"></label><button class="button button-secondary" type="button" data-permission-read="native">核对页面原生权限</button><button class="button button-secondary" type="button" data-permission-read="sync-inspect">检查项目权限对账条件</button><button class="button button-secondary" type="button" data-permission-read="sync-status">读取对账结果</button><pre id="permission-read-result" style="white-space:pre-wrap;overflow-wrap:anywhere" aria-live="polite"></pre></div></details>';
   }
 
   function renderManager() {
@@ -1718,14 +1720,15 @@
     const button=event.target.closest('[data-permission-read]');
     if (!button || button.disabled || state.activeRole!=='manager' || !state.dashboard?.profile?.roles?.includes('manager')) return;
     const output=document.getElementById('permission-read-result'), owner=state.dashboard.profile.sub, generation=state.loadGeneration;
-    const current=()=>state.dashboard?.profile?.sub===owner && state.activeRole==='manager' && state.loadGeneration===generation && output.isConnected;
+    const current=()=>state.dashboard?.profile?.sub===owner && state.activeRole==='manager' && state.dashboard.profile.roles?.includes('manager') && state.loadGeneration===generation && output.isConnected;
     let path='/api/admin/project-consistency';
+    if(button.dataset.permissionRead.startsWith('sync-'))path='/api/admin/permission-sync';
     if(button.dataset.permissionRead==='native') {
       try { const url=new URL(document.getElementById('permission-node-url').value); if(url.origin!=='https://lcnywl4yrecr.feishu.cn'||!/^\/wiki\/[A-Za-z0-9]+$/.test(url.pathname)) throw Error(); path='/api/admin/native-permissions?node='+encodeURIComponent(url.pathname.split('/').pop()); }
       catch(_){output.textContent='请填写 ER2 知识库页面链接。';return;}
     }
     button.disabled=true;output.textContent='正在核对…';
-    try { const result=await request(path);if(current())output.textContent=JSON.stringify(result,null,2); }
+    try { const result=await request(path,button.dataset.permissionRead==='sync-inspect'?{method:'POST',body:JSON.stringify({action:'inspect'})}:undefined);if(current())output.textContent=JSON.stringify(result,null,2); }
     catch(e){if(current())output.textContent=e.message;}
     finally{if(button.isConnected)button.disabled=false;}
   });

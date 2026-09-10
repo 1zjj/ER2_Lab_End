@@ -1396,7 +1396,7 @@ export async function feishuRequest(path, options = {}) {
   const headers = { 'Content-Type': 'application/json; charset=utf-8' };
   if (options.bearer) headers.Authorization = 'Bearer ' + options.bearer;
   const method = options.method || 'GET';
-  const maxAttempts = options.strictWeeklyWrite ? 1 : (['GET', 'PUT'].includes(method) || options.retryPost === true ? 3 : 1);
+  const maxAttempts = options.strictWeeklyWrite || options.singleAttempt ? 1 : (['GET', 'PUT'].includes(method) || options.retryPost === true ? 3 : 1);
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const remaining = options.readDeadline == null ? 10000 : Math.min(7000, options.readDeadline - Date.now());
     if (remaining <= 0) throw Object.assign(httpError(504, '数据读取超时，请稍后重试'), { code: 'READ_TIMEOUT' });
