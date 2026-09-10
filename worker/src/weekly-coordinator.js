@@ -16,6 +16,9 @@ export class WeeklyWriteCoordinator {
       return this.state.storage.get('health').then(() => Response.json({ ok: true }));
     }
     const path = new URL(request.url).pathname;
+    // Read progress while an alarm scans Feishu. This is a fresh authenticated
+    // storage read and never enters the mutation queue or shares report data.
+    if(path==='/api/admin/permission-sync'&&request.method==='GET')return executePermissionSync(request,this.env,this.state.storage);
     const execute = path === '/api/admin/permission-sync' ? executePermissionSync : path === '/api/literature' ? executeLiteratureRequest : executeWeeklyRequest;
     const result = this.queue.then(() => execute(request, this.env, this.state.storage));
     this.queue = result.catch(() => {});

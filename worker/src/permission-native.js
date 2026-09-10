@@ -56,7 +56,9 @@ export function nativePermissionAdapter(env, storage) {
       const resource=pending[i];
       if(seen.has(resource.nodeToken)){issues.push({code:'RESOURCE_SHARED_BETWEEN_PROJECTS',node:resource.nodeToken});continue;}
       seen.add(resource.nodeToken);
-      const snapshot=await inspectNativePermissions(env,resource.nodeToken,'',{call});
+      let snapshot;
+      try {snapshot=await inspectNativePermissions(env,resource.nodeToken,'',{call});}
+      catch(e){issues.push({code:'NODE_READ_FAILED',node:resource.nodeToken,status:e.upstreamStatus||e.status||503,cause:e.code||e.upstreamCode||'READ_FAILED'});continue;}
       if(!snapshot.readComplete||snapshot.hasMore){issues.push({code:'RESOURCE_READ_INCOMPLETE',node:resource.nodeToken,details:snapshot.issues});continue;}
       const node=snapshot.node;
       inventory.push({nodeToken:node.node_token,projectId:resource.projectId,parent:node.parent_node_token,owner:node.owner,objectToken:node.obj_token,type:node.obj_type});
