@@ -2,13 +2,14 @@
   'use strict';
   const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const money=c=>'¥'+(Number(c||0)/100).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
-  const blank=()=>({name:'',quantity:'',unitPrice:'',purchaseDate:''});
+  const blank=()=>({name:'',quantity:'',unitPrice:'',purchaseDate:'',contact:''});
   const button=(action,label,primary=false,extra='')=>`<button type="button" class="button ${primary?'button-primary':'button-secondary'}" data-finance="${action}" ${extra}>${label}</button>`;
   function card(){return '<section class="panel finance-card" aria-labelledby="finance-title"><p class="kicker">APPLICATIONS</p><div class="panel-title"><h2 id="finance-title">预算与报销</h2></div><p>购买前告知老师；报销确认后自动登记设备。</p><div data-finance-card-actions><span class="finance-muted">正在核验办理权限…</span></div></section>';}
   function create(options){
     let meta=null,dialog=null,current=null,files=[],busy=false,dirty=false,listReview=false,listAll=false,page=0,lastWrite=null,identity='',epoch=0,autoOpened=false,sessionEpoch=0,dialogEpoch=0,operation=0,reading=false,mountedRoot=null,retryRead=null;
     const apiBase=String(options.apiBase||'').replace(/\/$/,'');
     const profile=()=>options.getProfile()||{};
+    const contactEnabled=()=>meta?.capabilities?.lineContact===true;
     async function api(path,body,extra={}){
       const session=options.getSession(),authGeneration=sessionEpoch,viewGeneration=dialogEpoch;if(!session)throw Error('请先登录');
       const valid=()=>session===options.getSession()&&authGeneration===sessionEpoch&&(extra.card||viewGeneration===dialogEpoch);
@@ -57,14 +58,14 @@
         if(!autoOpened&&new URL(location.href).searchParams.get('page')==='finance'){autoOpened=true;await listing(false);}
       }catch(e){if(generation===epoch&&root.isConnected)root.innerHTML='<p class="finance-muted">预算与报销暂时无法载入。</p>'+button('refresh','重试');}
     }
-    function lineHTML(line,index,locked=false){const today=new Date(Date.now()+8*3600000).toISOString().slice(0,10);return `<fieldset class="finance-line" data-line><legend>购买明细 ${index+1}</legend><div class="finance-fields"><label>名称<span>必填</span><input name="name" maxlength="300" required value="${escape(line.name)}" ${locked?'disabled':''}></label><label>数量<span>必填</span><input name="quantity" type="number" inputmode="decimal" step="0.001" min="0.001" max="9999999" required value="${escape(line.quantity)}" ${locked?'disabled':''}></label><label>采购价格（单价）<span>必填 · 元</span><input name="unitPrice" type="number" inputmode="decimal" step="0.01" min="0" max="999999999.99" required value="${escape(line.unitPrice)}" ${locked?'disabled':''}></label><label>采购日期<span>必填</span><input name="purchaseDate" type="date" min="1990-01-01" max="${today}" required value="${escape(line.purchaseDate)}" ${locked?'disabled':''}></label></div>${!locked?button('remove-line','移除此项'):''}</fieldset>`;}
+    function lineHTML(line,index,locked=false){const today=new Date(Date.now()+8*3600000).toISOString().slice(0,10);return `<fieldset class="finance-line" data-line><legend>购买明细 ${index+1}</legend><div class="finance-fields"><label>名称<span>必填</span><input name="name" maxlength="300" required value="${escape(line.name)}" ${locked?'disabled':''}></label><label>数量<span>必填</span><input name="quantity" type="number" inputmode="decimal" step="0.001" min="0.001" max="9999999" required value="${escape(line.quantity)}" ${locked?'disabled':''}></label><label>采购价格（单价）<span>必填 · 元</span><input name="unitPrice" type="number" inputmode="decimal" step="0.01" min="0" max="999999999.99" required value="${escape(line.unitPrice)}" ${locked?'disabled':''}></label><label>采购日期<span>必填</span><input name="purchaseDate" type="date" min="1990-01-01" max="${today}" required value="${escape(line.purchaseDate)}" ${locked?'disabled':''}></label>${contactEnabled()?`<label class="finance-contact">联络人<span>选填 · 供应商、店铺或联系人及联系方式</span><input name="contact" maxlength="500" placeholder="例如：供应商名称、联系人及联系方式" value="${escape(line.contact)}" ${locked?'disabled':''}></label>`:''}</div>${!locked?button('remove-line','移除此项'):''}</fieldset>`;}
     const editable=d=>!d.id||['draft','returned'].includes(d.status);
     function renderDocument(d,attachments=[],history=[]){
       current=d;files=attachments;dirty=false;const own=!d.id||d.personId===profile().personId,locked=!own||!editable(d),claim=d.kind==='claim';
       shell(claim?'费用报销':'采购申请',`<p class="finance-muted">${d.id?escape(d.id)+' · '+escape(meta.statuses[d.status])+' · '+escape(d.ownerName):'申报人：'+escape(profile().name)+'（按登录账号自动记录）'}</p>`+
         (d.returnReason?`<p class="finance-return">退回原因：${escape(d.returnReason)}</p>`:'')+
         (d.syncError?`<p class="finance-return">${escape(d.syncError)}</p>`:'')+
-        `<form data-finance-form>${claim?'<p>每项填写以下四项信息。财务确认已报销后，将自动记入设备清单。</p><div data-finance-lines>'+d.lines.map((l,i)=>lineHTML(l,i,locked)).join('')+'</div>'+(!locked?button('add-line','＋ 添加购买明细'):''):
+        `<form data-finance-form>${claim?'<p>逐项填写购买信息。财务确认已报销后，将自动记入设备清单。</p><div data-finance-lines>'+d.lines.map((l,i)=>lineHTML(l,i,locked)).join('')+'</div>'+(!locked?button('add-line','＋ 添加购买明细'):''):
           `<p>老师了解购买内容并回复同意后，相关资料继续通过飞书群聊沟通。</p><label>准备购买什么<textarea name="content" maxlength="3000" required ${locked?'disabled':''}>${escape(d.content)}</textarea></label><div class="finance-fields"><label>预计金额（元）<input name="estimate" type="number" min="0" max="999999999.99" step="0.01" required value="${d.estimate==null?'':escape(d.estimate/100)}" ${locked?'disabled':''}></label><label>用途或项目<input name="purpose" maxlength="1500" required value="${escape(d.purpose)}" ${locked?'disabled':''}></label></div>`}
         <div class="finance-total">${claim?'本单合计':'预计金额'}<strong data-finance-total>${money(d.totalCents)}</strong></div>
         <section class="finance-materials"><h3>相关资料</h3><p>可上传发票、订单或付款凭证，也可记录群聊资料说明。</p><label>资料说明或链接（选填）<textarea name="materials" maxlength="5000" ${locked?'disabled':''}>${escape(d.materials)}</textarea></label><ul data-finance-files></ul>${!locked?'<label class="finance-file-label">添加资料（每份不超过20MB，最多20份）<input type="file" data-finance-upload multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.heic,.doc,.docx,.xls,.xlsx,.txt,.zip"></label>':''}</section>`+
@@ -79,7 +80,7 @@
     function renderFiles(locked){const el=dialog.querySelector('[data-finance-files]');el.innerHTML=files.map(a=>`<li><span>${escape(a.name)} <small>${(a.size/1024).toFixed(0)}KB</small></span>${current.id&&current.attachmentIds.includes(a.id)?button('download','下载',false,`data-file="${escape(a.id)}"`):''}${!locked?button('remove-file','移除',false,`data-file="${escape(a.id)}"`):''}</li>`).join('');}
     function readForm(){const form=dialog.querySelector('[data-finance-form]'),data={kind:current.kind,materials:form.elements.materials.value,attachmentIds:files.map(f=>f.id)};
       if(current.id){data.id=current.id;data.revision=current.revision;}
-      if(current.kind==='claim')data.lines=[...form.querySelectorAll('[data-line]')].map(el=>Object.fromEntries(['name','quantity','unitPrice','purchaseDate'].map(k=>[k,el.querySelector('[name="'+k+'"]').value])));
+      if(current.kind==='claim')data.lines=[...form.querySelectorAll('[data-line]')].map(el=>Object.fromEntries(['name','quantity','unitPrice','purchaseDate',...(contactEnabled()?['contact']:[])].map(k=>[k,el.querySelector('[name="'+k+'"]').value])));
       else Object.assign(data,{content:form.elements.content.value,estimate:form.elements.estimate.value,purpose:form.elements.purpose.value});return data;
     }
     function total(){const form=dialog?.querySelector('[data-finance-form]');if(!form)return;const data=readForm();const sum=data.kind==='claim'?data.lines.reduce((sum,l)=>sum+Math.round(Number(l.quantity||0)*Math.round(Number(l.unitPrice||0)*100)),0):Math.round(Number(data.estimate||0)*100);const el=dialog.querySelector('[data-finance-total]');if(el)el.textContent=money(sum);}

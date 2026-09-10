@@ -9,10 +9,10 @@ class Storage{
 }
 const context=sub=>{const actor=financeActor(people,sub);return {actor,people,access:financeAccess(actor,people,env)};};
 const storage=new Storage();await storage.put('settings',{ready:true,equipmentBinding:EQUIPMENT,equipmentVerified:EQUIPMENT});
-const fields=[['文本',1],['数量',1],['采购价格（单价）',2],['采购日期',5],['采购经办人',11],['采购进度',3],['已报销',3]].map(([field_name,type])=>({field_name,type,property:{options:[{name:'完成采购'},{name:'是'}]}}));
+const fields=[['文本',1],['联络人',1],['数量',1],['采购价格（单价）',2],['采购日期',5],['采购经办人',11],['采购进度',3],['已报销',3]].map(([field_name,type])=>({field_name,type,property:{options:[{name:'完成采购'},{name:'是'}]}}));
 let assets=0;const service={equipmentMatches:async d=>d.lines.map((l,index)=>({index,name:l.name,records:[]})),privateAcl:async()=>({externalAccess:false,linkSharing:'closed'}),equipment:{obj_token:'equipment'},target:EQUIPMENT,list:async()=>fields,inventory:async(d,s)=>{for(let i=0;i<d.lines.length;i++)if(!await s.get('asset:'+d.id+':'+i)){assets++;await s.put('asset:'+d.id+':'+i,{recordId:'recasset'+assets});}return true;},mirror:async()=>{}};
 const run=(sub,path,body)=>executeFinance(new Request('https://worker.test/api/finance'+path,body?{method:'POST',body:JSON.stringify(body)}:{}),env,storage,async()=>context(sub),async()=>service).then(r=>r.json());
-const draft={kind:'claim',lines:[{name:'传感器',quantity:'2',unitPrice:'99.50',purchaseDate:'2026-08-25'}],requestId:'finance-valid-request',submit:true};
+const draft={kind:'claim',lines:[{name:'传感器',quantity:'2',unitPrice:'99.50',purchaseDate:'2026-08-25',contact:'合成供应商 / 测试联系人'}],requestId:'finance-valid-request',submit:true};
 assert.equal(context('ou_finance').access.canReview,true);assert.equal(context('ou_other').access.canReview,false);assert.equal(context('ou_pi').access.canReview,false);assert.equal(context('ou_admin').access.canReview,true);
 for(const sub of ['ou_student','ou_finance','ou_admin','ou_other']){
   assert.equal(context(sub).access.canSummary,false,'monthly spending is reserved for the configured professor');
@@ -25,9 +25,15 @@ assert.throws(()=>requireReview(context('ou_finance').actor,context('ou_finance'
 for(const field of ['name','quantity','unitPrice','purchaseDate'])assert.throws(()=>validateDocument({...draft,lines:[{...draft.lines[0],[field]:''}]}));
 for(const [field,value]of [['quantity','0'],['quantity','-1'],['unitPrice','3.456'],['purchaseDate','2026-02-30'],['purchaseDate','2099-01-01']])assert.throws(()=>validateDocument({...draft,lines:[{...draft.lines[0],[field]:value}]}));
 assert.throws(()=>validateDocument({...draft,owner:'ou_other'}));assert.throws(()=>validateDocument({...draft,lines:[{...draft.lines[0],类型:'其他'}]}));
-const payload=devicePayload(draft.lines[0],'ou_student',fields);assert.equal(payload['数量'],'2');assert.equal(payload['采购价格（单价）'],99.5);assert.equal(payload['采购进度'],'完成采购');assert.equal(payload['已报销'],'是');assert.deepEqual(payload['采购经办人'],[{id:'ou_student'}]);assert.equal(Object.keys(payload).length,7);
+for(const contact of [17,{},[], 'x'.repeat(501)])assert.throws(()=>validateDocument({...draft,lines:[{...draft.lines[0],contact}]}));
+assert.equal(validateDocument({...draft,lines:[{...draft.lines[0],contact:undefined}]}).lines[0].contact,'');
+assert.equal(validateDocument({...draft,lines:[{...draft.lines[0],contact:'  合成店铺  '}]}).lines[0].contact,'合成店铺');
+const payload=devicePayload(draft.lines[0],'ou_student',fields);assert.equal(payload['数量'],'2');assert.equal(payload['采购价格（单价）'],99.5);assert.equal(payload['采购进度'],'完成采购');assert.equal(payload['已报销'],'是');assert.deepEqual(payload['采购经办人'],[{id:'ou_student'}]);assert.equal(Object.keys(payload).length,8);assert.equal(payload['联络人'],draft.lines[0].contact);assert.equal(Object.hasOwn(devicePayload({...draft.lines[0],contact:''},'ou_student',fields),'联络人'),false);
 const saved=await run('ou_student','/save',draft);assert.equal(saved.document.totalCents,19900);assert.equal(assets,0);assert.deepEqual(await run('ou_student','/save',draft),saved);
 await assert.rejects(run('ou_student','/save',{...draft,lines:[{...draft.lines[0],name:'不同'}]}),e=>e.status===409);
+assert.equal(saved.document.lines[0].contact,draft.lines[0].contact);
+assert.equal((await run('ou_finance','/record?id='+saved.document.id)).document.lines[0].contact,draft.lines[0].contact);
+await assert.rejects(run('ou_student','/save',{...draft,lines:[{...draft.lines[0],contact:'另一合成店铺'}]}),e=>e.status===409);
 const id=saved.document.id;
 for(const sub of ['ou_other','ou_pi']) { assert.equal((await run(sub,'/record?id='+id)).document.id,id); await assert.rejects(run(sub,'/save',{...draft,id,revision:1,requestId:'admin-cannot-edit-others'}),e=>e.status===404); }
 assert.equal((await run('ou_pi','/records?all=true')).records.length,1);
@@ -37,7 +43,7 @@ await assert.rejects(run('ou_student','/review',{id,revision:1,action:'approve',
 await assert.rejects(run('ou_finance','/review',{id,revision:1,action:'return',reason:'',requestId:'empty-return-reason'}),e=>e.status===400);
 const returned=await run('ou_finance','/review',{id,revision:1,action:'return',reason:'请核对单价',requestId:'return-with-reason'});assert.equal(returned.document.status,'returned');assert.equal(assets,0);
 const fixed=await run('ou_student','/save',{...draft,id,revision:2,requestId:'finance-resubmit-request'});assert.equal(fixed.document.status,'submitted');
-const reviewed=await run('ou_finance','/review',{id,revision:3,action:'approve',requestId:'approve-with-record'});assert.equal(reviewed.document.status,'approved');assert.equal(assets,0);
+const reviewed=await run('ou_finance','/review',{id,revision:3,action:'approve',requestId:'approve-with-record'});assert.equal(reviewed.document.status,'approved');assert.equal(reviewed.document.lines[0].contact,draft.lines[0].contact);assert.equal(assets,0);
 await assert.rejects(run('ou_student','/save',{...draft,id,revision:4,requestId:'edit-approved-record'}),e=>e.status===409);
 for(const [k]of storage.data)if(k.startsWith('job:notice'))storage.data.delete(k);
 for(let n=0;n<3;n++)await processFinanceJobs(env,storage,async()=>service);assert.equal(assets,1);assert.equal((await run('ou_student','/record?id='+id)).document.status,'completed');

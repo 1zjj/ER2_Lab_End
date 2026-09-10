@@ -36,7 +36,7 @@ export async function executeFinance(request,env,storage,contextProvider=finance
   const settings=await storage.get('settings')||{};
   env.FINANCE_EQUIPMENT_BINDING=settings.equipmentBinding;
   if(request.method==='GET'){
-    if(path==='/')return json(request,env,{version:FINANCE_VERSION,access,ready:financeReady(settings),statuses:STATUS,
+    if(path==='/')return json(request,env,{version:FINANCE_VERSION,access,ready:financeReady(settings),statuses:STATUS,capabilities:{lineContact:true},
       pending:access.canReview?(await docs(storage)).filter(d=>d.kind==='claim'&&['submitted','sync_error','approved'].includes(d.status)).length:0,
       reminders:settings.reminders||false});
     if(path==='/records'){
@@ -117,7 +117,7 @@ export async function executeFinance(request,env,storage,contextProvider=finance
     const reason=String(body.reason||'').trim();if(body.action==='return'&&(!reason||reason.length>2000))throw authError(400,'请填写退回原因（最多2000字）');
     if(body.action==='approve'){
       // Revalidate every mandatory field at the authority boundary.
-      validateDocument({kind:'claim',lines:d.lines.map(({name,quantity,unitPrice,purchaseDate})=>({name,quantity,unitPrice,purchaseDate})),requestId:rid});
+      validateDocument({kind:'claim',lines:d.lines.map(({name,quantity,unitPrice,purchaseDate,contact})=>({name,quantity,unitPrice,purchaseDate,contact})),requestId:rid});
       const service=await serviceProvider(env);await checkPrivacy(service);
       const fields=await service.list(service.equipment.obj_token,service.target.table,'/fields');for(const line of d.lines)devicePayload(line,d.owner,fields);
       const matches=await service.equipmentMatches(d),decisions=body.equipmentDecisions||{};d.equipmentMatches={};

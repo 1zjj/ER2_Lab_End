@@ -1,5 +1,5 @@
 import { getTenantToken, feishuRequest, stableMessageUuid } from './index.js';
-import { authError } from './authorization.js';
+import { authError, text } from './authorization.js';
 import { SOURCE, EQUIPMENT, FINANCE_WIKI, F, devicePayload, legacyDeviceName } from './finance-policy.js';
 
 const enc=encodeURIComponent;
@@ -79,7 +79,20 @@ export async function financeService(env, injected={}) {
     }
     return putRecord(finance.obj_token,table,fields,id,op);
   }
+  let contactSchemaTable;
+  async function ensureLineContact(table){
+    if(contactSchemaTable===table)return;
+    let fields=await list(finance.obj_token,table,'/fields');
+    if(!fields.some(f=>f.field_name==='联络人')){
+      await write(finance.obj_token,table,'/fields','POST',{field_name:'联络人',type:1});
+      fields=await list(finance.obj_token,table,'/fields');
+    }
+    const contacts=fields.filter(f=>f.field_name==='联络人');
+    if(contacts.length!==1||contacts[0].type!==1)throw authError(503,'报销明细联络人字段尚未核验为文本字段');
+    contactSchemaTable=table;
+  }
   async function mirror(doc,bindings,storage,logs=[],limit=10){
+    if(doc.kind==='claim'&&doc.lines.some(line=>typeof line.contact==='string'))await ensureLineContact(bindings.line);
     let processed=0;
     const kind=doc.kind;let fields=kind==='purchase'?{'申请编号':doc.id,'申请人':[{id:doc.owner}],'人员编号':doc.personId,'购买内容':doc.content,'预计金额':(doc.estimate||0)/100,'用途':doc.purpose,'资料说明':doc.materials,'系统状态':doc.status,'来源ID':doc.id}:
       {'报销编号':doc.id,'申报人':[{id:doc.owner}],'人员编号':doc.personId,'合计金额':doc.totalCents/100,'处理状态':doc.status,'资料说明':doc.materials,'退回原因':doc.returnReason||'','来源ID':doc.id};
@@ -95,7 +108,9 @@ export async function financeService(env, injected={}) {
       if(prior?.revision===doc.revision)continue;if(processed++>=limit)return false;
       const f={'明细编号':key,'报销编号':doc.id,'名称':line.name,'数量':Number(line.quantity||0),'采购价格（单价）':Number(line.unitPrice||0),'金额':line.amountCents/100,'来源ID':key,'设备记录ID':(await storage.get('asset:'+key))?.recordId||''};
       if(line.purchaseDate)f['采购日期']=Date.parse(line.purchaseDate+'T00:00:00+08:00');
+      if(typeof line.contact==='string')f['联络人']=line.contact;
       const saved=await archiveRecord(bindings.line,f,prior?.recordId,'line:'+key,storage);
+      if(Object.hasOwn(f,'联络人')&&text((await getRecord(finance.obj_token,bindings.line,saved.record_id)).fields?.['联络人'])!==f['联络人'])throw authError(503,'报销明细联络人写入结果尚未确认');
       await storage.put('line:'+key,{recordId:saved.record_id,revision:doc.revision});
     }
     // Remove only stale detail rows that this module created for this same draft.
