@@ -1,4 +1,5 @@
 import { literatureCompatibility, literatureText, serializeLiterature, literatureMatches } from './literature-write.js';
+import { literatureMemberCategory, literatureIdentityLookup, literatureByline } from './literature-identity.js';
 import { weeklyHash, weeklyRevision, weeklyDates, historyPage } from './weekly-history.js';
 import { evidenceText, serializeWeekly, weeklyValues, weeklyMatches, weeklyCompatibility, WEEKLY_VERSION } from './weekly-write.js';
 import { weeklyRoster, isWeeklySubmitted, hasWeeklyIssue, weeklyAutomationConfiguration } from './weekly-policy.js';
@@ -267,6 +268,7 @@ async function dashboard(request, env, session) {
 
 function buildLiterature(session, week, records) {
   const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const labels = literatureIdentityLookup(memberSnapshots.get(session) || [session.memberRecord].filter(Boolean));
   const items = records.map((record) => {
     const rawDate = field(record, '阅读日期') || '';
     const submittedAt = field(record, '提交时间') || '';
@@ -274,7 +276,7 @@ function buildLiterature(session, week, records) {
       id: record.record_id,
       title: field(record, '论文标题') || '未命名文献',
       submitter: field(record, '提交人姓名') || 'ER²成员',
-      role: field(record, '提交人角色') || '成员',
+      role: literatureByline(record, labels),
       weekId: field(record, '周次') || '',
       date: formatRecordDate(rawDate || submittedAt),
       authors: field(record, '作者') || '',
@@ -387,7 +389,7 @@ async function saveLiterature(request, env, session, storage) {
     '请求ID': businessRequestId,
     '提交人OpenID': session.sub,
     '提交人姓名': session.name,
-    '提交人角色': session.roles.map(roleLabel).join(' / '),
+    '提交人角色': literatureMemberCategory(session.memberRecord),
     '周次': currentWeek.id,
     '周序号': currentWeek.number,
     '阅读日期': clean(body.readDate) || shanghaiDate(new Date()),
