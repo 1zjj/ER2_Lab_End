@@ -226,6 +226,8 @@ globalThis.fetch = async (url, options = {}) => {
 };
 const literatureEnv = {
   ...env,
+  PROJECTS_BASE_APP_TOKEN: 'bas_projects',
+  PROJECTS_TABLE_ID: 'tbl_projects',
   FEISHU_APP_ID: 'cli_test',
   FEISHU_APP_SECRET: 'secret',
   SESSION_SECRET: secret,

@@ -1,5 +1,6 @@
 import { executeWeeklyRequest, executeLiteratureRequest } from './index.js';
 import { executePermissionSync, permissionAlarm } from './permission-sync.js';
+import { executeProjectSourceSync, ProjectSourceSync, projectSourceAdapter } from './project-source-sync.js';
 
 // One globally unique object per table/person (journals are partitioned by week). The promise queue is needed
 // because outgoing Feishu fetches yield; Durable Object requests can interleave.
@@ -19,13 +20,15 @@ export class WeeklyWriteCoordinator {
     // Read progress while an alarm scans Feishu. This is a fresh authenticated
     // storage read and never enters the mutation queue or shares report data.
     if(path==='/api/admin/permission-sync'&&request.method==='GET')return executePermissionSync(request,this.env,this.state.storage);
-    const execute = path === '/api/admin/permission-sync' ? executePermissionSync : path === '/api/literature' ? executeLiteratureRequest : executeWeeklyRequest;
+    if(path==='/api/admin/project-source-sync'&&request.method==='GET')return executeProjectSourceSync(request,this.env,this.state.storage);
+    const execute = path === '/api/admin/project-source-sync' ? executeProjectSourceSync : path === '/api/admin/permission-sync' ? executePermissionSync : path === '/api/literature' ? executeLiteratureRequest : executeWeeklyRequest;
     const result = this.queue.then(() => execute(request, this.env, this.state.storage));
     this.queue = result.catch(() => {});
     return result;
   }
   alarm() {
-    const result=this.queue.then(()=>permissionAlarm(this.state.storage,this.env));
+    const result=this.queue.then(async()=>await this.state.storage.get('source:enabled')
+      ?new ProjectSourceSync(this.state.storage,projectSourceAdapter(this.env)).step():permissionAlarm(this.state.storage,this.env));
     this.queue=result.catch(()=>{});
     return result;
   }

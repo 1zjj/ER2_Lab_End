@@ -28,6 +28,8 @@ export async function executePermissionSync(request,env,storage) {
     if(body.action==='inspect'){
       await storage.put('permission:inspect',true);
       await storage.put('permission:inspect-attempts',0);
+      await storage.delete('permission:scan');
+      await storage.delete('permission:last-observation');
       await storage.setAlarm(Date.now()+1000);
       return json(request,env,await engine.record({state:'inspection_queued',targetVersion:null,resources:[],inventory:[],plannedChanges:[],issues:[],warnings:[],appliedVersion:null}),202);
     }
@@ -45,7 +47,7 @@ export async function permissionAlarm(storage,env) {
   const engine=permissionEngine(storage,env);
   if(await storage.get('permission:inspect')){
     await storage.setAlarm(Date.now()+60000);
-    try{await engine.inspect();await storage.delete('permission:inspect');}
+    try{const result=await engine.inspect();if(result.state!=='inspecting')await storage.delete('permission:inspect');}
     catch(e){
       const attempts=(await storage.get('permission:inspect-attempts')||0)+1;
       await storage.put('permission:inspect-attempts',attempts);

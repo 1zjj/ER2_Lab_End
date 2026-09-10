@@ -48,3 +48,26 @@ console.log('PASS durable native sync: disabled by default, incomplete inventory
  clearTimeout(timeout);assert.equal(response.status,401);
 }
 console.log('PASS progress reads do not wait behind scans and still require authentication');
+
+{
+ const f=fixture();let batches=0;
+ f.adapter.observeBatch=async(target,cursor)=>{
+  batches++;
+  if(!cursor)return {pending:true,cursor:{targetVersion:target.version,index:2,pending:[1,2,3]},issues:[],inventory:[1,2]};
+  return {pending:false,complete:true,issues:[],inventory:[1,2,3],changes:[]};
+ };
+ assert.equal((await f.engine().inspect()).state,'inspecting');
+ assert.ok(await f.storage.get('permission:scan'));
+ assert.equal((await f.engine().enable()).enabled,false,'partial scan cannot enable writes');
+ // Recreated engine resumes from durable state after restart.
+ assert.equal((await f.engine().inspect()).state,'inspected');
+ assert.equal(await f.storage.get('permission:scan'),undefined);
+ assert.equal((await f.engine().enable()).enabled,true);assert.equal(batches,2);
+}
+{
+ const f=fixture();await f.engine().enable();f.adapter.observe=async()=>{throw Error('persistent upstream failure');};
+ for(let i=0;i<5;i++)await f.engine().step();
+ assert.equal((await f.engine().status()).state,'manual_intervention');
+ assert.equal((await f.engine().status()).enabled,false);assert.equal(f.alarm,null);
+}
+console.log('PASS bounded inventory resumes after restart, partial inspection blocks enable, persistent failures stop for manual reconciliation');

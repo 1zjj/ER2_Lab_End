@@ -1,5 +1,5 @@
 // Authoritative ER2 authorization. No legacy role, name or project-code fallback.
-export const AUTH_BINDINGS = ['MEMBERS_TABLE_ID', 'AUTH_PROJECTS_TABLE_ID', 'PROJECT_MEMBERS_TABLE_ID'];
+export const AUTH_BINDINGS = ['MEMBERS_TABLE_ID', 'PROJECTS_TABLE_ID', 'AUTH_PROJECTS_TABLE_ID', 'PROJECT_MEMBERS_TABLE_ID'];
 export const text = value => Array.isArray(value) ? value.map(text).join('') : String(value && typeof value === 'object' ? value.text ?? value.name ?? value.value ?? '' : value ?? '').trim();
 const values = value => (Array.isArray(value) ? value : value ? [value] : []).map(text).filter(Boolean);
 // Explicit user-approved matrix; personnel labels are not an ordinal scale.

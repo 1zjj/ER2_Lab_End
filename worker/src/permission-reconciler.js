@@ -22,7 +22,12 @@ export class PermissionReconciler {
     // Validate the complete inventory before creating an active recurring task.
     const target = await this.adapter.target();
     if (!target.complete || target.issues.length) return this.record({ state: 'blocked', targetVersion: target.version, issues: target.issues });
-    const observation = await this.adapter.observe(target);
+    const previous=await this.status();
+    const observation = this.adapter.observeBatch
+      ? (previous.state==='inspected'&&previous.targetVersion===target.version
+        ? await this.storage.get('permission:last-observation') : null)
+      : await this.adapter.observe(target);
+    if(!observation)return this.record({state:'blocked',issues:[{code:'FRESH_INSPECTION_REQUIRED'}],appliedVersion:null});
     if (!observation.complete || observation.issues.length) return this.record({ state: 'blocked', targetVersion: target.version, issues: observation.issues });
     await this.storage.put('permission:inventory', observation.inventory || []);
     await this.storage.put('permission:enabled', true);
@@ -32,6 +37,7 @@ export class PermissionReconciler {
   async disable() {
     await this.storage.put('permission:enabled', false);
     await this.storage.delete('permission:inspect');
+    await this.storage.delete('permission:scan');
     await this.storage.deleteAlarm();
     return this.record({ state: 'disabled' });
   }
@@ -39,10 +45,25 @@ export class PermissionReconciler {
     const target = await this.adapter.target();
     await this.record({state:'inspecting',targetVersion:target.version,resources:target.resources,issues:target.issues,
       plannedChanges:[],inventory:[],warnings:target.warnings||[],appliedVersion:null});
-    const observation = target.complete && !target.issues.length ? await this.adapter.observe(target) : null;
+    const observation = target.complete && !target.issues.length ? await this.observe(target) : null;
+    if(observation?.pending)return this.record({state:'inspecting',targetVersion:target.version,
+      inventory:observation.inventory,issues:observation.issues,scannedNodes:observation.cursor.index,
+      discoveredNodes:observation.cursor.pending.length,appliedVersion:null});
     return this.record({ state: target.complete && !target.issues.length && observation?.complete && !observation.issues.length ? 'inspected' : 'blocked',
       targetVersion: target.version, issues: [...target.issues, ...(observation?.issues || [])],
       resources: target.resources, inventory:observation?.inventory||[], warnings:target.warnings||[], plannedChanges: observation?.changes || [], appliedVersion: null });
+  }
+  async observe(target) {
+    if(!this.adapter.observeBatch)return this.adapter.observe(target);
+    const observation=await this.adapter.observeBatch(target,await this.storage.get('permission:scan'));
+    if(observation.pending){
+      await this.storage.put('permission:scan',observation.cursor);
+      await this.storage.setAlarm(this.now()+1000);
+    }else{
+      await this.storage.delete('permission:scan');
+      await this.storage.put('permission:last-observation',observation);
+    }
+    return observation;
   }
   async step() {
     if (!(await this.storage.get('permission:enabled'))) return this.status();
@@ -52,7 +73,10 @@ export class PermissionReconciler {
     try {
       const target = await this.adapter.target();
       if (!target.complete || target.issues.length) return this.record({ state: 'blocked', targetVersion: target.version, issues: target.issues, appliedVersion: null });
-      const observed = await this.adapter.observe(target);
+      const observed = await this.observe(target);
+      if(observed.pending)return this.record({state:'inspecting',targetVersion:target.version,
+        inventory:observed.inventory,issues:observed.issues,scannedNodes:observed.cursor.index,
+        discoveredNodes:observed.cursor.pending.length,appliedVersion:null});
       if (!observed.complete || observed.issues.length) return this.record({ state: 'blocked', targetVersion: target.version, issues: observed.issues, appliedVersion: null });
       await this.storage.put('permission:inventory', observed.inventory || []);
       // Rebuild the target after observation, including expiry and source edits.
@@ -79,6 +103,12 @@ export class PermissionReconciler {
     } catch (error) {
       const old = await this.storage.get('permission:status') || {};
       const attempts = (old.attempts || 0) + 1;
+      if(attempts>=5){
+        await this.storage.put('permission:enabled',false);
+        await this.storage.deleteAlarm();
+        return this.record({state:'manual_intervention',attempts,appliedVersion:null,
+          issues:[{code:error.code||'NATIVE_SYNC_FAILED',status:error.status||503}]});
+      }
       await this.storage.setAlarm(this.now() + Math.min(300000, 1000 * 2 ** Math.min(attempts,8)));
       return this.record({ state: 'retry_after_readback', attempts, appliedVersion: null,
         issues: [{ code: error.code || 'NATIVE_SYNC_FAILED', status: error.status || 503 }] });

@@ -48,10 +48,14 @@ export function nativePermissionAdapter(env, storage) {
     const stable={resources:resources.sort((a,b)=>a.projectId.localeCompare(b.projectId)),admins:admins.sort(),issues};
     return {version:await digest(stable),...stable,warnings,complete:issues.length===0};
   }
-  async function observe(target) {
-    const issues=[],changes=[],seen=new Set(),inventory=[];
-    const pending=target.resources.map(r=>({...r,root:true}));
-    for(let i=0;i<pending.length;i++){
+  async function observe(target, resume = null, batchSize = Infinity) {
+    const cursor=resume?.targetVersion===target.version?resume:{targetVersion:target.version,index:0,
+      pending:target.resources.map(r=>({...r,root:true})),seen:[],issues:[],changes:[],inventory:[]};
+    const {issues,changes,inventory,pending}=cursor,seen=new Set(cursor.seen);
+    let processed=0;
+    for(let i=cursor.index;i<pending.length;i++){
+      if(processed>=batchSize){cursor.index=i;cursor.seen=[...seen];return {pending:true,cursor,inventory,issues};}
+      processed++;cursor.index=i+1;
       if(i>=100){issues.push({code:'INVENTORY_LIMIT',limit:100});break;}
       const resource=pending[i];
       if(seen.has(resource.nodeToken)){issues.push({code:'RESOURCE_SHARED_BETWEEN_PROJECTS',node:resource.nodeToken});continue;}
@@ -98,7 +102,7 @@ export function nativePermissionAdapter(env, storage) {
           changes.push({priority:2,method:'POST',node:resource.nodeToken,token,type,scope,member,permission});
       }
     }
-    return {complete:issues.length===0,issues,changes,inventory};
+    return {complete:issues.length===0,issues,changes,inventory,pending:false};
   }
   async function apply(change,target) {
     if(!target.complete||target.issues.length)throw authError(409,'目标权限尚未完成核验');
@@ -125,5 +129,7 @@ export function nativePermissionAdapter(env, storage) {
     });
   }
   const targetProvider=target;
-  return {target,observe,apply};
+  // Two nodes per alarm keep the scan below the free runtime's request budget.
+  // The complete inventory is accumulated durably; a partial batch never passes.
+  return {target,observe,observeBatch:(target,cursor)=>observe(target,cursor,2),apply};
 }
