@@ -282,6 +282,14 @@ h1 { margin-bottom: 8px; font-size: clamp(32px, 4.2vw, 48px); line-height: 1.08;
 .metric-card strong { margin-bottom: 5px; font-size: 24px; letter-spacing: -.03em; }
 .metric-card small { margin-top: auto; color: var(--muted); line-height: 1.45; }
 .metric-card.alert strong { color: var(--orange); }
+.metric-action { min-width: 0; color: var(--ink); text-align: left; cursor: pointer; }
+.metric-action:hover { border-color: var(--blue); background: var(--blue-soft); }
+.metric-action:focus-visible { outline: 3px solid var(--blue); outline-offset: 3px; }
+.attention-list { display: grid; gap: 18px; margin: 0; padding: 0; list-style: none; }
+.attention-list li { min-width: 0; padding: 18px; border: 1px solid var(--line); border-radius: 12px; overflow-wrap: anywhere; }
+.attention-list h3 { margin: 0 0 8px; }
+.attention-source { margin: 0 0 14px; color: var(--muted); font-size: 12px; }
+.attention-blocker { margin: 0 0 18px; white-space: pre-wrap; line-height: 1.7; }
 
 .dashboard-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(300px, .75fr); gap: 22px; }
 .stack { display: grid; align-content: start; gap: 22px; }

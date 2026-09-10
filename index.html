@@ -7,7 +7,7 @@
   <meta name="description" content="ER² Lab 学生、教师与管理者的一页式飞书工作台">
   <title>ER² Lab 工作台</title>
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="./styles.css?v=weekly-history-1">
+  <link rel="stylesheet" href="./styles.css?v=teacher-attention-20260910-1">
   <link rel="stylesheet" href="./learning-center.css?v=learning-text-1">
   <link rel="stylesheet" href="./finance.css?v=finance-1">
 </head>
@@ -145,7 +145,7 @@
         <label>与项目关系<textarea name="projectRelation" maxlength="3000" rows="3" placeholder="能用于哪个项目或实验？"></textarea></label>
         <label class="field-wide">飞书阅读笔记链接（选填）<input name="noteUrl" type="url" placeholder="https://...（如有完整阅读笔记，可在此填写链接）"></label>
         <label class="field-wide">论文附件或飞书云盘链接<input name="attachmentUrl" type="url" placeholder="https://...（PDF/大文件先上传飞书）"></label>
-        <p class="form-hint field-wide">一周至少提交 3 篇，但不限制上限；所有已登录的学生、教师和管理员都可以提交并互相查看。</p>
+        <p class="form-hint field-wide">每人每周至少提交 3 篇，按本人提交独立计数，不限制上限；阅读记录在课题组内共享。</p>
       </div>
       <div class="modal-actions">
         <p class="form-error" id="literature-error" role="alert" hidden></p>
@@ -171,6 +171,17 @@
     <div class="literature-detail" id="literature-detail-body"></div>
     <div class="modal-actions">
       <button class="button button-secondary" type="button" data-close-dialog="literature-detail-dialog">关闭</button>
+    </div>
+  </dialog>
+
+  <dialog class="modal literature-detail-modal" id="teacher-attention-dialog" aria-labelledby="teacher-attention-title" aria-describedby="teacher-attention-description">
+    <div class="modal-head">
+      <div><p class="kicker">WEEKLY FOLLOW-UP</p><h2 id="teacher-attention-title">需要关注</h2><p id="teacher-attention-description">以下为学生在本周周报中填写的“当前问题与阻塞”原文，仅供跟进参考。</p></div>
+      <button class="icon-button" type="button" data-close-dialog="teacher-attention-dialog" aria-label="关闭">×</button>
+    </div>
+    <div class="dialog-scroll" id="teacher-attention-body"></div>
+    <div class="modal-actions">
+      <button class="button button-secondary" type="button" data-close-dialog="teacher-attention-dialog">关闭</button>
     </div>
   </dialog>
 
@@ -271,6 +282,6 @@
   <script src="./guide-store.js?v=permissions-20260910-4"></script>
   <script src="./learning-center.js?v=permissions-20260910-4"></script>
   <script src="./finance.js?v=permissions-20260910-4"></script>
-  <script src="./app.js?v=permissions-20260910-4"></script>
+  <script src="./app.js?v=teacher-attention-20260910-1"></script>
 </body>
 </html>
