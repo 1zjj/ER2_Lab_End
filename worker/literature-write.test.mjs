@@ -52,6 +52,8 @@ const call = (body, path = '/api/literature') => service.fetch(new Request('http
 try {
   let response = await call(base); assert.equal(response.status, 201);
   let result = await response.json(); assert.equal(result.readBackVerified, true); assert.equal(result.literature.mineCount, 1);
+  assert.equal(rows[0].fields['提交人角色'], '博士');
+  assert.equal(result.literature.items[0].role, '博士');
   assert.equal(result.literature.items[0].noteUrl, base.noteUrl); assert.equal(writes, 1);
   response = await call(base); assert.equal(response.status, 200); assert.equal((await response.json()).deduplicated, true); assert.equal(writes, 1);
   response = await call({ ...base, contribution: '修改后不同正文' }); assert.equal(response.status, 409); assert.equal(writes, 1);
@@ -69,7 +71,13 @@ try {
   mode = 'rejected'; response = await call({ ...base, title: 'rejected', requestId: 'rejected' });
   assert.equal(response.status, 502); assert.equal((await response.json()).code, 'LITERATURE_WRITE_FAILED');
   assert.equal((await call(null, '/api/admin/literature-source')).status, 403);
-  person.fields['系统职责'] = ['管理员'];
+  person.fields['系统职责'] = ['管理员', '课程审核'];
+  person.fields['成员类别'] = 'RA';
+  rows[0].fields['提交人角色'] = '学生 / 管理员 / 教师';
+  const previousRows = JSON.stringify(rows);
+  const refreshed = await (await call(null)).json();
+  assert.equal(refreshed.literature.items.find(item => item.id === rows[0].record_id).role, 'RA', 'Historical byline uses current member category');
+  assert.equal(JSON.stringify(rows), previousRows, 'Reading a corrected byline never rewrites historical records');
   const source = await (await call(null, '/api/admin/literature-source')).json();
   assert.equal(source.schema.ok, true); assert.equal(source.recordsRead, false); assert.equal(source.tableId, 'literature'); assert.equal(source.tableName, '合成文献表');
   // Run the next scenario in a new rate-limit window without delaying the test.
@@ -79,6 +87,8 @@ try {
     const draft = { ...base, title: '可选笔记-' + index, requestId: 'optional-' + index, noteUrl };
     response = await call(draft); assert.equal(response.status, 201);
     result = await response.json(); assert.equal(result.readBackVerified, true);
+    assert.equal(rows.at(-1).fields['提交人角色'], 'RA', 'Administrator and reviewer duties never enter the byline');
+    assert.equal(result.literature.items.find(item => item.id === result.recordId).role, 'RA');
     assert.equal(result.literature.items.find(item => item.id === result.recordId).noteUrl, '');
     assert.equal(Object.hasOwn(rows.at(-1).fields, '阅读笔记链接'), false, 'Blank optional URL is omitted from Feishu write');
     const before = writes; response = await call(draft);

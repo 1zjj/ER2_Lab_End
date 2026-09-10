@@ -148,6 +148,7 @@
   const demoData = {
     profile: {
       name: '学生 A',
+      memberCategory: '博士',
       track: '语义导航方向',
       roles: ['student', 'teacher', 'manager']
     },
@@ -231,8 +232,8 @@
       minimum: 3,
       completed: false,
       items: [
-        { id: 'demo-1', title: 'Learning Transferable Visual Models From Natural Language Supervision', submitter: '郑斯哲', role: '学生', weekId: '2026-W36', date: '2026-09-03', authors: 'Radford et al.', venue: 'ICML', year: '2021', direction: '视觉语言', type: '精读', contribution: '通过大规模图文对比学习获得可迁移的零样本视觉识别能力。', noteUrl: '', paperUrl: 'https://arxiv.org/abs/2103.00020', attachmentUrl: '', submittedAt: '2026-09-03T12:30:00.000Z' },
-        { id: 'demo-2', title: 'Diffusion Policy: Visuomotor Policy Learning via Action Diffusion', submitter: '朱俊杰', role: '教师 / 管理员', weekId: '2026-W36', date: '2026-09-02', authors: 'Chi et al.', venue: 'RSS', year: '2023', direction: '具身智能', type: '复现', contribution: '把动作序列建模为条件扩散过程，提高多模态机器人操作策略的表达能力。', noteUrl: '', paperUrl: 'https://arxiv.org/abs/2303.04137', attachmentUrl: '', submittedAt: '2026-09-02T09:10:00.000Z' }
+        { id: 'demo-1', title: 'Learning Transferable Visual Models From Natural Language Supervision', submitter: '郑斯哲', role: '博士', weekId: '2026-W36', date: '2026-09-03', authors: 'Radford et al.', venue: 'ICML', year: '2021', direction: '视觉语言', type: '精读', contribution: '通过大规模图文对比学习获得可迁移的零样本视觉识别能力。', noteUrl: '', paperUrl: 'https://arxiv.org/abs/2103.00020', attachmentUrl: '', submittedAt: '2026-09-03T12:30:00.000Z' },
+        { id: 'demo-2', title: 'Diffusion Policy: Visuomotor Policy Learning via Action Diffusion', submitter: '朱俊杰', role: 'RA', weekId: '2026-W36', date: '2026-09-02', authors: 'Chi et al.', venue: 'RSS', year: '2023', direction: '具身智能', type: '复现', contribution: '把动作序列建模为条件扩散过程，提高多模态机器人操作策略的表达能力。', noteUrl: '', paperUrl: 'https://arxiv.org/abs/2303.04137', attachmentUrl: '', submittedAt: '2026-09-02T09:10:00.000Z' }
       ]
     }
   };
@@ -1517,7 +1518,7 @@
         const item = Object.assign({}, fields, {
           id: 'demo-' + Date.now(),
           submitter: state.dashboard.profile.name,
-          role: roleMeta[state.activeRole].label,
+          role: state.dashboard.profile.memberCategory || '成员',
           weekId: state.dashboard.week.id,
           date: new Date().toLocaleDateString('en-CA'),
           submittedAt: new Date().toISOString()

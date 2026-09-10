@@ -17,13 +17,14 @@ for (const name of ['MEMBERS', 'AUTH_PROJECTS', 'PROJECT_MEMBERS', 'LITERATURE']
 }
 const people = ['a', 'b', 'c'].map((id, index) => ({ record_id: 'person-' + id, fields: {
   '人员编号': 'P-00' + (index + 1), '姓名': '同名合成成员', '飞书成员': [{ id: 'ou_' + id }],
-  '人员状态': '在组', '人员边界': '团队内', '成员类别': '博士', '保密等级': '内部'
+  '人员状态': '在组', '人员边界': '团队内', '成员类别': id === 'a' ? 'RA' : '博士', '保密等级': '内部',
+  '系统职责': id === 'a' ? ['管理员', '课程审核'] : []
 } }));
 const rows = [];
 function addRows(owner, week, count, at = now) {
   for (let i = 0; i < count; i++) rows.push({ record_id: 'reading-' + rows.length, fields: {
     '提交人OpenID': 'ou_' + owner, '提交人姓名': '同名合成成员', '周次': week,
-    '论文标题': '合成文献-' + rows.length, '提交时间': at
+    '论文标题': '合成文献-' + rows.length, '提交时间': at, '提交人角色': '学生 / 管理员 / 教师'
   } });
 }
 addRows('b', '2026-W37', 40);
@@ -51,9 +52,13 @@ try {
     assert.equal(literature.mineCount, count, 'Own count uses OpenID and current week across all pages');
     assert.equal(literature.minimum, 3); assert.equal(literature.completed, count >= 3);
     assert.equal(literature.items.length, 30, 'Shared recent list size cannot determine personal completion');
+    assert.ok(literature.items.every(item => item.role === '博士'), 'Shared bylines belong to each author, not the logged-in RA');
   }
-  addRows('a', '2026-W37', 2);
-  assert.equal((await (await readingFor('a')).json()).literature.mineCount, 4, 'Actual count is not capped at three');
+  addRows('a', '2026-W37', 2, now + 1000);
+  const updatedReading = (await (await readingFor('a')).json()).literature;
+  assert.equal(updatedReading.mineCount, 4, 'Actual count is not capped at three');
+  assert.equal(updatedReading.items[0].role, 'RA');
+  assert.equal(updatedReading.items[2].role, '博士', 'Same-name authors resolve by OpenID');
   now = RealDate.parse('2026-09-13T16:00:00Z');
   const nextWeek = (await (await readingFor('a')).json()).literature;
   assert.equal(nextWeek.weekId, '2026-W38'); assert.equal(nextWeek.mineCount, 0);

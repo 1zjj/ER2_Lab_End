@@ -355,7 +355,7 @@ const literaturePost = await service.fetch(new Request('https://api.example/api/
 }), literatureEnv);
 assert.equal(literaturePost.status, 201);
 assert.equal(postedLiterature['提交人姓名'], '测试教师');
-assert.equal(postedLiterature['提交人角色'], '教师');
+assert.equal(postedLiterature['提交人角色'], 'PI');
 assert.equal(postedLiterature['论文标题'], '测试论文');
 assert.equal(postedLiterature['请求ID'], 'literature-test-request');
 
