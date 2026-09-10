@@ -1019,7 +1019,7 @@
   function renderTeacher() {
     const profile = state.dashboard.profile;
     const data = state.dashboard.teacher;
-    if (state.dashboard.moduleLoading?.weekly || state.dashboard.moduleErrors?.weekly) return '<section class="welcome"><h1>教师汇总页</h1></section>' + modulePlaceholder('weekly', '本周工作记录', 'panel') + renderCourseReviewPanel() + renderLiteratureSection() + renderFinancePlaceholder() + footer();
+    if (state.dashboard.moduleLoading?.weekly || state.dashboard.moduleErrors?.weekly) return '<section class="welcome"><h1>教师汇总页</h1></section>' + modulePlaceholder('weekly', '本周工作记录', 'panel') + renderLiteratureSection() + renderFinancePlaceholder() + renderCourseReviewPanel() + footer();
     return [
       '<section class="welcome"><div><p class="kicker">TEACHER WORKSPACE</p><h1>教师汇总页</h1><p>' + escapeHtml(profile.name) + '负责学生的周报、项目和培养进度。</p></div>',
       '<a class="button button-secondary" href="' + safeUrl(wikiUrl()) + '">打开飞书后台</a></section>',
@@ -1032,7 +1032,7 @@
           '</strong><small>' + escapeHtml(student.project + ' · ' + student.blocker) + '</small></div>' + tag(student.status, student.tone) +
           '<button type="button" data-student="' + escapeHtml(student.id) + '">查看详情</button></li>';
       }).join(''), data.students.length ? '' : '<li class="empty">当前没有分配给你的学生。</li>', '</ul></section>',
-      renderCourseReviewPanel(), renderLiteratureSection(), renderFinancePlaceholder(), footer()
+      renderLiteratureSection(), renderFinancePlaceholder(), renderCourseReviewPanel(), footer()
     ].join('');
   }
 
