@@ -27,8 +27,9 @@ export async function executePermissionSync(request,env,storage) {
     if(!body||Object.keys(body).some(k=>!['action','version'].includes(k)))throw authError(400,'权限任务字段无效');
     if(body.action==='inspect'){
       await storage.put('permission:inspect',true);
+      await storage.put('permission:inspect-attempts',0);
       await storage.setAlarm(Date.now()+1000);
-      return json(request,env,await engine.record({state:'inspection_queued',appliedVersion:null}),202);
+      return json(request,env,await engine.record({state:'inspection_queued',targetVersion:null,resources:[],inventory:[],plannedChanges:[],issues:[],warnings:[],appliedVersion:null}),202);
     }
     if(body.action==='disable')return json(request,env,await engine.disable());
     if(body.action==='enable'){
@@ -45,7 +46,13 @@ export async function permissionAlarm(storage,env) {
   if(await storage.get('permission:inspect')){
     await storage.setAlarm(Date.now()+60000);
     try{await engine.inspect();await storage.delete('permission:inspect');}
-    catch(e){await engine.record({state:'inspection_failed',issues:[{code:e.code||'INVENTORY_READ_FAILED',status:e.status||503}]});}
+    catch(e){
+      const attempts=(await storage.get('permission:inspect-attempts')||0)+1;
+      await storage.put('permission:inspect-attempts',attempts);
+      if(attempts>=3)await storage.delete('permission:inspect');
+      await engine.record({state:'inspection_failed',targetVersion:null,resources:[],inventory:[],plannedChanges:[],appliedVersion:null,
+        issues:[{code:e.code||'INVENTORY_READ_FAILED',status:e.status||503,...(e.binding?{binding:e.binding}:{}),attempts}]});
+    }
     if(!(await storage.get('permission:enabled'))&&!(await storage.get('permission:inspect')))await storage.deleteAlarm();
     return;
   }

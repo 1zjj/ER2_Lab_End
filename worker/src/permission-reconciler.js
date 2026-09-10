@@ -31,11 +31,14 @@ export class PermissionReconciler {
   }
   async disable() {
     await this.storage.put('permission:enabled', false);
+    await this.storage.delete('permission:inspect');
     await this.storage.deleteAlarm();
     return this.record({ state: 'disabled' });
   }
   async inspect() {
     const target = await this.adapter.target();
+    await this.record({state:'inspecting',targetVersion:target.version,resources:target.resources,issues:target.issues,
+      plannedChanges:[],inventory:[],warnings:target.warnings||[],appliedVersion:null});
     const observation = target.complete && !target.issues.length ? await this.adapter.observe(target) : null;
     return this.record({ state: target.complete && !target.issues.length && observation?.complete && !observation.issues.length ? 'inspected' : 'blocked',
       targetVersion: target.version, issues: [...target.issues, ...(observation?.issues || [])],

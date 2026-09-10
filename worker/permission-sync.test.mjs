@@ -36,3 +36,15 @@ function fixture(){
  assert.equal((await f.engine().enable()).enabled,false);assert.equal(f.writes.length,0);
 }
 console.log('PASS durable native sync: disabled by default, incomplete inventory blocks activation, ambiguous-write readback after restart, expiry, obsolete task rejection and in-flight grant compensation');
+
+// An in-progress scan must not block authenticated progress reads or expose
+// the journal to an anonymous request.
+{
+ const { WeeklyWriteCoordinator }=await import('./src/weekly-coordinator.js');
+ const coordinator=new WeeklyWriteCoordinator({storage:{}},{});
+ coordinator.queue=new Promise(()=>{});
+ let timeout;
+ const response=await Promise.race([coordinator.fetch(new Request('https://fixture.test/api/admin/permission-sync')),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(Error('status waited behind scan')),1000);})]);
+ clearTimeout(timeout);assert.equal(response.status,401);
+}
+console.log('PASS progress reads do not wait behind scans and still require authentication');
