@@ -11,7 +11,7 @@ function setup() {
   const nodes = { 'weekly-source-result': output, 'weekly-source-button': button };
   const requests = [];
   const ui = vm.createContext({ state: { activeRole: 'manager', dashboard: { profile: { sub: 'test-manager', roles: ['student', 'teacher', 'manager'] } } },
-    document: { getElementById: id => nodes[id] || null }, config: {},
+    document: { getElementById: id => nodes[id] || null }, config: {}, wikiUrl: () => 'https://lcnywl4yrecr.feishu.cn/wiki/TestER2',
     escapeHtml: value => String(value).replaceAll('<', '&lt;'), availableLink: () => '<a>test</a>',
     request: async path => { requests.push(path); return source; } });
   vm.runInContext(render + handler, ui);
