@@ -129,6 +129,8 @@ try {
     assert.equal(page.student.history[0].values.progress, '更新结果');
     const teacher = await (await call(9, '/api/weekly')).json();
     assert.equal(teacher.teacher.students.find(p => p.id === 'ou_1').currentReport.values.evidence, body.evidence);
+    assert.equal(teacher.teacher.students.find(p => p.id === 'ou_1').project, 'PRJ-001');
+    assert.equal(teacher.teacher.students.find(p => p.id === 'ou_2').project, 'PRJ-002');
     assert.equal((await (await call(2, '/api/weekly')).json()).student.history.length, 0);
   });
   await test('empty Feishu project links preserve personal weekly history, teacher visibility and edits', async () => {

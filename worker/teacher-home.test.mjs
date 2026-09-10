@@ -83,7 +83,7 @@ const settle = async predicate => {
   for (let i = 0; i < 150; i++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 3)); }
   throw Error('UI did not settle');
 };
-async function setup({ mineCount = 2, studentRows = students, weeklyError = false, roles = ['student', 'teacher', 'manager'] } = {}) {
+async function setup({ mineCount = 2, studentRows = students, weeklyError = false, roles = ['student', 'teacher', 'manager'], memberCategory = '', activateTeacher = true } = {}) {
   const errors = [], requests = [];
   const virtualConsole = new VirtualConsole(); virtualConsole.on('jsdomError', e => errors.push(e.message));
   const dom = new JSDOM(html, { url: 'https://fixture.test/#session=fixture-token', runScripts: 'outside-only', virtualConsole });
@@ -93,7 +93,7 @@ async function setup({ mineCount = 2, studentRows = students, weeklyError = fals
   w.scrollTo = () => {}; w.confirm = () => true; w.AbortSignal = AbortSignal;
   w.eval(readFileSync(new URL('../config.js', import.meta.url), 'utf8'));
   w.ER2_CONFIG = { demo: false, apiBase: 'https://api.test', feishuWikiUrl: 'https://fixture.feishu.cn/wiki/fixture' };
-  const profile = { sub: 'fixture', personId: 'P-001', name: '合成登录人', roles };
+  const profile = { sub: 'fixture', personId: 'P-001', name: '合成登录人', roles, memberCategory };
   const weekly = { profile, week, student: { report: { status: 'pending', values: {} }, history: [] }, teacher: { students: structuredClone(studentRows), stats: { submitted: 2, missing: 1, blocked: 1 } } };
   const bootstrap = { progressive: true, profile, week, student: { ...weekly.student, course: { lessons: [] }, tasks: [], links: [], projects: [] }, teacher: { ...weekly.teacher, commonIssues: ['不再显示'], courseReview: { visible: false } }, manager: { stats: { members: 4, projects: null, courses: 1 }, automations: [] }, literature: null, catalog: [], moduleErrors: {}, moduleLoading: { weekly: true, projects: true, literature: true, extras: true }, capabilities: { courses: { enabled: false } } };
   w.fetch = async (input, options = {}) => {
@@ -115,9 +115,18 @@ async function setup({ mineCount = 2, studentRows = students, weeklyError = fals
   for (const file of ['draft-store', 'guide-store', 'learning-center', 'finance']) w.eval(readFileSync(new URL('../' + file + '.js', import.meta.url), 'utf8'));
   w.eval(source);
   await settle(() => w.document.querySelector('[data-open-literature]') && w.document.querySelector('[data-role]'));
-  if (roles.includes('teacher')) w.document.querySelector('[data-role="teacher"]').click();
+  if (activateTeacher && roles.includes('teacher')) w.document.querySelector('[data-role="teacher"]').click();
   await settle(() => w.document.querySelector(weeklyError ? '[data-reload-module="weekly"]' : roles.includes('teacher') ? '[data-open-teacher-attention]' : '[data-open-report]'));
   return { w, dom, errors, requests };
+}
+{
+  const { w, dom, errors } = await setup({ roles: ['manager', 'teacher'], memberCategory: 'PI', activateTeacher: false });
+  try {
+    assert.equal(w.document.querySelector('#role-nav [data-role]:first-child').dataset.role, 'teacher');
+    assert.equal(w.document.querySelector('#role-nav [data-role="teacher"]').classList.contains('active'), true);
+    assert.match(w.document.querySelector('#app-root').textContent, /教师汇总页/);
+    assert.deepEqual(errors, []);
+  } finally { dom.window.close(); }
 }
 {
   const { w, dom, errors, requests } = await setup();

@@ -5,7 +5,8 @@
 - GitHub Pages 部署前执行前端 JavaScript 语法检查。
 - Worker 部署前执行身份、权限、周报、文献、Track A 课程、教师反馈、去重与请求大小测试。
 - Worker 部署完成后自动访问 `/health`，失败则标记部署失败。
-- `/health` 必须返回 `courseConfigured: true`，否则不得开放课程提交入口。
+- `/health` 必须返回 `coreReady: true`，且 `capabilities.learning.storageReady`、`capabilities.learning.recipientsReady`、`capabilities.finance.configured`、`weeklyAutomation.remindersConfigured` 和 `weeklyAutomation.digestConfigured` 均为 `true`。
+- 旧课程表链路已由 `learning-text-v1` 替代；`courseConfigured: false` 是预期状态，不得再作为发布失败条件。旧 `/api/courses/*` 写入入口必须保持关闭。
 
 ## 飞书管理员一次性配置
 
@@ -14,7 +15,7 @@
 - 应用已加入各 ER² Lab 多维表格为协作者，并具有读取、新增和修改记录权限。
 - 人员表中朱俊杰角色为学生、教师、管理者；郑斯哲角色为学生，并填写负责教师 OpenID。
 - 按 `docs/data-schema.md` 补齐请求 ID、反馈字段、门户链接表和自动化日志表字段。
-- 新建 Track A 课程提交表，按 `docs/data-schema.md` 补齐课程字段；正文、附件和代码包均不直接存入 GitHub。
+- 确认 `learning-text-v1` 独立存储可读写、朱俊杰与陈铮一收件人配置正确；正文、附件和代码包均不直接存入 GitHub。
 
 ## Cloudflare 一次性配置
 
@@ -22,7 +23,7 @@
 - `wrangler.jsonc` 只保留非敏感变量和 table id，不保留 token。
 - 两个试用账号首次登录成功后，将 `BOOTSTRAP_FIRST_USER`、`PILOT_AUTO_PROVISION` 改为 `false`。
 - 如启用提醒，填写 `PROFESSOR_OPEN_ID` 和 `AUTOMATION_LOGS_TABLE_ID`。
-- 填写 `COURSES_TABLE_ID`，并以 Secret 保存 `COURSE_REVIEWER_OPEN_ID`（朱俊杰）和 `PROFESSOR_OPEN_ID`（陈铮一）。
+- 旧 `COURSES_TABLE_ID` 不再是上线前置；确认 `COURSE_REVIEWER_OPEN_ID`（朱俊杰）、`PROFESSOR_OPEN_ID`（陈铮一）及学习存储绑定已配置。
 
 ## 两账号验收
 
@@ -31,7 +32,7 @@
 3. 两个账号都能在当前页打开文献详情，不发生无意义的新开窗口。
 4. 大文件只上传飞书云盘或文档，网页和 Worker 只保存 HTTPS 链接。
 5. 停用任一人员后，该账号所有 `/api/` 读取和写入都返回禁止访问。
-6. 郑斯哲只能查看自己的 Lesson 01–10 提交；朱俊杰可查看并确认全部提交；陈铮一只能查看全部提交，不能确认。
+6. 郑斯哲和孙世纪只能查看自己的 Lesson 01–10 提交；朱俊杰可查看和回复全部提交；陈铮一只能查看全部提交，不能回复或确认。
 7. Lesson 01–09 只提交「核心收获、问题与处理、其他」，Lesson 10 另有必填「课程总结」，所有课程均不提供附件上传。
-8. 10 课全部由朱俊杰确认后，只向陈铮一发送一次结业消息；重复刷新或重复确认不得再次发送。
-9. 并发确认同一学生的最后一课只产生一条结业消息；发送失败保持失败状态，由管理员核实后人工重试。
+8. 学生完成 10 课后，只向陈铮一发送一次完成消息；重复刷新或重复请求不得再次发送。
+9. 并发完成同一学生的最后一课只产生一条完成消息；发送失败保持失败状态，由管理员核实后人工重试。

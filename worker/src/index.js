@@ -17,6 +17,7 @@ const writeRateBuckets = new Map();
 const courseConfirmationLocks = new Map();
 const memberSnapshots = new WeakMap();
 const projectSnapshots = new WeakMap();
+const projectCatalogSnapshots = new WeakMap();
 let tenantTokenCache = { token: '', expiresAt: 0 };
 const LITERATURE_TABLE_FALLBACK = 'tblyHLZpybGVU364';
 const TRACK_A_ID = 'track-a';
@@ -238,7 +239,12 @@ async function dashboard(request, env, session) {
     // resources stay denied while independent personal modules remain usable.
   }
   const currentWeek = weekInfo(new Date());
-  const members = memberRecords.flatMap(record => { try { const member = authority(memberRecords, [], [], identity(record)); return [{ ...member, openId: member.sub, enabled: true }]; } catch (_) { return []; } });
+  const projectCatalog = projectCatalogSnapshots.get(session) || { projects: [], relations: [] };
+  const members = memberRecords.flatMap(record => { try {
+    const member = authority(memberRecords, projectCatalog.projects, projectCatalog.relations, identity(record));
+    return [{ ...member, openId: member.sub, enabled: true,
+      projectCode: Object.keys(member.grants || {}).sort().join('、') }];
+  } catch (_) { return []; } });
   const profile = {
     sub: session.sub,
     personId: session.personId,
@@ -1018,8 +1024,18 @@ async function weeklyPage(request, env, session) {
     memberSnapshots.get(session) || listRecords(env, token, 'MEMBERS_TABLE_ID'), listRecords(env, token, 'WEEKLY_TABLE_ID')
   ]);
   session = await accessForRecords(env, session, records);
+  if (!projectCatalogSnapshots.has(session) &&
+      session.roles.some(role => role === 'teacher' || role === 'manager') &&
+      authorizationBindingsConfigured(env)) {
+    session = await requireActiveMember(env, session);
+  }
   const reports = records.filter(record => !hasProjectScope(record) || canProject(session, businessProjectId(record)));
-  const members = people.flatMap(record => { try { const member = authority(people, [], [], identity(record)); return [{ ...member, openId: member.sub }]; } catch (_) { return []; } });
+  const projectCatalog = projectCatalogSnapshots.get(session) || { projects: [], relations: [] };
+  const members = people.flatMap(record => { try {
+    const member = authority(people, projectCatalog.projects, projectCatalog.relations, identity(record));
+    return [{ ...member, openId: member.sub,
+      projectCode: Object.keys(member.grants || {}).sort().join('、') }];
+  } catch (_) { return []; } });
   const week = weekInfo(new Date());
   const student = await buildStudent(session, week, reports, [], [], [], []);
   const teacher = buildTeacher(session, week, members, reports, [], env);
@@ -1514,6 +1530,15 @@ export async function requireSession(request, env) {
   return session;
 }
 
+function authorizationBindingsConfigured(env) {
+  try {
+    AUTH_BINDINGS.forEach(key => strictBinding(env, key));
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 async function requireActiveMember(env, session) {
   AUTH_BINDINGS.forEach(key => strictBinding(env, key));
   const tenantToken = await getTenantToken(env);
@@ -1522,6 +1547,7 @@ async function requireActiveMember(env, session) {
   const current = { ...session, ...authority(people, catalog.projects, catalog.relations, session.sub) };
   memberSnapshots.set(current, people);
   projectSnapshots.set(current, master);
+  projectCatalogSnapshots.set(current, catalog);
   return current;
 }
 
@@ -1534,7 +1560,7 @@ async function requireMemberIdentity(env, session) {
 }
 
 async function accessForRecords(env, session, records, knownMaster) {
-  if (!records.some(hasProjectScope)) return session;
+  if (!records.some(hasProjectScope) && knownMaster === undefined) return session;
   const people = memberSnapshots.get(session);
   if (!people) return requireActiveMember(env, session);
   const token = await getTenantToken(env);
@@ -1544,6 +1570,7 @@ async function accessForRecords(env, session, records, knownMaster) {
   const current = { ...session, ...authority(people, catalog.projects, catalog.relations, session.sub) };
   memberSnapshots.set(current, people);
   projectSnapshots.set(current, master);
+  projectCatalogSnapshots.set(current, catalog);
   return current;
 }
 

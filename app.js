@@ -12,6 +12,7 @@
     teacher: { label: '教师汇总页', short: '教' },
     manager: { label: '管理配置', short: '管' }
   };
+  const roleOrder = ['collaborator', 'student', 'teacher', 'manager'];
   const onboardingSteps = [
     { id: 'workbench', icon: '⌁', title: '认识工作台', detail: '了解学习中心、周报和文献阅读入口。',
       explanation: '学习中心查看课程安排；本周工作记录填写周报并查看历史；文献阅读记录论文学习。遇到无法访问的内容，请联系管理员核对账号权限。' },
@@ -470,7 +471,10 @@
       state.moduleGeneration = {};
       state.catalog = mergeCatalog(data.collaborator ? [] : state.baseCatalog, data.catalog || []);
       const roles = Array.isArray(data.profile.roles) ? data.profile.roles.filter(function (item) { return roleMeta[item]; }) : ['student'];
-      state.activeRole = roles.includes(role) ? role : (roles.includes(state.activeRole) ? state.activeRole : roles[0]);
+      roles.sort(function (left, right) { return roleOrder.indexOf(left) - roleOrder.indexOf(right); });
+      state.activeRole = roles.includes(role) ? role :
+        (data.profile.memberCategory === 'PI' && roles.includes('teacher') ? 'teacher' :
+          (roles.includes(state.activeRole) ? state.activeRole : roles[0]));
       renderAccount();
       if (!tabStorage.persistent) showToast('浏览器未允许保存草稿，关闭页面前请提交或复制填写内容。');
       renderRoleNavigation(roles);
