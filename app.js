@@ -69,6 +69,8 @@
     studentDetailTitle: document.getElementById('student-detail-title'),
     studentDetailMeta: document.getElementById('student-detail-meta'),
     studentDetailBody: document.getElementById('student-detail-body'),
+    teacherAttentionDialog: document.getElementById('teacher-attention-dialog'),
+    teacherAttentionBody: document.getElementById('teacher-attention-body'),
     feedbackForm: document.getElementById('teacher-feedback-form'),
     feedbackRecordId: document.getElementById('feedback-record-id'),
     feedbackComment: document.getElementById('feedback-comment'),
@@ -206,7 +208,7 @@
       students: [
         { id: 'stu-a', name: '学生 A', project: 'P03 PatchNav', status: '未提交', blocker: 'costmap 局部跳变', tone: 'orange' },
         { id: 'stu-b', name: '学生 B', project: 'P01 双臂协同', status: '已提交', blocker: '无', tone: 'green' },
-        { id: 'stu-c', name: '学生 C', project: 'P05 Go2 感知', status: '已提交', blocker: '标定误差偏高', tone: 'red' }
+        { id: 'stu-c', name: '学生 C', project: 'P05 Go2 感知', status: '已提交', blocker: '标定误差偏高', tone: 'red', currentReport: { recordId: 'demo-attention-report', weekId: '2026-W36', submittedAt: '2026-09-03', values: { progress: '完成标定对照实验。', blockers: '标定误差偏高，需要排查相机参数。', nextPlan: '复核标定参数并重新实验。' } } }
       ],
       commonIssues: [
         '两名学生需要统一 ROS/TF 证据提交格式',
@@ -225,7 +227,7 @@
     },
     literature: {
       weekId: '2026-W36',
-      mineCount: 2,
+      mineCount: 0,
       minimum: 3,
       completed: false,
       items: [
@@ -355,6 +357,7 @@
     elements.roleNav.innerHTML = '';
     elements.mobileRoleNav.innerHTML = '';
     elements.searchResults.innerHTML = '';
+    if (elements.teacherAttentionBody) elements.teacherAttentionBody.textContent = '';
     const sourcePanel = document.getElementById('weekly-source-panel');
     const sourceResult = document.getElementById('weekly-source-result');
     if (sourcePanel) sourcePanel.hidden = true;
@@ -736,10 +739,10 @@
     const progress = Math.min(100, Math.round((Number(literature.mineCount || 0) / Math.max(Number(literature.minimum || 3), 1)) * 100));
     return [
       '<section class="panel literature-panel"><div class="literature-head"><div><p class="kicker">SHARED READING</p><h2>文献阅读</h2>',
-      '<p>本周至少 3 篇，不限制上限。学生、教师和管理员提交的内容在课题组内互相可见。</p></div>',
-      '<div class="literature-actions"><div class="literature-count"><strong>' + Number(literature.mineCount || 0) + ' / ' + Number(literature.minimum || 3) + '</strong><span>我的本周提交</span></div>',
+      '<p>每人每周至少 3 篇，按本人提交独立计数，不限制上限。阅读记录在课题组内共享。</p></div>',
+      '<div class="literature-actions"><div class="literature-count"><strong>' + Number(literature.mineCount || 0) + ' / ' + Number(literature.minimum || 3) + '</strong><span>' + escapeHtml(state.dashboard.profile.name || '我') + ' · 我的本周提交</span></div>',
       '<button class="button button-primary" type="button" data-open-literature>＋ 提交文献阅读</button></div></div>',
-      '<div class="progress-track literature-progress" role="progressbar" aria-label="文献阅读周进度" aria-valuenow="' + progress + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + progress + '%"></span></div>',
+      '<div class="progress-track literature-progress" role="progressbar" aria-label="我的本周文献阅读进度" aria-valuenow="' + progress + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + progress + '%"></span></div>',
       '<div class="literature-status">' + (literature.completed ? '<span class="status-ok">已达到本周最低篇数，可继续提交</span>' : '<span class="status-wait">还需 ' + Math.max(0, Number(literature.minimum || 3) - Number(literature.mineCount || 0)) + ' 篇达到本周最低要求</span>') + '</div>',
       '<div class="panel-title literature-list-title"><h3>最近7天阅读</h3><span>课题组共同可见 · ' + items.length + ' 条</span></div>',
       items.length ? '<div class="literature-list">' + items.map(function (item) {
@@ -844,6 +847,7 @@
 
   function renderActiveView(preserveModules) {
     if (!state.dashboard) return;
+    if (elements.teacherAttentionDialog?.open) renderTeacherAttention();
     if (state.dashboard.collaborator) { elements.app.innerHTML='<section class="welcome"><h1>项目协作</h1><p>仅显示当前已授权的项目。</p></section>'+renderProjectCard(); bindProjectRetry(); elements.app.querySelectorAll('[data-reload-module]').forEach(b=>b.onclick=()=>reloadModule('projects')); updateModuleNotice(); return; }
     const financeCard = preserveModules && elements.app.querySelector('.finance-card');
     if (state.dashboard.weeklyOnly) { renderWeeklyOnly(); return; }
@@ -1020,20 +1024,14 @@
       '<a class="button button-secondary" href="' + safeUrl(wikiUrl()) + '">打开飞书后台</a></section>',
       '<div class="metric-grid"><article class="metric-card"><span>本周已交</span><strong>' + data.stats.submitted + '</strong><small>已完成本周工作记录</small></article>',
       '<article class="metric-card alert"><span>本周未交</span><strong>' + data.stats.missing + '</strong><small>周五11:00自动提醒</small></article>',
-      '<article class="metric-card alert"><span>需要关注</span><strong>' + data.stats.blocked + '</strong><small>存在项目或实验阻塞</small></article></div>',
-      '<div class="dashboard-grid"><div class="stack"><section class="panel"><div class="panel-title"><h2>学生状态</h2><span>按负责关系显示</span></div><ul class="student-list">',
+      '<button type="button" class="metric-card alert metric-action" data-open-teacher-attention aria-haspopup="dialog" aria-controls="teacher-attention-dialog"><span>需要关注</span><strong>' + teacherAttentionStudents().length + '</strong><small>本周周报中的问题 · 查看清单 ›</small></button></div>',
+      '<section class="panel"><div class="panel-title"><h2>学生状态</h2><span>按负责关系显示</span></div><ul class="student-list">',
       data.students.map(function (student) {
         return '<li><span class="student-avatar">' + escapeHtml(student.name.slice(-1)) + '</span><div><strong>' + escapeHtml(student.name) +
           '</strong><small>' + escapeHtml(student.project + ' · ' + student.blocker) + '</small></div>' + tag(student.status, student.tone) +
           '<button type="button" data-student="' + escapeHtml(student.id) + '">查看详情</button></li>';
-      }).join(''), data.students.length ? '' : '<li class="empty">当前没有分配给你的学生。</li>', '</ul></section></div><aside class="stack"><section class="panel"><div class="panel-title"><h2>本周共性问题</h2></div><ol class="task-list">',
-      data.commonIssues.map(function (issue, index) { return '<li><span class="task-number">' + (index + 1) + '</span><div><strong>' + escapeHtml(issue) + '</strong></div></li>'; }).join(''),
-      data.commonIssues.length ? '' : '<li class="empty">本周暂无共性阻塞。</li>',
-      '</ol></section><section class="panel"><div class="panel-title"><h2>教师快捷入口</h2></div><ul class="link-list">',
-      '<li><a href="' + safeUrl(wikiUrl()) + '"><span>课程与培训维护</span><span>›</span></a></li>',
-      '<li><a href="' + safeUrl(wikiUrl()) + '"><span>项目里程碑</span><span>›</span></a></li>',
-      '<li><a href="' + safeUrl(wikiUrl()) + '"><span>周报原始记录</span><span>›</span></a></li>',
-      '</ul></section></aside></div>', renderCourseReviewPanel(), renderLiteratureSection(), renderFinancePlaceholder(), footer()
+      }).join(''), data.students.length ? '' : '<li class="empty">当前没有分配给你的学生。</li>', '</ul></section>',
+      renderCourseReviewPanel(), renderLiteratureSection(), renderFinancePlaceholder(), footer()
     ].join('');
   }
 
@@ -1100,6 +1098,8 @@
     elements.app.querySelectorAll('[data-student]').forEach(function (button) {
       button.addEventListener('click', function () { openStudentDetail(button.dataset.student); });
     });
+    const attentionButton = elements.app.querySelector('[data-open-teacher-attention]');
+    if (attentionButton) attentionButton.addEventListener('click', openTeacherAttention);
     elements.app.querySelectorAll('[data-course-lesson]').forEach(function (button) {
       button.addEventListener('click', function () { openCourseDialog(button.dataset.courseLesson); });
     });
@@ -1274,6 +1274,48 @@
     elements.courseReviewComment.value = item.confirmationComment || '';
     elements.courseReviewError.hidden = true;
     showDialog(elements.courseReviewDialog);
+  }
+
+  function teacherAttentionStudents() {
+    const dashboard = state.dashboard;
+    if (!dashboard || dashboard.moduleLoading?.weekly || dashboard.moduleErrors?.weekly) return [];
+    return (dashboard.teacher?.students || []).filter(function (student) {
+      return student.tone === 'red' && student.status === '已提交' &&
+        student.currentReport?.weekId === dashboard.week?.id &&
+        String(student.currentReport?.values?.blockers || '').trim();
+    });
+  }
+
+  function renderTeacherAttention() {
+    if (state.activeRole !== 'teacher' || !state.dashboard?.profile?.roles?.some(role => role === 'teacher' || role === 'manager')) {
+      elements.teacherAttentionBody.textContent = '';
+      closeDialog(elements.teacherAttentionDialog);
+      return false;
+    }
+    if (state.dashboard.moduleLoading?.weekly || state.dashboard.moduleErrors?.weekly) {
+      elements.teacherAttentionBody.innerHTML = '<p class="empty" role="status">本周周报尚未读取完成，关注清单暂时无法确认。</p>';
+      return true;
+    }
+    const students = teacherAttentionStudents();
+    elements.teacherAttentionBody.innerHTML = students.length ? '<ul class="attention-list">' + students.map(function (student) {
+      const report = student.currentReport;
+      return '<li><h3>' + escapeHtml(student.name) + '</h3><p class="attention-source">' +
+        escapeHtml(['来源：周报', report.weekId, student.project, report.submittedAt].filter(Boolean).join(' · ')) +
+        '</p><p class="attention-blocker">' + escapeHtml(report.values.blockers) +
+        '</p><button class="button button-secondary" type="button" data-attention-student="' + escapeHtml(student.id) + '">查看完整周报</button></li>';
+    }).join('') + '</ul>' : '<p class="empty">本周已提交周报中暂无需要关注的问题。</p>';
+    elements.teacherAttentionBody.querySelectorAll('[data-attention-student]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        if (!renderTeacherAttention() || !teacherAttentionStudents().some(student => String(student.id) === button.dataset.attentionStudent)) return;
+        closeDialog(elements.teacherAttentionDialog);
+        openStudentDetail(button.dataset.attentionStudent);
+      });
+    });
+    return true;
+  }
+
+  function openTeacherAttention() {
+    if (renderTeacherAttention()) showDialog(elements.teacherAttentionDialog);
   }
 
   function openStudentDetail(id) {
@@ -1706,7 +1748,7 @@
     if (!button) return;
     showToast('“' + button.dataset.missingLink + '”尚未配置飞书链接，请管理员在门户链接表中补充');
   });
-  [elements.reportDialog, elements.reportHistoryDialog, elements.literatureDialog, elements.searchDialog, elements.literatureDetailDialog, elements.studentDetailDialog, elements.courseDialog, elements.courseReviewDialog, elements.onboardingDialog].filter(Boolean).forEach(function (dialog) {
+  [elements.reportDialog, elements.reportHistoryDialog, elements.literatureDialog, elements.searchDialog, elements.literatureDetailDialog, elements.studentDetailDialog, elements.teacherAttentionDialog, elements.courseDialog, elements.courseReviewDialog, elements.onboardingDialog].filter(Boolean).forEach(function (dialog) {
     dialog.addEventListener('click', function (event) {
       if (event.target === dialog) closeDialog(dialog);
     });
