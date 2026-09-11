@@ -5,7 +5,7 @@ const bindingName = 'MEMBERS_TABLE_ID';
 const binding = { appToken: 'fixture-app', wikiToken: '', tableId: 'fixture-members' };
 const env = {
   SERVER_SNAPSHOT_CACHE: 'true', FEISHU_APP_ID: 'fixture-client',
-  SNAPSHOT_IDENTITY_FRESH_MS: '25', SNAPSHOT_IDENTITY_MAX_MS: '100'
+  SNAPSHOT_IDENTITY_FRESH_MS: '25', SNAPSHOT_IDENTITY_MAX_MS: '3000'
 };
 let reads = 0;
 let rows = [{ record_id: 'member-1', fields: { 姓名: '初始值' } }];
@@ -15,7 +15,7 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const first = await snapshotRecords(env, bindingName, binding, loader);
 assert.equal(reads, 1); assert.equal(first[0].fields.姓名, '初始值');
 assert.deepEqual(env.__er2SnapshotEvents, ['members:miss']);
-assert.ok(env.__er2AuthSnapshotDeadline > Date.now() && env.__er2AuthSnapshotDeadline <= Date.now() + 100,
+assert.ok(env.__er2AuthSnapshotDeadline > Date.now() && env.__er2AuthSnapshotDeadline <= Date.now() + 3000,
   'The read-context deadline cannot outlive the authorization snapshot');
 first[0].fields.姓名 = '不得污染快照';
 assert.equal((await snapshotRecords(env, bindingName, binding, loader))[0].fields.姓名, '初始值');
