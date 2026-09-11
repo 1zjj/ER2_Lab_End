@@ -232,17 +232,26 @@ async function dashboard(request, env, session) {
       return [];
     }
   };
-  const [memberRecords, reportRecords, projectRecords, courseRecords, taskRecords, linkRecords, literatureRecords] = await Promise.all([
+  const authorizationRead = async binding => {
+    try { return { records: await listRecords(env, tenantToken, binding) }; }
+    catch (error) { return { error }; }
+  };
+  const [memberRecords, reportRecords, projectRecords, courseRecords, taskRecords, linkRecords, literatureRecords, projectMirrorRead, projectRelationRead] = await Promise.all([
     memberSnapshots.get(session) || listRecords(env, tenantToken, 'MEMBERS_TABLE_ID'),
     extrasOnly ? [] : optionalFiltered('weekly', 'WEEKLY_TABLE_ID', weekFilter([currentWeek.id])),
     extrasOnly ? [] : (projectSnapshots.get(session)||optional('projects', 'PROJECTS_TABLE_ID')),
     courseCapabilities(env).enabled ? optional('courses', 'COURSES_TABLE_ID') : Promise.resolve([]),
     optional('tasks', 'TASKS_TABLE_ID'),
     optional('links', 'LINKS_TABLE_ID'),
-    extrasOnly ? [] : optionalFiltered('literature', 'LITERATURE_TABLE_ID', weekFilter([currentWeek.id, previousWeek.id]))
+    extrasOnly ? [] : optionalFiltered('literature', 'LITERATURE_TABLE_ID', weekFilter([currentWeek.id, previousWeek.id])),
+    authorizationRead('AUTH_PROJECTS_TABLE_ID'),
+    authorizationRead('PROJECT_MEMBERS_TABLE_ID')
   ]);
   const scopedRecords=[...projectRecords,...reportRecords,...courseRecords,...taskRecords,...linkRecords];
-  try{session=await accessForRecords(env,session,scopedRecords,extrasOnly?undefined:projectRecords);}
+  try{
+    if(projectMirrorRead.error)throw projectMirrorRead.error;if(projectRelationRead.error)throw projectRelationRead.error;
+    session=await accessForRecords(env,session,scopedRecords,projectRecords,projectMirrorRead.records,projectRelationRead.records);
+  }
   catch(error){
     moduleErrors.projects='项目权限暂时无法读取，请稍后重新载入';
     for(const [name,records] of [['weekly',reportRecords],['courses',courseRecords],['tasks',taskRecords],['links',linkRecords]])
@@ -1620,13 +1629,16 @@ async function requireMemberIdentity(env, session) {
   return current;
 }
 
-async function accessForRecords(env, session, records, knownMaster) {
+async function accessForRecords(env, session, records, knownMaster, knownMirrors, knownRelations) {
   if (!records.some(hasProjectScope) && knownMaster === undefined) return session;
   const people = memberSnapshots.get(session);
   if (!people) return requireActiveMember(env, session);
   const token = await getTenantToken(env);
-  const [master, mirrors, relations] = await Promise.all(['PROJECTS_TABLE_ID','AUTH_PROJECTS_TABLE_ID', 'PROJECT_MEMBERS_TABLE_ID']
-    .map(key => { strictBinding(env, key); return key==='PROJECTS_TABLE_ID'&&knownMaster!==undefined?knownMaster:listRecords(env, token, key); }));
+  const supplied = knownMaster !== undefined && knownMirrors !== undefined && knownRelations !== undefined;
+  const [master, mirrors, relations] = supplied ? [knownMaster, knownMirrors, knownRelations] : await Promise.all(
+    ['PROJECTS_TABLE_ID','AUTH_PROJECTS_TABLE_ID', 'PROJECT_MEMBERS_TABLE_ID']
+      .map(key => { strictBinding(env, key); return key==='PROJECTS_TABLE_ID'&&knownMaster!==undefined?knownMaster:listRecords(env, token, key); })
+  );
   const catalog = canonicalProjectData(master, mirrors, relations);
   const current = { ...session, ...authority(people, catalog.projects, catalog.relations, session.sub) };
   memberSnapshots.set(current, people);
