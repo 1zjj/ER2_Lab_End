@@ -81,6 +81,9 @@ try {
   assert.equal(acceleratedLiterature.status, 200);
   assert.deepEqual(calls.map(c => c.split(':')[0]), ['literature'], 'A signed read context avoids repeating the personnel read');
 
+  // Use a fresh source key so this assertion measures the two reads started
+  // below, rather than a just-settled flight from the preceding request.
+  env.MEMBERS_BASE_APP_TOKEN = 'fixture-members-coalescing';
   calls = []; let releaseMember;
   const memberGate = new Promise(resolve => { releaseMember = resolve; });
   holdMember = () => memberGate;

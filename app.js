@@ -744,7 +744,9 @@
 
   function openLearningCenter() {
     const features = state.dashboard?.capabilities?.features;
-    if (!(state.dashboard?.profile?.roles?.includes('student') || features?.learningRead === true)) return;
+    const studentView = state.dashboard?.profile?.roles?.includes('student') && state.activeRole === 'student';
+    const collaboratorView = state.dashboard?.collaborator === true && features?.learningRead === true;
+    if (!(studentView || collaboratorView)) return;
     if (!DEMO_MODE && window.ER2LearningCenter) { learningUI().open(false); return; }
     const materials = elements.app.querySelector('.learning-material-link');
     if (materials) { materials.click(); return; }

@@ -93,6 +93,9 @@ assert.equal(ui.renderOnboardingEntry(), '', 'Completed guide leaves the permane
 assert.equal(JSON.stringify(dashboard), snapshot, 'Acknowledgements cannot mutate personnel, training or server state');
 ui.state.activeRole = 'teacher'; coursePanel.hidden = true; ui.openLearningCenter();
 assert.equal(coursePanel.hidden, true, 'Guide cannot switch role or bypass access');
+ui.state.dashboard = { ...dashboard, collaborator: true, capabilities: { features: { learningRead: true } } };
+coursePanel.hidden = true; ui.openLearningCenter();
+assert.equal(coursePanel.hidden, false, 'An approved collaborator can open read-only learning materials');
 ui.state.dashboard = null; ui.acknowledgeGuideStep('rules');
 assert.equal(uiStore.read().completedCount, 5, 'No guide mutation after session invalidation');
 
