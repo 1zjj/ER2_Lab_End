@@ -26,6 +26,7 @@ for(const sub of ['ou_pi','ou_student','ou_finance','ou_delegate','ou_admin']){
   await v.ER2Finance.create({apiBase:'https://api.test',getSession:()=>'test-session',getProfile:()=>({personId:actor.personId})}).mount();
   const root=v.document.querySelector('[data-finance-card-actions]');
   assert.equal(Boolean(root.querySelector('[data-finance="summary"]')),sub==='ou_pi',sub+' monthly button');
+  assert.equal(Boolean(root.querySelector('[data-finance="purchase-review"]')),sub==='ou_pi',sub+' purchase review button');
   assert.equal(Boolean(root.querySelector('[data-finance="review"]')),['ou_finance','ou_delegate'].includes(sub),sub+' review button');
   assert.equal(Boolean(root.querySelector('[data-finance="all-records"]')),access.canViewAll,sub+' all records button');
   assert.equal(Boolean(root.querySelector('[data-finance="setup"]')),['ou_pi','ou_delegate','ou_admin'].includes(sub),sub+' configuration button');
@@ -52,6 +53,20 @@ for(const sub of ['ou_pi','ou_student','ou_finance','ou_delegate','ou_admin']){
   roleDom.window.close();
 }
 console.log('PASS professor-only monthly UI and actions; student, finance, delegate and administrator permissions preserved');
+
+const purchaseDom=new JSDOM('<main></main>',{url:'https://example.test/',runScripts:'outside-only'}),p=purchaseDom.window;
+p.AbortSignal=AbortSignal;p.confirm=()=>true;p.HTMLDialogElement.prototype.showModal=function(){this.open=true;};p.HTMLDialogElement.prototype.close=function(){this.open=false;};
+let purchaseRecord={id:'PUR-2026-000002',kind:'purchase',owner:'ou_student',ownerName:'朱俊杰',personId:'P-002',status:'sent',revision:1,content:'机械臂',estimate:1152600,totalCents:1152600,purpose:'Voxposer项目',materials:'',attachmentIds:[]};const purchaseRequests=[];
+p.fetch=async(input,options={})=>{const url=new URL(input);purchaseRequests.push({url:url.href,options});let data;
+  if(url.pathname==='/api/finance')data={ready:true,purchasePending:1,statuses:{sent:'待教师确认',purchase_approved:'已同意购买'},capabilities:{lineContact:true,purchaseReview:true},access:{canSubmit:true,canReviewPurchase:true,canSummary:true,canViewAll:true}};
+  else if(url.pathname.endsWith('/records'))data={records:[purchaseRecord],more:false};
+  else if(url.pathname.endsWith('/record'))data={document:purchaseRecord,attachments:[],history:[]};
+  else if(url.pathname.endsWith('/purchase-review')){const body=JSON.parse(options.body);assert.equal(body.action,'approve');purchaseRecord={...purchaseRecord,status:'purchase_approved',revision:2,reviewedByName:'教授'};data={saved:true,document:purchaseRecord};}
+  else throw Error('Unexpected route '+url.pathname);return {ok:true,status:200,json:async()=>data};};
+p.eval(source);p.document.querySelector('main').innerHTML=p.ER2Finance.card();await p.ER2Finance.create({apiBase:'https://api.test',getSession:()=>'professor-session',getProfile:()=>({personId:'P-001',name:'教授'})}).mount();
+p.document.querySelector('[data-finance="purchase-review"]').click();await new Promise(resolve=>setImmediate(resolve));assert.ok(purchaseRequests.some(r=>r.url.includes('purchaseReview=true')));p.document.querySelector('[data-finance="detail"]').click();await new Promise(resolve=>setImmediate(resolve));
+assert.match(p.document.querySelector('dialog').textContent,/教师确认/);assert.equal(p.document.querySelector('[name="content"]').disabled,true);p.document.querySelector('[data-finance="purchase-approve"]').click();await new Promise(resolve=>setImmediate(resolve));assert.equal(purchaseRecord.status,'purchase_approved');assert.ok(purchaseRequests.some(r=>r.url.endsWith('/purchase-review')));purchaseDom.window.close();
+console.log('PASS professor purchase queue, read-only detail and explicit approval UI');
 
 // Run the real form through draft, submission and reviewer detail rendering.
 // The old-server case verifies that a rollout never sends unsupported fields.

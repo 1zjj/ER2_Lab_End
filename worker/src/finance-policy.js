@@ -6,9 +6,9 @@ export const SOURCE = Object.freeze({ wiki: 'U9VXwIUq7iO9TakZXjEc2lNEnVl', table
 export const EQUIPMENT = Object.freeze({ wiki: 'GDmVw7XkCiZ2vUkifI2cEEihnIc', table: 'tbl5zQIOvKMBYVHc' });
 export const FINANCE_WIKI = 'EzDCwps7LivyqOk7UsJcVSutnCh';
 export const DEVICE_FIELDS = ['文本','类型','采购进度','数量','图片','主要参数','采购价格（单价）','存放地点','父记录','采购日期','已报销','联络人','采购经办人'];
-export const STATUS = Object.freeze({ draft:'草稿', submitted:'待财务审核', returned:'退回修改', approved:'已确认，入库处理中', sync_error:'入库待处理', completed:'已完成', sent:'已提交采购申请' });
+export const STATUS = Object.freeze({ draft:'草稿', submitted:'待财务审核', returned:'退回修改', approved:'已确认，入库处理中', sync_error:'入库待处理', completed:'已完成', sent:'待教师确认', purchase_approved:'已同意购买', deleted:'已删除' });
 export const F = Object.freeze({
-  purchase: { name:'工作台采购申请', fields:{'申请编号':1,'申请人':11,'人员编号':1,'购买内容':1,'预计金额':2,'用途':1,'资料说明':1,'资料附件':17,'提交时间':5,'系统状态':1,'来源ID':1} },
+  purchase: { name:'工作台采购申请', fields:{'申请编号':1,'申请人':11,'人员编号':1,'购买内容':1,'预计金额':2,'用途':1,'资料说明':1,'资料附件':17,'提交时间':5,'系统状态':1,'审核人':11,'审核时间':5,'退回原因':1,'来源ID':1} },
   claim: { name:'工作台报销单', fields:{'报销编号':1,'申报人':11,'人员编号':1,'合计金额':2,'处理状态':1,'资料说明':1,'资料附件':17,'提交时间':5,'审核人':11,'审核时间':5,'退回原因':1,'来源ID':1} },
   line: { name:'工作台报销明细', fields:{'明细编号':1,'报销编号':1,'名称':1,'数量':2,'采购价格（单价）':2,'采购日期':5,'联络人':1,'金额':2,'设备记录ID':1,'来源ID':1} },
   log: { name:'工作台财务操作记录', fields:{'操作编号':1,'单据编号':1,'操作人':11,'时间':5,'操作':1,'说明':1,'来源ID':1} }
@@ -24,21 +24,27 @@ export function recipient(people, personId, duty = '') {
 }
 export function financeAccess(actor, people, env) {
   const reviewerId=env.FINANCE_REVIEWER_PERSON_ID || 'P-004';
+  const professorId=env.FINANCE_PROFESSOR_PERSON_ID || 'P-001';
   let reviewer=null; try {reviewer=recipient(people,reviewerId,'财务');} catch (_) {}
   const delegates=String(env.FINANCE_DELEGATE_PERSON_IDS || '').split(',').filter(Boolean);
   const internal=isInternalMember(actor), admin=isAdministrator(actor);
   const delegate=internal && delegates.includes(actor.personId) && actor.duties.includes('管理员');
-  return { canSubmit:internal, canReview:internal && (actor.sub===reviewer?.sub || delegate), canConfigure:admin, canViewAll:admin,
+  return { canSubmit:internal, canReview:internal && (actor.sub===reviewer?.sub || delegate), canReviewPurchase:internal && actor.personId===professorId, canConfigure:admin, canViewAll:admin,
     isDelegate:delegate, reviewerReady:Boolean(reviewer), reviewerId, reviewerName:reviewer?.name || '',
-    canSummary:internal && actor.personId===(env.FINANCE_PROFESSOR_PERSON_ID || 'P-001') };
+    canSummary:internal && actor.personId===professorId };
 }
 export function requireReview(actor, access, doc) {
   if(!access.canReview) throw authError(403,'没有财务审核权限');
   if(doc.owner!==actor.sub&&doc.personId!==actor.personId) return;
   throw authError(403,'不能审核本人提交的报销单，请由代审人员处理');
 }
+export function requirePurchaseReview(actor, access, doc) {
+  if(!access.canReviewPurchase) throw authError(403,'没有采购确认权限');
+  if(doc.owner!==actor.sub&&doc.personId!==actor.personId) return;
+  throw authError(403,'不能确认本人提交的采购申请');
+}
 export const editable = doc => ['draft','returned'].includes(doc.status);
-export function canView(actor, access, doc) { return doc.owner===actor.sub || access.canViewAll || access.canReview && doc.kind==='claim' && doc.status!=='draft'; }
+export function canView(actor, access, doc) { return doc.owner===actor.sub || access.canViewAll || access.canReview && doc.kind==='claim' && doc.status!=='draft' || access.canReviewPurchase && doc.kind==='purchase' && doc.status!=='draft'; }
 export function assertView(actor,access,doc) {
   if(!doc || !canView(actor,access,doc)) throw authError(404,'单据不存在或无权访问');
   if(doc.owner===actor.sub && doc.personId!==actor.personId) throw authError(403,'账号与原申报人身份不一致');

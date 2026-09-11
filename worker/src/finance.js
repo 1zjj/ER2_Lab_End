@@ -1,7 +1,7 @@
 import { requireSession, getTenantToken, listRecords, json } from './index.js';
 import { strictBinding, authError, identity, personNumber, isInternalMember } from './authorization.js';
 import { readScope } from './read-performance.js';
-import { FINANCE_VERSION, FINANCE_STORE, STATUS, SOURCE, financeActor, financeAccess, recipient, requireReview, assertView, editable, requestId, validateDocument, monthlySummary, devicePayload } from './finance-policy.js';
+import { FINANCE_VERSION, FINANCE_STORE, STATUS, SOURCE, financeActor, financeAccess, recipient, requireReview, requirePurchaseReview, assertView, editable, requestId, validateDocument, monthlySummary, devicePayload } from './finance-policy.js';
 import { financeService } from './finance-feishu.js';
 import { financeReady, equipmentBinding, verifyEquipmentCopy, validateEquipmentSchema, copyDigest } from './finance-equipment.js';
 
@@ -23,9 +23,29 @@ export async function routeFinance(request,env){try{
 export async function financeEntries(storage,prefix){const result=[];let cursor='';while(true){const page=[...(await storage.list({prefix,limit:1000,...(cursor?{startAfter:cursor}:{})})).entries()];result.push(...page);if(page.length<1000)return result;cursor=page.at(-1)[0];}}
 export const fingerprint=async value=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(value))))].map(b=>b.toString(16).padStart(2,'0')).join('');
 const docs=async storage=>(await financeEntries(storage,'doc:')).map(([,d])=>d);
+const active=d=>d?.status!=='deleted';
 const compact=d=>({id:d.id,kind:d.kind,ownerName:d.ownerName,personId:d.personId,status:d.status,totalCents:d.totalCents,updatedAt:d.updatedAt,revision:d.revision,returnReason:d.returnReason||'',syncError:d.syncError||'',noticeError:d.noticeError||''});
 export async function enqueue(storage,key,value){await storage.put('job:'+key,{...value,attempts:0,next:Date.now()});await storage.setAlarm(Date.now()+1000);}
 async function log(storage,actor,id,action,note=''){const key='log:'+Date.now()+':'+crypto.randomUUID();await storage.put(key,{id:key,documentId:id,actor:actor.sub,name:actor.name,time:new Date().toISOString(),action,note});}
+async function markExternalDeletion(storage,doc){
+  const now=new Date().toISOString();doc.previousStatus=doc.status;doc.status='deleted';doc.deletedAt=now;doc.deletionSource='feishu';doc.updatedAt=now;doc.revision++;
+  await storage.transaction(async tx=>{
+    await tx.put('doc:'+doc.id,doc);
+    for(const [key,job]of await financeEntries(tx,'job:'))if(job.id===doc.id)await tx.delete(key);
+    await log(tx,{sub:'system',name:'系统'},doc.id,'飞书主记录已删除','工作台已同步隐藏');
+    await enqueue(tx,'cleanup:'+doc.id,{kind:'cleanup',id:doc.id});
+  });
+}
+export async function reconcileExternalDeletions(storage,service,force=false){
+  const last=await storage.get('reconcile:external'),now=Date.now();if(!force&&last?.checkedAt&&now-last.checkedAt<5000)return last;
+  const bindings=await storage.get('finance:bindings');if(!bindings?.purchase||!bindings?.claim)return {checkedAt:now,skipped:'bindings'};
+  const present={};for(const kind of ['purchase','claim'])present[kind]=new Set((await service.list(service.finance.obj_token,bindings[kind],'/records')).map(r=>r.record_id));
+  const deleted=[];for(const [key,mirror]of await financeEntries(storage,'mirror:')){
+    const id=key.slice('mirror:'.length),doc=await storage.get('doc:'+id);if(!active(doc)||!present[doc.kind]||!mirror?.recordId)continue;
+    if(!present[doc.kind].has(mirror.recordId)){await markExternalDeletion(storage,doc);deleted.push(id);}
+  }
+  const result={checkedAt:now,deleted};await storage.put('reconcile:external',result);return result;
+}
 async function parse(request){const raw=await request.text();if(raw.length>120000)throw authError(413,'单据过长');try{return JSON.parse(raw);}catch(_){throw authError(400,'请求格式无效');}}
 function configured(settings){if(!financeReady(settings))throw authError(409,'财务权限与设备清单正在准备，请稍后办理');}
 async function attachments(storage,doc){const out=[];for(const id of doc.attachmentIds||[]){const a=await storage.get('attachment:'+id);if(a)out.push({id,name:a.name,size:a.size});}return out;}
@@ -36,18 +56,22 @@ export async function executeFinance(request,env,storage,contextProvider=finance
   const settings=await storage.get('settings')||{};
   env.FINANCE_EQUIPMENT_BINDING=settings.equipmentBinding;
   if(request.method==='GET'){
-    if(path==='/')return json(request,env,{version:FINANCE_VERSION,access,ready:financeReady(settings),statuses:STATUS,capabilities:{lineContact:true},
-      pending:access.canReview?(await docs(storage)).filter(d=>d.kind==='claim'&&['submitted','sync_error','approved'].includes(d.status)).length:0,
+    if(financeReady(settings)&&['/','/records','/record','/summary'].includes(path))try{await reconcileExternalDeletions(storage,await serviceProvider(env));}catch(e){await storage.put('reconcile:error',{time:Date.now(),code:e.code||e.name});}
+    if(path==='/')return json(request,env,{version:FINANCE_VERSION,access,ready:financeReady(settings),statuses:STATUS,capabilities:{lineContact:true,purchaseReview:true,externalDeletionSync:true},
+      pending:access.canReview?(await docs(storage)).filter(d=>active(d)&&d.kind==='claim'&&['submitted','sync_error','approved'].includes(d.status)).length:0,
+      purchasePending:access.canReviewPurchase?(await docs(storage)).filter(d=>active(d)&&d.kind==='purchase'&&d.status==='sent').length:0,
       reminders:settings.reminders||false});
     if(path==='/records'){
       const review=url.searchParams.get('review')==='true';if(review&&!access.canReview)throw authError(403,'没有财务审核权限');
+      const purchaseReview=url.searchParams.get('purchaseReview')==='true';if(purchaseReview&&!access.canReviewPurchase)throw authError(403,'没有采购确认权限');
       const all=url.searchParams.get('all')==='true';if(all&&!access.canViewAll)throw authError(403,'没有全量财务查看权限');
       const page=Math.max(0,Number(url.searchParams.get('page')||0));if(!Number.isSafeInteger(page))throw authError(400,'分页无效');
-      const rows=(await docs(storage)).filter(d=>all||(review?d.kind==='claim'&&d.status!=='draft':d.owner===actor.sub&&d.personId===actor.personId)).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt));
+      const rows=(await docs(storage)).filter(d=>active(d)&&(all||(review?d.kind==='claim'&&d.status!=='draft':purchaseReview?d.kind==='purchase'&&d.status==='sent':d.owner===actor.sub&&d.personId===actor.personId))).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt));
       return json(request,env,{records:rows.slice(page*50,page*50+50).map(compact),more:rows.length>(page+1)*50});
     }
     if(path==='/record'){
       const d=await storage.get('doc:'+url.searchParams.get('id'));assertView(actor,access,d);
+      if(!active(d))throw authError(404,'单据已删除');
       return json(request,env,{document:d,attachments:await attachments(storage,d),history:(await financeEntries(storage,'log:')).map(([,l])=>l).filter(l=>l.documentId===d.id)});
     }
     if(path==='/attachment'){
@@ -59,7 +83,7 @@ export async function executeFinance(request,env,storage,contextProvider=finance
       return new Response(response.body,{headers});
     }
     if(path==='/summary'){
-      if(!access.canSummary)throw authError(403,'没有查看财务汇总的权限');return json(request,env,monthlySummary(await docs(storage),url.searchParams.get('month')||''));
+      if(!access.canSummary)throw authError(403,'没有查看财务汇总的权限');return json(request,env,monthlySummary((await docs(storage)).filter(active),url.searchParams.get('month')||''));
     }
     if(path==='/equipment-check'){
       const d=await storage.get('doc:'+url.searchParams.get('id'));assertView(actor,access,d);requireReview(actor,access,d);
@@ -88,7 +112,7 @@ export async function executeFinance(request,env,storage,contextProvider=finance
   const body=await parse(request),rid=requestId(body.requestId),key='request:'+actor.sub+':'+rid;
   const hash=await fingerprint({path,body}),old=await storage.get(key);if(old){
     if(old.hash!==hash)throw authError(409,'同一请求标识的内容发生变化，请先查看已保存记录');
-    if(old.result.document){assertView(actor,access,old.result.document);if(['/review','/retry'].includes(path))requireReview(actor,access,old.result.document);}
+    if(old.result.document){assertView(actor,access,old.result.document);if(path==='/review'||path==='/retry')requireReview(actor,access,old.result.document);if(path==='/purchase-review')requirePurchaseReview(actor,access,old.result.document);}
     return json(request,env,old.result);
   }
   let result;
@@ -143,6 +167,18 @@ export async function executeFinance(request,env,storage,contextProvider=finance
       }
       await enqueue(tx,(d.status==='approved'?'inventory:':'mirror:')+d.id,{kind:d.status==='approved'?'inventory':'mirror',id:d.id});
       await enqueue(tx,'notice:review:'+d.id+':'+d.revision,{kind:'reviewed',id:d.id,revision:d.revision});await tx.put(key,{hash,result});
+    });
+  }else if(path==='/purchase-review'){
+    if(Object.keys(body).some(k=>!['id','revision','action','reason','requestId'].includes(k)))throw authError(400,'采购确认参数无效');
+    const d=await storage.get('doc:'+body.id);assertView(actor,access,d);requirePurchaseReview(actor,access,d);
+    if(d.kind!=='purchase'||d.status!=='sent'||d.revision!==body.revision)throw authError(409,'采购申请状态已变化，请刷新核对');
+    if(!['return','approve'].includes(body.action))throw authError(400,'采购确认操作无效');
+    const reason=String(body.reason||'').trim();if(body.action==='return'&&(!reason||reason.length>2000))throw authError(400,'请填写退回原因（最多2000字）');
+    const latest=await contextProvider(request,env);requirePurchaseReview(latest.actor,latest.access,d);if(latest.actor.personId!==actor.personId)throw authError(403,'采购确认账号身份已变化');
+    d.status=body.action==='approve'?'purchase_approved':'returned';d.updatedAt=new Date().toISOString();d.revision++;d.reviewedAt=d.updatedAt;d.reviewedBy=actor.sub;d.reviewedByName=actor.name;d.returnReason=body.action==='return'?reason:'';
+    result={saved:true,document:d};await storage.transaction(async tx=>{
+      await tx.put('doc:'+d.id,d);await log(tx,actor,d.id,body.action==='approve'?'同意购买':'退回修改',reason);
+      await enqueue(tx,'mirror:'+d.id,{kind:'mirror',id:d.id});await enqueue(tx,'notice:purchase-review:'+d.id+':'+d.revision,{kind:'purchase-reviewed',id:d.id,revision:d.revision});await tx.put(key,{hash,result});
     });
   }else if(path==='/retry'){
     const d=await storage.get('doc:'+body.id);assertView(actor,access,d);requireReview(actor,access,d);
@@ -216,6 +252,10 @@ export async function processFinanceJobs(env,storage,serviceProvider=financeServ
     }
     const doc=await storage.get('doc:'+j.id);if(!doc){await storage.delete(key);continue;}
     await checkPrivacy(service);
+    if(j.kind==='cleanup'){
+      await service.cleanupDocument(doc.id,await storage.get('finance:bindings'),storage);await storage.delete(key);continue;
+    }
+    if(!active(doc)){await storage.delete(key);continue;}
     if(j.kind==='inventory'){
       if(!['approved','sync_error'].includes(doc.status)){await storage.delete(key);continue;}
       if(!await service.inventory(doc,storage)){await storage.put(key,{...j,next:Date.now()+1000});continue;}
@@ -229,12 +269,12 @@ export async function processFinanceJobs(env,storage,serviceProvider=financeServ
       let target,text;
       if(j.kind==='submitted'&&doc.kind==='purchase'){
         target=recipient(people,env.FINANCE_PROFESSOR_PERSON_ID||'P-001');
-        text=`【采购申请 ${doc.id}】\n${doc.ownerName}准备购买：${doc.content}\n预计金额：¥${(doc.totalCents/100).toFixed(2)}\n用途：${doc.purpose}\n请在飞书中回复是否同意，后续资料通过群聊沟通。`;
+        text=`【采购待确认 ${doc.id}】\n${doc.ownerName}准备购买：${doc.content}\n预计金额：¥${(doc.totalCents/100).toFixed(2)}\n用途：${doc.purpose}\n请打开工作台“预算与报销 → 采购待处理”。`;
       }else if(j.kind==='submitted'){
         target=recipient(people,env.FINANCE_REVIEWER_PERSON_ID||'P-004','财务');
         if(target.sub===doc.owner)target=recipient(people,String(env.FINANCE_DELEGATE_PERSON_IDS||'').split(',')[0],'管理员');
         text=`【报销待审核 ${doc.id}】\n${doc.ownerName}提交${doc.lines.length}项，合计¥${(doc.totalCents/100).toFixed(2)}。\n请打开工作台“预算与报销 → 审核”。`;
-      }else{target=financeActor(people,doc.owner);if(target.personId!==doc.personId)throw authError(403,'申报人身份发生变化');text=`【报销 ${doc.id}】${STATUS[doc.status]}${doc.returnReason?'\n退回原因：'+doc.returnReason:''}`;}
+      }else{target=financeActor(people,doc.owner);if(target.personId!==doc.personId)throw authError(403,'申报人身份发生变化');text=`【${doc.kind==='purchase'?'采购申请':'报销'} ${doc.id}】${STATUS[doc.status]}${doc.returnReason?'\n退回原因：'+doc.returnReason:''}`;}
       if(j.firstAttempt&&Date.now()-j.firstAttempt>45*60000)throw authError(409,'通知结果待人工核对，已停止重复发送');
       if(!j.firstAttempt){j.firstAttempt=Date.now();await storage.put(key,j);}
       await service.notify(target.sub,text+'\n'+env.FRONTEND_URL+'?page=finance',key);doc.noticeError='';await storage.put('doc:'+doc.id,doc);
@@ -250,7 +290,7 @@ export async function prepareFinanceReminders(time,env,storage,peopleProvider){
   const settings=await storage.get('settings');if(!financeReady(settings)||!settings.reminders)return;
   const day=new Date(Number(time)+8*3600000).toISOString(),date=day.slice(0,10),n=Number(day.slice(8,10));if(![1,20,27].includes(n)||day.slice(11,13)!=='10')return;
   const ledger='schedule:'+date;if(await storage.get(ledger))return;
-  const people=await(peopleProvider?peopleProvider():listRecords(env,await getTenantToken(env),'MEMBERS_TABLE_ID')),records=await docs(storage),notices=[];
+  const people=await(peopleProvider?peopleProvider():listRecords(env,await getTenantToken(env),'MEMBERS_TABLE_ID')),records=(await docs(storage)).filter(active),notices=[];
   if(n===1){
     const previous=new Date(date+'T00:00:00Z');previous.setUTCMonth(previous.getUTCMonth()-1);const month=previous.toISOString().slice(0,7),summary=monthlySummary(records,month),target=recipient(people,env.FINANCE_PROFESSOR_PERSON_ID||'P-001');
     notices.push({target,text:`【${month} 实验室费用汇总】\n已确认报销：¥${(summary.totalCents/100).toFixed(2)}\n尚未确认报销：¥${(summary.pendingCents/100).toFixed(2)}\n按实际采购月份统计；历史设备迁入不计为新增费用。${summary.syncIssues?'\n设备入库待处理单据：'+summary.syncIssues:''}`});

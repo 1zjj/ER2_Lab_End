@@ -91,13 +91,24 @@ export async function financeService(env, injected={}) {
     if(contacts.length!==1||contacts[0].type!==1)throw authError(503,'报销明细联络人字段尚未核验为文本字段');
     contactSchemaTable=table;
   }
+  let purchaseReviewSchemaTable;
+  async function ensurePurchaseReviewFields(table){
+    if(purchaseReviewSchemaTable===table)return;
+    let fields=await list(finance.obj_token,table,'/fields');
+    for(const [name,type]of Object.entries({'审核人':11,'审核时间':5,'退回原因':1}))if(!fields.some(f=>f.field_name===name))await write(finance.obj_token,table,'/fields','POST',{field_name:name,type});
+    fields=await list(finance.obj_token,table,'/fields');
+    for(const [name,type]of Object.entries({'审核人':11,'审核时间':5,'退回原因':1})){const matches=fields.filter(f=>f.field_name===name);if(matches.length!==1||matches[0].type!==type)throw authError(503,'采购审核字段尚未核验：'+name);}
+    purchaseReviewSchemaTable=table;
+  }
   async function mirror(doc,bindings,storage,logs=[],limit=10){
     if(doc.kind==='claim'&&doc.lines.some(line=>typeof line.contact==='string'))await ensureLineContact(bindings.line);
+    if(doc.kind==='purchase')await ensurePurchaseReviewFields(bindings.purchase);
     let processed=0;
     const kind=doc.kind;let fields=kind==='purchase'?{'申请编号':doc.id,'申请人':[{id:doc.owner}],'人员编号':doc.personId,'购买内容':doc.content,'预计金额':(doc.estimate||0)/100,'用途':doc.purpose,'资料说明':doc.materials,'系统状态':doc.status,'来源ID':doc.id}:
       {'报销编号':doc.id,'申报人':[{id:doc.owner}],'人员编号':doc.personId,'合计金额':doc.totalCents/100,'处理状态':doc.status,'资料说明':doc.materials,'退回原因':doc.returnReason||'','来源ID':doc.id};
     if(doc.submittedAt)fields['提交时间']=Date.parse(doc.submittedAt);
     if(doc.approvedAt){fields['审核人']=[{id:doc.approvedBy}];fields['审核时间']=Date.parse(doc.approvedAt);}
+    if(doc.reviewedAt){fields['审核人']=[{id:doc.reviewedBy}];fields['审核时间']=Date.parse(doc.reviewedAt);fields['退回原因']=doc.returnReason||'';}
     const files=await storage.get(doc.attachmentIds.map(id=>'attachment:'+id));
     fields['资料附件']=[...files.values()].map(a=>({file_token:a.fileToken}));
     const old=await storage.get('mirror:'+doc.id);
@@ -119,6 +130,16 @@ export async function financeService(env, injected={}) {
     for(const entry of logs){const key='audit:'+entry.id;if(await storage.get(key))continue;if(processed++>=limit)return false;
       const saved=await archiveRecord(bindings.log,{'操作编号':entry.id,'单据编号':entry.documentId,'操作人':[{id:entry.actor}],'时间':Date.parse(entry.time),'操作':entry.action,'说明':entry.note,'来源ID':entry.id},'',key,storage);await storage.put(key,{recordId:saved.record_id});
     }
+    return true;
+  }
+  async function cleanupDocument(id,bindings,storage){
+    const targets=[];
+    if(bindings?.line)targets.push([bindings.line,r=>text(r.fields?.['报销编号'])===id||text(r.fields?.['来源ID']).startsWith(id+':')]);
+    if(bindings?.log)targets.push([bindings.log,r=>text(r.fields?.['单据编号'])===id]);
+    for(const [table,matches]of targets)for(const record of (await list(finance.obj_token,table,'/records')).filter(matches))await write(finance.obj_token,table,'/records/'+enc(record.record_id),'DELETE');
+    for(const [key]of await storage.list({prefix:'line:'+id+':'}))await storage.delete(key);
+    for(const [key,entry]of await storage.list({prefix:'log:'}))if(entry.documentId===id){const audit=await storage.get('audit:'+entry.id);if(audit)await storage.delete('audit:'+entry.id);}
+    await storage.delete('mirror:'+id);
     return true;
   }
   async function inventory(doc,storage,limit=4){
@@ -163,6 +184,6 @@ export async function financeService(env, injected={}) {
   }
   async function download(fileToken){const r=await fetch('https://open.feishu.cn/open-apis/drive/v1/medias/'+enc(fileToken)+'/download',{headers:{Authorization:'Bearer '+token},signal:AbortSignal.timeout(60000)});if(!r.ok)throw authError(503,'资料暂时无法下载');return r;}
   async function notify(openId,text,id){return call('/im/v1/messages?receive_id_type=open_id','POST',{receive_id:openId,msg_type:'text',content:JSON.stringify({text}),uuid:await stableMessageUuid('finance:'+id)});}
-  return {finance,equipment,target,token,node,list,write,snapshot,getRecord,equipmentMatches,privateAcl,ensureFinanceTables,mirror,inventory,upload,uploadEquipmentMedia,download,notify,putRecord,
+  return {finance,equipment,target,token,node,list,write,snapshot,getRecord,equipmentMatches,privateAcl,ensureFinanceTables,mirror,cleanupDocument,inventory,upload,uploadEquipmentMedia,download,notify,putRecord,
     sourceSnapshot:async()=>{const source=await node(SOURCE.wiki);if(allowed.has(source.obj_token)||source.space_id===equipment.space_id)throw authError(503,'来源与ER2目标必须独立');return snapshot(source.obj_token,SOURCE.table);}};
 }
