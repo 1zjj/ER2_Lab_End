@@ -33,6 +33,7 @@ globalThis.fetch=async(input,options={})=>{
 };
 try{
  const adapter=nativePermissionAdapter(env),target=await adapter.target();assert.equal(target.complete,true);assert.equal(target.resources[0].desired.ou_test3,'edit');
+ fields['项目阶段']='准备启动';const launchTarget=await adapter.target();assert.equal(launchTarget.resources[0].desired.ou_test3,'edit','launch preparation keeps approved native access');fields['项目阶段']='执行中';
  let observed=await adapter.observe(target);assert.equal(observed.complete,true);assert.equal(observed.changes.length,2);
  await adapter.apply(observed.changes.find(c=>c.method==='DELETE'),target);assert.equal(writes.length,1);assert.match(writes[0].path,/ou_obsolete$/);assert.equal(writes[0].body.perm_type,'container');
  rows.project_members[0].fields['权限落实状态']='待撤回';const revoke=await adapter.target();assert.equal(revoke.resources[0].desired.ou_test3,undefined);

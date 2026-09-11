@@ -138,7 +138,9 @@ export function authority(people, projects, relations, openId, now = Date.now())
     const statuses = ['项目阶段', '项目状态', '状态'].map(k => text(project.fields?.[k])).filter(Boolean);
     const status = new Set(statuses).size === 1 ? statuses[0] : '';
     const archiveRead = ['归档', '已归档', '已结束'].includes(status) && rf['归档查阅例外'] === true;
-    if (!['执行中', '进行中', '暂停'].includes(status) && !archiveRead) continue;
+    // Approved collaborators need the project workspace while launch
+    // preparation is under way, before the project is counted as executing.
+    if (!['准备启动', '执行中', '进行中', '暂停'].includes(status) && !archiveRead) continue;
     // Paused projects remain readable but cannot be changed.
     grants[id] = { level: status === '暂停' || archiveRead ? 1 : Math.min(level, 2), relationId: relation.record_id, expiresAt: end, projectRecordId: project.record_id };
   }
@@ -150,7 +152,7 @@ export function authority(people, projects, relations, openId, now = Date.now())
   const directId = directSupervisors.length === 1 ? String(directSupervisors[0]?.open_id || directSupervisors[0]?.id || '') : '';
   const projectPolicies = Object.fromEntries([...projectMap].filter(([id]) => !invalidDefinitions.has(id)).map(([id, p]) => {
     const statuses = ['项目阶段', '项目状态', '状态'].map(k => text(p.fields?.[k])).filter(Boolean);
-    return [id, { writable: new Set(statuses).size === 1 && ['执行中', '进行中'].includes(statuses[0]) }];
+    return [id, { writable: new Set(statuses).size === 1 && ['准备启动', '执行中', '进行中'].includes(statuses[0]) }];
   }));
   const result = { personId, sub: openId, name: text(f['姓名']), roles: [...new Set(roles)], duties: internal ? duties : [], projectPolicies,
     teacherOpenId: supervisor ? identity(supervisor) : /^ou_[\w-]+$/.test(directId) ? directId : '', projectCode: '', track: '', grants, memberRecord: record };

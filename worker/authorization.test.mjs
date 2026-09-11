@@ -281,6 +281,11 @@ try {
   await test('duplicate business PRJ mapping hidden and direct access rejected', async () => { rows.projects.push({ ...rows.projects[0], record_id: 'duplicate' }); assert.deepEqual((await (await call(1, '/api/projects')).json()).projects, []); assert.equal((await call(1, '/api/projects/PRJ-001')).status, 403); });
   await test('legacy P01 never matched without unified mapping', async () => { delete rows.projects[0].fields['统一项目编号']; assert.equal((await call(1, '/api/projects/PRJ-001')).status, 403); });
   await test('conflicting PRJ aliases cannot grant access', async () => { rows.projects[0].fields.ProjectID = 'PRJ-002'; assert.equal((await call(1, '/api/projects/PRJ-001')).status, 403); });
+  await test('ready-to-start project grants approved collaborators edit access', async () => {
+    projects[0].fields['项目阶段'] = rows.projects[0].fields['项目阶段'] = '准备启动';
+    assert.equal((await call(1, '/api/projects/PRJ-001')).status, 200);
+    assert.equal((await call(1, '/api/projects/PRJ-001', 'PATCH', { milestone: 'launch preparation' })).status, 200);
+  });
   await test('paused project downgrades to read', async () => { projects[0].fields['项目阶段'] = rows.projects[0].fields['项目阶段'] = '暂停'; assert.equal((await call(1, '/api/projects/PRJ-001')).status, 200); assert.equal((await call(1, '/api/projects/PRJ-001', 'PATCH', { milestone: 'x' })).status, 403); });
   await test('master and mirror policy drift denies access until synchronized', async()=>{rows.projects[0].fields['项目阶段']='暂停';assert.equal((await call(1,'/api/projects/PRJ-001')).status,403);assert.equal((await call(9,'/api/projects/PRJ-001')).status,403);});
   await test('conflicting project status denies', async () => { projects[0].fields['状态'] = '已归档'; assert.equal((await call(1, '/api/projects/PRJ-001')).status, 403); });
