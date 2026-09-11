@@ -13,6 +13,8 @@ const weekly={profile,week,student:{report:{status:'pending',label:'未提交',r
 const bootstrap={progressive:true,profile,week,student:{...weekly.student,course:{lessons:[]},tasks:[],links:[],projects:[]},teacher:{...weekly.teacher,commonIssues:[],courseReview:{visible:false}},manager:{stats:{members:4,projects:null,courses:1},automations:[]},literature:null,catalog:[],moduleErrors:{},moduleLoading:{weekly:true,projects:true,literature:true,extras:true},capabilities:{courses:{enabled:false}}};
 const extras={...bootstrap,moduleErrors:{},catalog:[],student:{...bootstrap.student,tasks:[{title:'合成任务',detail:'保留待办',type:'项目'}]}};
 const reading={literature:{items:[],mineCount:0,minimum:3}};
+const consolidated={...structuredClone(extras),progressive:false,moduleLoading:{},literature:reading.literature};
+consolidated.student.home=buildStudentHome(consolidated);
 async function setup({deniedStorage=false,missingScript=false,collaborator=false}={}) {
  const errors=[],requests=[],responses=new Map(),pending=new Map();
  const virtualConsole=new VirtualConsole();virtualConsole.on('jsdomError',e=>errors.push(e.message));
@@ -28,7 +30,7 @@ async function setup({deniedStorage=false,missingScript=false,collaborator=false
   let data;
   if(responses.has(path))data=await responses.get(path)(options);
   else if(path==='/data/catalog.json')data=[];
-  else if(path==='/api/dashboard/start')data=collaborator?{progressive:true,collaborator:true,profile:{sub:'external-fixture',personId:'P-901',name:'合成协作者',roles:['collaborator']},student:{projects:[]},catalog:[],moduleErrors:{},moduleLoading:{projects:true}}:structuredClone(bootstrap);
+  else if(path==='/api/dashboard')data=collaborator?{collaborator:true,profile:{sub:'external-fixture',personId:'P-901',name:'合成协作者',roles:['collaborator']},student:{projects:[]},catalog:[],moduleErrors:{}}:structuredClone(consolidated);
   else if(path==='/api/finance')data={ready:true,statuses:{draft:'草稿'},access:{canSubmit:true,canConfigure:true,canReview:true}};
   else if(path==='/api/weekly')data=await pending.get('weekly').promise;
   else if(path==='/api/projects')data=await pending.get('projects').promise;
@@ -46,21 +48,19 @@ async function setup({deniedStorage=false,missingScript=false,collaborator=false
  const {w,dom,errors,requests,responses,pending}=await setup({deniedStorage:true});
  try{
   await settle(()=>!w.document.querySelector('#app-root').hidden);
-  const complete={...structuredClone(bootstrap),moduleLoading:{},literature:reading.literature};
+  const complete=structuredClone(consolidated);
   const clientHome=JSON.parse(JSON.stringify(w.ER2BuildStudentHome(complete)));delete clientHome.moduleLoading;
   assert.deepEqual(clientHome,buildStudentHome(complete),'Loaded home summary stays equivalent to the original server model');
   assert.equal(w.document.querySelector('#account-name').textContent,'合成用户');
-  assert.ok(w.document.querySelector('[data-open-learning-center]'),'Learning available while other reads are pending');
-  assert.match(w.document.querySelector('.weekly-home-card').textContent,/正在读取/);
-  assert.match(w.document.querySelector('.literature-panel').textContent,/正在读取/);
-  pending.get('weekly').resolve(weekly);pending.get('literature').resolve(reading);pending.get('extras').resolve(extras);
+  assert.ok(w.document.querySelector('[data-open-learning-center]'),'Learning is available after the consolidated read');
   await settle(()=>w.document.querySelector('[data-open-report]')&&w.document.querySelector('[data-open-literature]'));
   assert.match(w.document.querySelector('.home-todos').textContent,/合成任务/);
   assert.ok(w.document.querySelector('[data-home-action="report"]'),'Original weekly todo button remains');
   assert.ok(w.document.querySelector('[data-home-action="literature"]'),'Original literature todo button remains');
   assert.ok(w.document.querySelector('[data-home-action="project"]'),'Original project todo button remains');
-  assert.match(w.document.querySelector('.project-home-card').textContent,/正在读取/,'A slow project read must not block weekly or literature');
-  assert.equal(requests.filter(r=>r.path==='/api/finance').length,1,'Module paints do not multiply finance calls');
+  assert.equal(requests.filter(r=>r.path==='/api/dashboard').length,1,'The initial page uses one consolidated dashboard read');
+  assert.equal(requests.filter(r=>['/api/weekly','/api/projects','/api/literature','/api/dashboard?section=extras'].includes(r.path)).length,0,'Initial modules do not duplicate identity and permission reads');
+  assert.equal(requests.filter(r=>r.path==='/api/finance').length,1,'The visible finance card loads once');
   const save=deferred(),refresh=deferred();responses.set('/api/reports',()=>save.promise);responses.set('/api/weekly',()=>refresh.promise);
   w.document.querySelector('[data-open-report]').click();const form=w.document.querySelector('#report-form');
   form.elements.progress.value='第一次提交';form.elements.nextPlan.value='原计划';
@@ -71,20 +71,8 @@ async function setup({deniedStorage=false,missingScript=false,collaborator=false
   await settle(()=>!w.document.querySelector('#report-submit').disabled);
   assert.equal(form.elements.progress.value,'等待期间继续输入');assert.equal(w.document.querySelector('#report-dialog').open,true);
   assert.match(w.document.querySelector('#toast').textContent,/已保留/);
-  pending.get('projects').resolve(Response.json({message:'synthetic failure'},{status:503}));
-  await settle(()=>w.document.querySelector('[data-reload-projects]'));
-  responses.set('/api/projects',()=>({projects:[
-    {code:'PRJ-001',title:'本人项目',permission:1,assigned:true,accessSource:'relationship',url:'https://lcnywl4yrecr.feishu.cn/wiki/fixture'},
-    {code:'PRJ-002',title:'管理项目',permission:3,assigned:false,accessSource:'administrator',url:'https://lcnywl4yrecr.feishu.cn/wiki/adminfixture'}
-  ],activeCount:2}));
-  w.document.querySelector('[data-reload-projects]').click();await settle(()=>w.document.querySelector('.project-home-card a'));
-  assert.match(w.document.querySelector('.project-home-card').textContent,/本人项目/);
-  assert.doesNotMatch(w.document.querySelector('.project-home-card').textContent,/管理项目/);
   w.document.querySelector('[data-role="manager"]').click();
   assert.match(w.document.querySelector('#app-root').textContent,/项目总览/);
-  assert.match(w.document.querySelector('#app-root').textContent,/本人同时是项目成员/);
-  assert.match(w.document.querySelector('#app-root').textContent,/通过管理员职责访问/);
-  assert.match(w.document.querySelector('#app-root').textContent,/管理项目/);
   w.document.querySelector('[data-role="student"]').click();
   await settle(()=>w.document.querySelector('[data-finance="setup"]'));
   assert.equal(form.elements.progress.value,'等待期间继续输入');
@@ -110,7 +98,6 @@ async function setup({deniedStorage=false,missingScript=false,collaborator=false
 {
  const {w,dom,responses,pending,requests}=await setup();
  try{
-  pending.get('weekly').resolve(weekly);pending.get('projects').resolve({projects:[],activeCount:0});pending.get('literature').resolve(reading);pending.get('extras').resolve(extras);
   await settle(()=>w.document.querySelector('[data-finance="records"]'));
   const read=deferred();responses.set('/api/finance/records?review=false&page=0',()=>read.promise);
   w.document.querySelector('[data-finance="records"]').click();await settle(()=>requests.some(r=>r.path.startsWith('/api/finance/records')));
@@ -124,7 +111,7 @@ async function setup({deniedStorage=false,missingScript=false,collaborator=false
   w.document.querySelector('[data-finance="retry-read"]').click();await settle(()=>w.document.querySelector('.finance-dialog').textContent.includes('暂无记录'));
  }finally{dom.window.close();}
 }
-console.log('PASS stability UI: progressive modules, blocked storage, missing scripts, independent retries, draft preservation, cancelled finance reads, denial and late responses');
+console.log('PASS stability UI: consolidated loading, blocked storage, missing scripts, draft preservation, cancelled finance reads, denial and late responses');
 
 // A feedback response belongs to the submitted report, even after switching students.
 {
@@ -145,14 +132,14 @@ console.log('PASS stability UI: progressive modules, blocked storage, missing sc
 console.log('PASS teacher feedback remains attached to its submitted student/report');
 
 {
- const {w,dom,errors,requests,pending}=await setup({collaborator:true});
+ const {w,dom,errors,requests}=await setup({collaborator:true});
  try{
   await settle(()=>!w.document.querySelector('#app-root').hidden);
   assert.match(w.document.querySelector('#app-root').textContent,/项目协作/);
   assert.equal(w.document.querySelector('.finance-card'),null);assert.equal(w.document.querySelector('.literature-panel'),null);
   assert.equal(w.document.querySelector('[data-open-learning-center]'),null);
-  assert.deepEqual(requests.filter(r=>r.path.startsWith('/api/')).map(r=>r.path).sort(),['/api/dashboard/start','/api/projects']);
-  pending.get('projects').resolve({projects:[],activeCount:0});await settle(()=>w.document.querySelector('.project-home-card').textContent.includes('暂无正式分配项目'));
+  assert.deepEqual(requests.filter(r=>r.path.startsWith('/api/')).map(r=>r.path).sort(),['/api/dashboard']);
+  await settle(()=>w.document.querySelector('.project-home-card').textContent.includes('暂无正式分配项目'));
   assert.deepEqual(errors,[]);
  }finally{dom.window.close();}
  console.log('PASS collaborator UI only requests authorized project modules');

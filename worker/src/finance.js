@@ -56,11 +56,10 @@ export async function executeFinance(request,env,storage,contextProvider=finance
   const settings=await storage.get('settings')||{};
   env.FINANCE_EQUIPMENT_BINDING=settings.equipmentBinding;
   if(request.method==='GET'){
-    if(financeReady(settings)&&['/','/records','/record','/summary'].includes(path))try{await reconcileExternalDeletions(storage,await serviceProvider(env));}catch(e){await storage.put('reconcile:error',{time:Date.now(),code:e.code||e.name});}
     if(path==='/')return json(request,env,{version:FINANCE_VERSION,access,ready:financeReady(settings),statuses:STATUS,capabilities:{lineContact:true,purchaseReview:true,externalDeletionSync:true},
       pending:access.canReview?(await docs(storage)).filter(d=>active(d)&&d.kind==='claim'&&['submitted','sync_error','approved'].includes(d.status)).length:0,
       purchasePending:access.canReviewPurchase?(await docs(storage)).filter(d=>active(d)&&d.kind==='purchase'&&d.status==='sent').length:0,
-      reminders:settings.reminders||false});
+      reminders:settings.reminders||false,reconciliation:await storage.get('reconcile:external')||null});
     if(path==='/records'){
       const review=url.searchParams.get('review')==='true';if(review&&!access.canReview)throw authError(403,'没有财务审核权限');
       const purchaseReview=url.searchParams.get('purchaseReview')==='true';if(purchaseReview&&!access.canReviewPurchase)throw authError(403,'没有采购确认权限');
@@ -95,6 +94,16 @@ export async function executeFinance(request,env,storage,contextProvider=finance
       return json(request,env,{settings,access,inspection:await storage.get('inspection'),legacyMigration:await storage.get('migration'),jobs:(await financeEntries(storage,'job:')).map(([key,j])=>({key,attempts:j.attempts,error:j.error||'',next:j.next}))});
     }
     throw authError(404,'财务接口不存在');
+  }
+  if(path==='/reconcile'&&request.method==='POST'){
+    if(!access.canConfigure)throw authError(403,'只有管理员可以立即同步后台删除');
+    const body=await parse(request);requestId(body.requestId);
+    configured(settings);
+    try{
+      const result=await reconcileExternalDeletions(storage,await serviceProvider(env),true);
+      await log(storage,actor,'SETUP','立即同步财务后台删除');
+      return json(request,env,{ok:true,...result});
+    }catch(e){await storage.put('reconcile:error',{time:Date.now(),code:e.code||e.name});throw e;}
   }
   if(request.method!=='POST')throw authError(405,'不支持此操作');
   if(path==='/setup')return setup(request,env,storage,c,settings,serviceProvider);
@@ -302,13 +311,22 @@ export async function prepareFinanceReminders(time,env,storage,peopleProvider){
   }
   await storage.transaction(async tx=>{for(const {target,text}of notices)await enqueue(tx,'monthly:'+date+':'+target.personId,{kind:'monthly',personId:target.personId,recipient:target.sub,text:text+'\n'+env.FRONTEND_URL+'?page=finance'});await tx.put(ledger,{count:notices.length,time:Date.now()});});
 }
+export async function runScheduledFinance(time,env,storage,serviceProvider=financeService){
+  const settings=await storage.get('settings')||{};
+  if(financeReady(settings)){
+    const scoped={...env,FINANCE_EQUIPMENT_BINDING:settings.equipmentBinding};
+    try{await reconcileExternalDeletions(storage,await serviceProvider(scoped),true);}
+    catch(e){await storage.put('reconcile:error',{time:Date.now(),code:e.code||e.name});}
+  }
+  await prepareFinanceReminders(time,env,storage);
+}
 export async function scheduleFinance(time,env){if(env.FINANCE_ENABLED!=='true'||!env.FINANCE_RECORDS)return;try{await env.FINANCE_RECORDS.get(env.FINANCE_RECORDS.idFromName(FINANCE_STORE)).fetch(new Request('https://internal/_finance-scheduled',{method:'POST',body:JSON.stringify({time})}));}catch(e){console.error('ER2_FINANCE_SCHEDULE_FAILED',e.code||e.name);}}
 
 export class FinanceRecords{
   constructor(state,env){this.state=state;this.env=env;this.queue=Promise.resolve();}
   serial(fn){const r=this.queue.then(fn);this.queue=r.catch(()=>{});return r;}
   fetch(request){const path=new URL(request.url).pathname;if(path==='/_finance-storage-check')return Promise.resolve(Response.json({version:FINANCE_VERSION}));
-    if(path==='/_finance-scheduled'&&request.method==='POST')return this.serial(async()=>{await prepareFinanceReminders((await request.json()).time,this.env,this.state.storage);return Response.json({ok:true});});
+    if(path==='/_finance-scheduled'&&request.method==='POST')return this.serial(async()=>{await runScheduledFinance((await request.json()).time,this.env,this.state.storage);return Response.json({ok:true});});
     const execute=()=>executeFinance(request,this.env,this.state.storage).catch(e=>financeError(request,this.env,e));return request.method==='GET'?execute():this.serial(execute);}
   alarm(){return this.serial(()=>processFinanceJobs(this.env,this.state.storage));}
 }

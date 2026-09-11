@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { financeActor,financeAccess,validateDocument,devicePayload,monthlySummary,EQUIPMENT,SOURCE,canView,requireReview } from './src/finance-policy.js';
-import { executeFinance,processFinanceJobs,prepareFinanceReminders,reconcileExternalDeletions } from './src/finance.js';
+import { executeFinance,processFinanceJobs,prepareFinanceReminders,reconcileExternalDeletions,runScheduledFinance } from './src/finance.js';
 import { financeService } from './src/finance-feishu.js';
 const people=[['P-001','教授','ou_pi','PI',['管理员']],['P-002','代审','ou_admin','RA',['管理员']],['P-003','申报人','ou_student','博士',[]],['P-004','财务','ou_finance','RA',['财务']],['P-005','其他管理员','ou_other','RA',['管理员']]].map(([id,name,sub,kind,duties])=>({record_id:'rec'+id,fields:{'人员编号':id,'姓名':name,'飞书成员':[{id:sub}],'人员状态':'在组','人员边界':'团队内','成员类别':kind,'系统职责':duties}}));
 const env={FINANCE_REVIEWER_PERSON_ID:'P-004',FINANCE_DELEGATE_PERSON_IDS:'P-002',FINANCE_PROFESSOR_PERSON_ID:'P-001',FRONTEND_URL:'https://example.test/'};
@@ -31,6 +31,13 @@ const deletionService={finance:{obj_token:'finance'},list:async()=>[]};assert.de
 const deletedRows=await executeFinance(new Request('https://worker.test/api/finance/records?all=true'),env,deletedStorage,async()=>context('ou_pi'),async()=>deletionService).then(r=>r.json());assert.equal(deletedRows.records.length,0);
 const safeStorage=new Storage();await safeStorage.put('finance:bindings',{purchase:'tblPurchase',claim:'tblClaim'});await safeStorage.put('doc:'+deletedId,deletedDoc);await safeStorage.put('mirror:'+deletedId,{recordId:'recUnknown',revision:1});await assert.rejects(reconcileExternalDeletions(safeStorage,{finance:{obj_token:'finance'},list:async()=>{throw Error('incomplete read');}},true));assert.equal((await safeStorage.get('doc:'+deletedId)).status,'submitted');
 console.log('PASS explicit Feishu master deletion hides the durable document; incomplete reads never infer deletion');
+const fastMetaStorage=new Storage();await fastMetaStorage.put('settings',{ready:true,equipmentBinding:EQUIPMENT,equipmentVerified:EQUIPMENT});
+const fastMeta=await executeFinance(new Request('https://worker.test/api/finance'),env,fastMetaStorage,async()=>context('ou_pi'),async()=>{throw Error('page load must not scan Feishu finance tables');}).then(r=>r.json());assert.equal(fastMeta.ready,true);
+const scheduledStorage=new Storage();await scheduledStorage.put('settings',{ready:true,equipmentBinding:EQUIPMENT,equipmentVerified:EQUIPMENT});await scheduledStorage.put('finance:bindings',{purchase:'tblPurchase',claim:'tblClaim'});await scheduledStorage.put('doc:'+deletedId,deletedDoc);await scheduledStorage.put('mirror:'+deletedId,{recordId:'recDeleted',revision:1});
+await runScheduledFinance(Date.now(),env,scheduledStorage,async()=>deletionService);assert.equal((await scheduledStorage.get('doc:'+deletedId)).status,'deleted');
+const manualStorage=new Storage();await manualStorage.put('settings',{ready:true,equipmentBinding:EQUIPMENT,equipmentVerified:EQUIPMENT});await manualStorage.put('finance:bindings',{purchase:'tblPurchase',claim:'tblClaim'});await manualStorage.put('doc:'+deletedId,deletedDoc);await manualStorage.put('mirror:'+deletedId,{recordId:'recDeleted',revision:1});
+const manual=await executeFinance(new Request('https://worker.test/api/finance/reconcile',{method:'POST',body:JSON.stringify({requestId:'manual-finance-reconcile'})}),env,manualStorage,async()=>context('ou_pi'),async()=>deletionService).then(r=>r.json());assert.deepEqual(manual.deleted,[deletedId]);
+console.log('PASS finance page load skips Feishu reconciliation; scheduled and explicit administrator reconciliation remain available');
 const draft={kind:'claim',lines:[{name:'传感器',quantity:'2',unitPrice:'99.50',purchaseDate:'2026-08-25',contact:'合成供应商 / 测试联系人'}],requestId:'finance-valid-request',submit:true};
 assert.equal(context('ou_finance').access.canReview,true);assert.equal(context('ou_other').access.canReview,false);assert.equal(context('ou_pi').access.canReview,false);assert.equal(context('ou_admin').access.canReview,true);
 assert.equal(context('ou_pi').access.canReviewPurchase,true);for(const sub of ['ou_student','ou_finance','ou_admin','ou_other'])assert.equal(context(sub).access.canReviewPurchase,false);

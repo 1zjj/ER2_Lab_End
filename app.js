@@ -450,12 +450,7 @@
         if (new URLSearchParams(location.search).get('page') === 'weekly') data = await loadRead('/api/weekly');
         else {
           try {
-            try { data = await loadRead('/api/dashboard/start'); }
-            catch (error) {
-            // Existing backend remains compatible while a deployment completes.
-            if (error.status !== 404) throw error;
             data = await loadRead('/api/dashboard' + (role ? '?role=' + encodeURIComponent(role) : ''));
-          }
           } catch (error) {
             if (!error.status || error.status < 500 || error.binding === 'MEMBERS_TABLE_ID' || error.code === 'REQUEST_TIMEOUT') throw error;
             data = await loadRead('/api/weekly');
@@ -900,14 +895,23 @@
     return !DEMO_MODE && window.ER2Finance ? window.ER2Finance.card() : '<section class="panel finance-card"><h2>预算与报销</h2><p>登录后办理采购申请与费用报销。</p></section>';
   }
 
-  let financeUIInstance;
+  let financeUIInstance, financeObserver;
   function mountFinance() {
     if (DEMO_MODE || !window.ER2Finance) return;
     if (!financeUIInstance) financeUIInstance = window.ER2Finance.create({
       apiBase: API_BASE, getSession: () => state.session, getProfile: () => state.dashboard?.profile,
       onUnauthorized: () => window.dispatchEvent(new CustomEvent('er2-session-denied', { detail: { status: 401 } }))
     });
-    financeUIInstance.mount(true);
+    const card = elements.app.querySelector('.finance-card');
+    if (!card) return;
+    financeObserver?.disconnect();
+    const load = function () { financeObserver?.disconnect(); financeUIInstance.mount(true); };
+    const direct = new URLSearchParams(location.search).get('page') === 'finance';
+    if (direct || !('IntersectionObserver' in window) || card.getBoundingClientRect().top < window.innerHeight + 240) return load();
+    financeObserver = new IntersectionObserver(function (entries) {
+      if (entries.some(entry => entry.isIntersecting) && card.isConnected) load();
+    }, { rootMargin: '240px 0px' });
+    financeObserver.observe(card);
   }
 
   function projectHomepageUrl(value) {
@@ -1874,5 +1878,6 @@
     .catch(function () { /* Search metadata must not delay or clear live data. */ });
   if (DEMO_MODE) catalogRequest.finally(function () { loadDashboard(new URLSearchParams(location.search).get('view')); });
   else loadDashboard(new URLSearchParams(location.search).get('view'));
+  if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('./sw.js?v=20260911-1').catch(function () {});
   window.ER2_APP_STARTED = true;
 }());

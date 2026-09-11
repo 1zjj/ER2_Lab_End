@@ -35,6 +35,7 @@ jobs:
           node --check guide-store.js
           node --check learning-center.js
           node --check finance.js
+          node --check sw.js
           node tests/weekly-ui.test.mjs
           node tests/member-guide.test.mjs
           node tests/course-capability.test.mjs
@@ -52,7 +53,7 @@ jobs:
       - name: Prepare static site
         run: |
           mkdir _site
-          cp index.html styles.css app.js config.js draft-store.js guide-store.js learning-center.js learning-center.css finance.js finance.css favicon.svg _site/
+          cp index.html styles.css app.js config.js draft-store.js guide-store.js learning-center.js learning-center.css finance.js finance.css favicon.svg sw.js _site/
           node -e 'const fs=require("fs");const html=fs.readFileSync("_site/index.html","utf8");for(const match of html.matchAll(/<script[^>]+src="\.\/([^"?]+)/g)){if(!fs.existsSync("_site/"+match[1]))throw new Error("Missing script: "+match[1]);}'
           cp -R data _site/data
           touch _site/.nojekyll

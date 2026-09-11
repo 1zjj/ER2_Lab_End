@@ -7,6 +7,7 @@
   "keep_vars": true,
   "triggers": {
     "crons": [
+      "* * * * *",
       "0 3 * * 5",
       "0 10 * * 5",
       "0 2 1,20,27 * *"
@@ -28,7 +29,8 @@
     "FINANCE_ENABLED": "true",
     "FINANCE_REVIEWER_PERSON_ID": "P-004",
     "FINANCE_DELEGATE_PERSON_IDS": "P-002",
-    "FINANCE_PROFESSOR_PERSON_ID": "P-001"
+    "FINANCE_PROFESSOR_PERSON_ID": "P-001",
+    "FILTERED_READS": "true"
   },
   "durable_objects": {
     "bindings": [

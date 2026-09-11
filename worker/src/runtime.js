@@ -170,12 +170,12 @@ export default {
   async scheduled(controller, env, ctx) {
     if(env.FINANCE_ENABLED==='true'&&env.FINANCE_RECORDS)ctx.waitUntil(scheduleFinance(controller.scheduledTime, env));
     const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
-      timeZone: 'Asia/Shanghai', weekday: 'short', hour: '2-digit', hourCycle: 'h23'
+      timeZone: 'Asia/Shanghai', weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
     }).formatToParts(new Date(controller.scheduledTime)).map((part) => [part.type, part.value]));
     if (parts.weekday !== 'Fri') return;
-    if (parts.hour === '18') {
+    if (parts.hour === '18' && parts.minute === '00') {
       ctx.waitUntil(runProfessorDigest(controller.scheduledTime, env));
-    } else if (parts.hour === '11') {
+    } else if (parts.hour === '11' && parts.minute === '00') {
       await legacy.scheduled(controller, env, ctx);
     }
   }

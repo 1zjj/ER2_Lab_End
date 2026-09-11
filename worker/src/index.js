@@ -205,10 +205,12 @@ async function dashboard(request, env, session) {
   const role = session.roles.includes(requestedRole) ? requestedRole : session.roles[0];
   if (!role) throw httpError(403, '账号没有可用角色');
   const tenantToken = await getTenantToken(env);
+  const currentWeek = weekInfo(new Date());
+  const previousWeek = weekInfo(new Date(Date.now() - 7 * 86400000));
   const moduleErrors = {};
   const moduleDiagnostics = {};
   const optional = async (name, binding) => {
-    try { return await listRecords(env, tenantToken, binding, { budgetMs: 6000 }); }
+    try { return await listRecords(env, tenantToken, binding, { budgetMs: 4000 }); }
     catch (error) {
       moduleErrors[name] = '暂时无法读取，请稍后重新载入';
       // Allow only diagnostic metadata, never upstream messages, URLs or records.
@@ -220,14 +222,24 @@ async function dashboard(request, env, session) {
       return [];
     }
   };
+  const optionalFiltered = async (name, binding, filter) => {
+    try { return await filteredRecords(env, tenantToken, binding, filter, { budgetMs: 4000 }); }
+    catch (error) {
+      moduleErrors[name] = '暂时无法读取，请稍后重新载入';
+      moduleDiagnostics[name] = { requestId: requestIds.get(request) || '',
+        code: ['READ_TIMEOUT', 'UPSTREAM_UNAVAILABLE'].includes(error.code) ? error.code : 'TABLE_READ_FAILED',
+        ...(Number.isInteger(error.upstreamCode) ? { upstreamCode: error.upstreamCode } : {}) };
+      return [];
+    }
+  };
   const [memberRecords, reportRecords, projectRecords, courseRecords, taskRecords, linkRecords, literatureRecords] = await Promise.all([
     memberSnapshots.get(session) || listRecords(env, tenantToken, 'MEMBERS_TABLE_ID'),
-    extrasOnly ? [] : listRecords(env, tenantToken, 'WEEKLY_TABLE_ID'),
+    extrasOnly ? [] : optionalFiltered('weekly', 'WEEKLY_TABLE_ID', weekFilter([currentWeek.id])),
     extrasOnly ? [] : (projectSnapshots.get(session)||optional('projects', 'PROJECTS_TABLE_ID')),
     courseCapabilities(env).enabled ? optional('courses', 'COURSES_TABLE_ID') : Promise.resolve([]),
     optional('tasks', 'TASKS_TABLE_ID'),
     optional('links', 'LINKS_TABLE_ID'),
-    extrasOnly ? [] : optional('literature', 'LITERATURE_TABLE_ID')
+    extrasOnly ? [] : optionalFiltered('literature', 'LITERATURE_TABLE_ID', weekFilter([currentWeek.id, previousWeek.id]))
   ]);
   const scopedRecords=[...projectRecords,...reportRecords,...courseRecords,...taskRecords,...linkRecords];
   try{session=await accessForRecords(env,session,scopedRecords,extrasOnly?undefined:projectRecords);}
@@ -238,7 +250,6 @@ async function dashboard(request, env, session) {
     // Keep the freshly verified identity. It has no project grants, so scoped
     // resources stay denied while independent personal modules remain usable.
   }
-  const currentWeek = weekInfo(new Date());
   const projectCatalog = projectCatalogSnapshots.get(session) || { projects: [], relations: [] };
   const members = memberRecords.flatMap(record => { try {
     const member = authority(memberRecords, projectCatalog.projects, projectCatalog.relations, identity(record));
@@ -341,8 +352,10 @@ function formatRecordDate(value) {
 async function getLiterature(request, env, session) {
   if (!isInternalMember(session)) throw httpError(403,'组内文献仅向正式团队内成员开放');
   const tenantToken = await getTenantToken(env);
-  const records = await listRecords(env, tenantToken, 'LITERATURE_TABLE_ID');
-  return json(request, env, { literature: buildLiterature(session, weekInfo(new Date()), records) });
+  const currentWeek = weekInfo(new Date());
+  const previousWeek = weekInfo(new Date(Date.now() - 7 * 86400000));
+  const records = await filteredRecords(env, tenantToken, 'LITERATURE_TABLE_ID', weekFilter([currentWeek.id, previousWeek.id]));
+  return json(request, env, { literature: buildLiterature(session, currentWeek, records) });
 }
 
 async function coordinateLiteratureSave(request, env, session) {
@@ -1022,8 +1035,10 @@ async function weeklyPage(request, env, session) {
   if (!binding.tableId || (!binding.appToken && !binding.wikiToken))
     throw Object.assign(httpError(503, '周报尚未配置'), { code: 'WEEKLY_BINDING_MISSING' });
   const token = await getTenantToken(env);
+  const week = weekInfo(new Date());
   const [people, records] = await Promise.all([
-    memberSnapshots.get(session) || listRecords(env, token, 'MEMBERS_TABLE_ID'), listRecords(env, token, 'WEEKLY_TABLE_ID')
+    memberSnapshots.get(session) || listRecords(env, token, 'MEMBERS_TABLE_ID'),
+    filteredRecords(env, token, 'WEEKLY_TABLE_ID', weekFilter([week.id]))
   ]);
   session = await accessForRecords(env, session, records);
   if (!projectCatalogSnapshots.has(session) &&
@@ -1038,7 +1053,6 @@ async function weeklyPage(request, env, session) {
     return [{ ...member, openId: member.sub,
       projectCode: Object.keys(member.grants || {}).sort().join('、') }];
   } catch (_) { return []; } });
-  const week = weekInfo(new Date());
   const student = await buildStudent(session, week, reports, [], [], [], []);
   const teacher = buildTeacher(session, week, members, reports, [], env);
   return json(request, env, { weeklyOnly: true, weeklyVersion: WEEKLY_VERSION,
@@ -1337,6 +1351,43 @@ export async function listRecords(env, token, tableBinding, options = {}) {
   catch (error) { error.binding = tableBinding; throw error; }
 }
 
+export async function filteredRecords(env, token, tableBinding, filter, options = {}) {
+  if (env.FILTERED_READS !== 'true') return listRecords(env, token, tableBinding, options);
+  try {
+    return await measureRead(env, tableBinding + '_FILTERED', () => readFilteredTableRecords(
+      env, token, tableBinding, filter, readOptions(env, options.budgetMs)
+    ));
+  } catch (error) {
+    // A renamed or temporarily incompatible field must not make a core module
+    // disappear. Fall back to the existing full read and keep the optimization
+    // observable in Server-Timing/logs.
+    console.log('ER2_FILTERED_READ_FALLBACK', JSON.stringify({ binding: tableBinding,
+      code: error.upstreamCode || error.code || error.name }));
+    return listRecords(env, token, tableBinding, options);
+  }
+}
+
+async function readFilteredTableRecords(env, token, tableBinding, filter, options = {}) {
+  const binding = resolveTableBinding(env, tableBinding);
+  if ((!binding.appToken && !binding.wikiToken) || !binding.tableId) return [];
+  const appToken = await resolveBitableAppToken(binding, token, options);
+  let pageToken = '';
+  const records = [], pages = new Set();
+  do {
+    const suffix = pageToken ? '&page_token=' + encodeURIComponent(pageToken) : '';
+    const result = await feishuRequest('/bitable/v1/apps/' + appToken + '/tables/' + binding.tableId +
+      '/records/search?user_id_type=open_id&page_size=500' + suffix, {
+        method: 'POST', bearer: token, body: { filter }, retryPost: true, ...options
+      });
+    const parsed = recordPage(result, pageToken, records.length);
+    records.push(...parsed.items);
+    pageToken = parsed.next;
+    if (pageToken && pages.has(pageToken)) throw httpError(502, '数据表筛选分页不完整');
+    if (pageToken) pages.add(pageToken);
+  } while (pageToken);
+  return records;
+}
+
 async function readTableRecords(env, token, tableBinding, options = {}) {
   const binding = resolveTableBinding(env, tableBinding);
   if ((!binding.appToken && !binding.wikiToken) || !binding.tableId) return [];
@@ -1521,6 +1572,14 @@ function weekInfo(date) {
     end: dateLabel(sunday),
     label: dateLabel(monday) + '—' + dateLabel(sunday) + ' · 第' + number + '周',
     dueLabel: '周五 18:00 截止'
+  };
+}
+
+function weekFilter(ids) {
+  const values = [...new Set(ids.filter(value => /^\d{4}-W\d{2}$/.test(value)))];
+  return {
+    conjunction: values.length > 1 ? 'or' : 'and',
+    conditions: values.map(value => ({ field_name: '周次', operator: 'is', value: [value] }))
   };
 }
 

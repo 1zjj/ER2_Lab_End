@@ -2,6 +2,7 @@ import { mockWeeklyCoordinator } from './test-weekly-coordinator.mjs';
 import { LITERATURE_FIELDS } from './src/literature-write.js';
 import assert from 'node:assert/strict';
 import service from './src/index.js';
+await import('./filtered-read.test.mjs');
 
 const env = {
   FRONTEND_URL: 'https://1zjj.github.io/ER2_Lab_End/'
