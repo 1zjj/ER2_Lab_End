@@ -496,7 +496,7 @@
         pendingModules.forEach(function (name) { reloadModule(name); });
       }
       const learningPage = new URLSearchParams(location.search).get('page');
-      if (!data.collaborator && !DEMO_MODE && window.ER2LearningCenter && ['learning', 'learning-inbox'].includes(learningPage))
+      if ((!data.collaborator || data.capabilities?.features?.learningRead === true) && !DEMO_MODE && window.ER2LearningCenter && ['learning', 'learning-inbox'].includes(learningPage))
         learningUI().open(learningPage === 'learning-inbox');
     } catch (error) {
       if (!current()) return;
@@ -524,7 +524,9 @@
 
   async function reloadModule(name) {
     const paths = { weekly: '/api/weekly', projects: '/api/projects', literature: '/api/literature', extras: '/api/dashboard?section=extras' };
-    if (!paths[name] || !state.dashboard || state.dashboard.collaborator && name !== 'projects') return;
+    const featureAccess = state.dashboard?.capabilities?.features || {};
+    if (!paths[name] || !state.dashboard || state.dashboard.collaborator &&
+      !(name === 'projects' || name === 'literature' && featureAccess.literatureRead === true)) return;
     const dashboard = state.dashboard, session = state.session, generation = state.loadGeneration;
     const revision = state.moduleGeneration[name] = (state.moduleGeneration[name] || 0) + 1;
     const current = () => state.dashboard === dashboard && state.session === session && generation === state.loadGeneration && revision === state.moduleGeneration[name];
@@ -741,7 +743,8 @@
   }
 
   function openLearningCenter() {
-    if (!state.dashboard?.profile?.roles?.includes('student') || state.activeRole !== 'student') return;
+    const features = state.dashboard?.capabilities?.features;
+    if (!(state.dashboard?.profile?.roles?.includes('student') || features?.learningRead === true)) return;
     if (!DEMO_MODE && window.ER2LearningCenter) { learningUI().open(false); return; }
     const materials = elements.app.querySelector('.learning-material-link');
     if (materials) { materials.click(); return; }
@@ -757,14 +760,15 @@
     if (state.dashboard.moduleErrors?.literature) return '<section class="panel literature-panel"><h2>文献阅读</h2><p role="status">文献记录暂时无法读取，当前提交数量尚未确认。周报和学习中心可继续使用。</p><button class="button button-secondary" type="button" data-reload-module="literature">重新读取</button></section>';
     const literature = state.dashboard.literature || { mineCount: 0, minimum: 3, completed: false, items: [] };
     const items = Array.isArray(literature.items) ? literature.items : [];
+    const canSubmit = literature.canSubmit !== false && (state.dashboard?.capabilities?.features?.literatureSubmit !== false);
     const progress = Math.min(100, Math.round((Number(literature.mineCount || 0) / Math.max(Number(literature.minimum || 3), 1)) * 100));
     return [
       '<section class="panel literature-panel"><div class="literature-head"><div><p class="kicker">SHARED READING</p><h2>文献阅读</h2>',
-      '<p>每人每周至少 3 篇，按本人提交独立计数，不限制上限。阅读记录在课题组内共享。</p></div>',
-      '<div class="literature-actions"><div class="literature-count"><strong>' + Number(literature.mineCount || 0) + ' / ' + Number(literature.minimum || 3) + '</strong><span>' + escapeHtml(state.dashboard.profile.name || '我') + ' · 我的本周提交</span></div>',
-      '<button class="button button-primary" type="button" data-open-literature>＋ 提交文献阅读</button></div></div>',
-      '<div class="progress-track literature-progress" role="progressbar" aria-label="我的本周文献阅读进度" aria-valuenow="' + progress + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + progress + '%"></span></div>',
-      '<div class="literature-status">' + (literature.completed ? '<span class="status-ok">已达到本周最低篇数，可继续提交</span>' : '<span class="status-wait">还需 ' + Math.max(0, Number(literature.minimum || 3) - Number(literature.mineCount || 0)) + ' 篇达到本周最低要求</span>') + '</div>',
+      '<p>' + (canSubmit ? '每人每周至少 3 篇，按本人提交独立计数，不限制上限。' : '可查看课题组成员分享的论文与阅读记录，无提交要求。') + '阅读记录在课题组内共享。</p></div>',
+      canSubmit ? '<div class="literature-actions"><div class="literature-count"><strong>' + Number(literature.mineCount || 0) + ' / ' + Number(literature.minimum || 3) + '</strong><span>' + escapeHtml(state.dashboard.profile.name || '我') + ' · 我的本周提交</span></div><button class="button button-primary" type="button" data-open-literature>＋ 提交文献阅读</button></div>' : '<div class="literature-actions"><span class="status-ok">只读参与 · 无提交要求</span></div>',
+      '</div>',
+      canSubmit ? '<div class="progress-track literature-progress" role="progressbar" aria-label="我的本周文献阅读进度" aria-valuenow="' + progress + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + progress + '%"></span></div>' : '',
+      canSubmit ? '<div class="literature-status">' + (literature.completed ? '<span class="status-ok">已达到本周最低篇数，可继续提交</span>' : '<span class="status-wait">还需 ' + Math.max(0, Number(literature.minimum || 3) - Number(literature.mineCount || 0)) + ' 篇达到本周最低要求</span>') + '</div>' : '',
       '<div class="panel-title literature-list-title"><h3>最近7天阅读</h3><span>课题组共同可见 · ' + items.length + ' 条</span></div>',
       items.length ? '<div class="literature-list">' + items.map(function (item) {
         const meta = [item.authors, item.venue, item.year].filter(Boolean).join(' · ');
@@ -869,7 +873,7 @@
   function renderActiveView(preserveModules) {
     if (!state.dashboard) return;
     if (elements.teacherAttentionDialog?.open) renderTeacherAttention();
-    if (state.dashboard.collaborator) { elements.app.innerHTML='<section class="welcome"><h1>项目协作</h1><p>仅显示当前已授权的项目。</p></section>'+renderProjectCard(); bindProjectRetry(); elements.app.querySelectorAll('[data-reload-module]').forEach(b=>b.onclick=()=>reloadModule('projects')); updateModuleNotice(); return; }
+    if (state.dashboard.collaborator) { elements.app.innerHTML=renderCollaborator(); bindViewActions(); bindProjectRetry(); updateModuleNotice(); return; }
     const financeCard = preserveModules && elements.app.querySelector('.finance-card');
     if (state.dashboard.weeklyOnly) { renderWeeklyOnly(); return; }
     if (state.activeRole === 'teacher') elements.app.innerHTML = renderTeacher();
@@ -896,7 +900,12 @@
   }
 
   function renderLearningCard() {
-    if (!DEMO_MODE && window.ER2LearningCenter) return '<section class="panel learning-card" data-courses-enabled="false"><p class="kicker">LEARNING</p><div class="panel-title"><h2>学习中心</h2></div><p class="learning-direction">Track A｜感知与语义导航</p><p>阅读教材，逐课记录学习收获。<br>查看回复，按自己的进度继续学习。</p><button class="button button-primary" type="button" data-open-learning-center>进入学习中心</button></section>';
+    if (!DEMO_MODE && window.ER2LearningCenter) {
+      const submit = state.dashboard?.capabilities?.features?.learningSubmit !== false;
+      return '<section class="panel learning-card" data-courses-enabled="false"><p class="kicker">LEARNING</p><div class="panel-title"><h2>学习中心</h2></div><p class="learning-direction">Track A｜感知与语义导航</p><p>' +
+        (submit ? '阅读教材，逐课记录学习收获。<br>查看回复，按自己的进度继续学习。' : '阅读已开放的课程教材。<br>只读参与，无学习记录提交要求。') +
+        '</p><button class="button button-primary" type="button" data-open-learning-center>进入学习中心</button></section>';
+    }
     const course = state.dashboard.student.course || {};
     const enabled = courseSubmissionAvailable();
     const materials = safeUrl(courseUrl());
@@ -912,6 +921,22 @@
 
   function renderFinancePlaceholder() {
     return !DEMO_MODE && window.ER2Finance ? window.ER2Finance.card() : '<section class="panel finance-card"><h2>预算与报销</h2><p>登录后办理采购申请与费用报销。</p></section>';
+  }
+
+  function renderCollaborator() {
+    const profile = state.dashboard.profile || {};
+    const features = state.dashboard.capabilities?.features || {};
+    const enhanced = features.learningRead === true || features.literatureRead === true || features.meetingRead === true;
+    return [
+      '<section class="welcome"><div><p class="kicker">' + (enhanced ? 'DEEP COLLABORATION' : 'PROJECT COLLABORATION') + '</p><h1>' + (enhanced ? '合作工作台' : '项目协作') + '</h1><p>' +
+        (enhanced ? escapeHtml(profile.name || '合作成员') + '可访问获授权的学习、分享与项目内容。' : '仅显示当前已授权的项目。') + '</p></div></section>',
+      '<div class="student-home-layout"><div class="stack student-main">',
+      features.literatureRead ? renderLiteratureSection() : '',
+      '</div><aside class="stack student-side" aria-label="合作资源与项目">',
+      features.learningRead ? renderLearningCard() : '',
+      renderProjectCard(),
+      '</aside></div>', footer()
+    ].join('');
   }
 
   let financeUIInstance, financeObserver;

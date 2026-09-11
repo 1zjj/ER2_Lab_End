@@ -14,7 +14,15 @@ export const CAPABILITIES = Object.freeze({
   BUDGET_APPROVER: 'budget_approver',
   COURSE_REVIEWER: 'course_reviewer',
   PROFESSOR_DIGEST_RECIPIENT: 'professor_digest_recipient',
-  KNOWLEDGE_EDITOR: 'knowledge_editor'
+  KNOWLEDGE_EDITOR: 'knowledge_editor',
+  BASIC_KNOWLEDGE_READ: 'basic_knowledge_read',
+  LEARNING_READ: 'learning_read',
+  LEARNING_SUBMIT: 'learning_submit',
+  MEETING_READ: 'meeting_read',
+  MEETING_EDIT: 'meeting_edit',
+  LITERATURE_READ: 'literature_read',
+  LITERATURE_SUBMIT: 'literature_submit',
+  WEEKLY_SUBMIT: 'weekly_submit'
 });
 
 export const DUTY_MAP = Object.freeze({
@@ -37,6 +45,17 @@ export const CATEGORY_MAP = Object.freeze({
   '临时': CAPABILITIES.TEMPORARY
 });
 
+export const FEATURE_MAP = Object.freeze({
+  '基础知识阅读': CAPABILITIES.BASIC_KNOWLEDGE_READ,
+  '学习资料阅读': CAPABILITIES.LEARNING_READ,
+  '学习记录提交': CAPABILITIES.LEARNING_SUBMIT,
+  '组会资料阅读': CAPABILITIES.MEETING_READ,
+  '组会资料编辑': CAPABILITIES.MEETING_EDIT,
+  '文献阅读': CAPABILITIES.LITERATURE_READ,
+  '文献提交': CAPABILITIES.LITERATURE_SUBMIT,
+  '周报提交': CAPABILITIES.WEEKLY_SUBMIT
+});
+
 export function normalizeCapabilities(rawCapabilities, rawRoles = []) {
   const explicit = arrayValue(rawCapabilities).map(normalize).filter(Boolean);
   const inherited = arrayValue(rawRoles).map((value) => DUTY_MAP[String(value || '').trim()] || normalize(value)).filter(Boolean);
@@ -47,11 +66,13 @@ export function capabilitiesFromMemberFields(fields = {}) {
   const boundary = String(fields['人员边界'] || '').trim();
   const category = String(fields['成员类别'] || '').trim();
   const duties = arrayValue(fields['系统职责']);
+  const features = arrayValue(fields['功能授权']);
   const out = [];
   if (boundary === '团队内') out.push(CAPABILITIES.INTERNAL_MEMBER);
   if (boundary === '团队外') out.push(CAPABILITIES.EXTERNAL_MEMBER);
   if (CATEGORY_MAP[category]) out.push(CATEGORY_MAP[category]);
   for (const duty of duties) if (DUTY_MAP[duty]) out.push(DUTY_MAP[duty]);
+  for (const feature of features) if (FEATURE_MAP[feature]) out.push(FEATURE_MAP[feature]);
   return [...new Set(out)];
 }
 

@@ -31,6 +31,16 @@ try{
   assert.equal((await call(id,'/api/literature','POST')).status,403);
   assert.equal((await call(id,'/api/reports','POST')).status,403);
  }
+ people.push({record_id:'person6',fields:{'人员编号':'P-006','姓名':'深度合作学生','飞书成员':[{id:'ou_fixture_6'}],
+   '成员类别':'联合培养','人员边界':'团队外','系统职责':[],'人员状态':'在组','保密等级':'受限',
+   '功能授权':['基础知识阅读','学习资料阅读','学习记录提交','组会资料阅读','组会资料编辑','文献阅读','文献提交']}});
+ relations.push({record_id:'relation6',fields:{'关联人员':['person6'],'关联项目':['project1'],'权限级别':'编辑','授权状态':'有效',
+   '工作台授权确认':'已确认','权限落实状态':'已落实','成员边界':'团队外','加入日期':'2026-09-11','权限到期日':'2027-09-10','审批人':[{id:'ou_fixture_1'}]}});
+ const externalStart=await(await call(6,'/api/dashboard/start')).json();
+ assert.equal(externalStart.capabilities.features.learningSubmit,true);assert.equal(externalStart.capabilities.features.literatureSubmit,true);
+ assert.equal(externalStart.moduleLoading.literature,true);
+ assert.equal((await call(6,'/api/literature')).status,200);
+ assert.notEqual((await call(6,'/api/literature','POST')).status,403,'Explicit submit permission passes the route authorization layer');
  assert.equal((await(await call(3,'/api/literature')).json()).literature.items.length,1);
  for(const id of [1,2]){
   const data=await(await call(id,'/api/projects')).json();assert.equal(data.projects.length,1);assert.equal(data.projects[0].permission,3);

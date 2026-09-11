@@ -4,7 +4,7 @@ import { weeklyHash, weeklyRevision, weeklyDates, historyPage } from './weekly-h
 import { evidenceText, serializeWeekly, weeklyValues, weeklyMatches, weeklyCompatibility, WEEKLY_VERSION } from './weekly-write.js';
 import { weeklyRoster, isWeeklySubmitted, hasWeeklyIssue, weeklyAutomationConfiguration } from './weekly-policy.js';
 import { recordPage } from './feishu-record-page.js';
-import { authority, AUTH_BINDINGS, strictBinding, identity, canProject, requireProject, businessProjectId, visibleProjects, hasProjectScope, isInternalMember, isAdministrator } from './authorization.js';
+import { authority, AUTH_BINDINGS, strictBinding, identity, canProject, requireProject, businessProjectId, visibleProjects, hasProjectScope, isInternalMember, isAdministrator, memberFeatures } from './authorization.js';
 import { resolveTableBinding as resolveBinding } from './v2/bindings.js';
 import { courseCapabilities } from './capabilities.js';
 import { canonicalProjectData, projectState } from './project-master.js';
@@ -42,6 +42,15 @@ const TRACK_A_LESSONS = [
   { id: '09', title: '语义导航', prompt: '语义信息如何参与地图构建和导航决策？' },
   { id: '10', title: '综合实验与课程总结', prompt: '如何将感知、定位、建图、规划和控制组成完整闭环？' }
 ];
+
+function externalRouteAllowed(session, path, method) {
+  if (['/api/dashboard', '/api/dashboard/start', '/api/projects'].includes(path) || path.startsWith('/api/projects/')) return true;
+  const features = memberFeatures(session);
+  if (path === '/api/literature') return method === 'GET' ? features.literatureRead : method === 'POST' && features.literatureSubmit;
+  if (path === '/api/weekly' || path === '/api/reports/history') return method === 'GET' && features.weeklySubmit;
+  if (path === '/api/reports') return method === 'POST' && features.weeklySubmit;
+  return false;
+}
 
 export default {
   async fetch(request, env, ctx) {
@@ -93,7 +102,8 @@ export default {
         ? await requireMemberIdentity(env, session) : await requireActiveMember(env, session);
       if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(request.method) && url.pathname.startsWith('/api/')) enforceWriteRateLimit(session.sub);
       if (url.pathname === '/api/me' && request.method === 'GET') return json(request, env, { profile: { sub: session.sub, personId: session.personId, name: session.name, roles: session.roles } });
-      if (!isInternalMember(session) && !['/api/dashboard', '/api/dashboard/start', '/api/projects'].includes(url.pathname) && !url.pathname.startsWith('/api/projects/')) throw httpError(403, '当前协作者仅可访问明确授权的项目');
+      if (!isInternalMember(session) && !externalRouteAllowed(session, url.pathname, request.method))
+        throw httpError(403, '当前协作者没有该功能权限');
       if (url.pathname.startsWith('/api/courses/') && request.method === 'POST' && !courseCapabilities(env).submissionEnabled)
         return json(request, env, { code: 'COURSE_UNAVAILABLE', message: '课程提交暂未开放，请在本周工作记录中填写学习与方法。' }, 503);
       if (url.pathname === '/api/admin/literature-source' && request.method === 'GET') return await weeklySource(request, env, session, 'LITERATURE_TABLE_ID');
@@ -184,7 +194,13 @@ async function authCallback(request, env) {
 // Identity is the only prerequisite for rendering the shell. Each data module
 // still performs its own fresh authorization before returning any records.
 async function dashboardStart(request, env, session) {
-  if (!isInternalMember(session)) return json(request, env, { progressive: true, collaborator: true, profile: {sub:session.sub,personId:session.personId,name:session.name,roles:session.roles}, student:{projects:[]}, catalog:[], moduleErrors:{}, moduleLoading:{projects:true}, capabilities:{internal:false} });
+  if (!isInternalMember(session)) {
+    const features = memberFeatures(session);
+    return json(request, env, { progressive: true, collaborator: true,
+      profile: {sub:session.sub,personId:session.personId,name:session.name,roles:session.roles},
+      student:{projects:[]}, literature:null, catalog:[], moduleErrors:{},
+      moduleLoading:{projects:true,...(features.literatureRead?{literature:true}:{})}, capabilities:{internal:false,features} });
+  }
   const people = memberSnapshots.get(session) || [];
   const members = people.flatMap(record => { try {
     const member = authority(people, [], [], identity(record));
@@ -201,7 +217,7 @@ async function dashboardStart(request, env, session) {
     profile: { sub: session.sub, personId: session.personId, name: session.name, track: session.track || '', roles: session.roles },
     week, student, teacher, manager, literature: null, catalog: [], moduleErrors: {},
     moduleLoading: { weekly: true, projects: true, literature: true, extras: true },
-    capabilities: { courses: courseCapabilities(env) }
+    capabilities: { courses: courseCapabilities(env), features: memberFeatures(session) }
   });
 }
 
@@ -242,9 +258,14 @@ async function dashboardBootstrap(request, env, session) {
 async function dashboard(request, env, session, options = {}) {
   if (!isInternalMember(session)) {
     if (!options.authorizationReady) session=await requireActiveMember(env,session);
+    const features=memberFeatures(session);
     const records=options.projectRecords || projectSnapshots.get(session)||await listRecords(env,await getTenantToken(env),'PROJECTS_TABLE_ID');
     const projects=visibleProjects(session,records).map(r=>projectView(r,session));
-    return json(request,env,{collaborator:true,profile:{sub:session.sub,personId:session.personId,name:session.name,roles:session.roles},student:{projects},catalog:projects.map(p=>({title:p.title,url:p.url,category:'项目',subtitle:'进入项目'})),moduleErrors:{},...(options.readContext?{readContext:options.readContext}:{}),capabilities:{internal:false}});
+    return json(request,env,{collaborator:true,progressive:Boolean(options.coreOnly),
+      profile:{sub:session.sub,personId:session.personId,name:session.name,roles:session.roles},student:{projects},literature:null,
+      catalog:projects.map(p=>({title:p.title,url:p.url,category:'项目',subtitle:'进入项目'})),moduleErrors:{},
+      ...(options.coreOnly&&features.literatureRead?{moduleLoading:{literature:true}}:{}),
+      ...(options.readContext?{readContext:options.readContext}:{}),capabilities:{internal:false,features}});
   }
   const section = new URL(request.url).searchParams.get('section');
   const extrasOnly = section === 'extras';
@@ -344,10 +365,11 @@ async function dashboard(request, env, session, options = {}) {
   return json(request, env, { profile, week: currentWeek, student, teacher, manager, literature, catalog, moduleErrors, moduleDiagnostics,
     ...(options.readContext ? { readContext: options.readContext } : {}),
     ...(coreOnly ? { progressive: true, moduleLoading: { literature: true }, moduleDeferred: { extras: true } } : {}),
-    capabilities: { courses: coursesCapability } });
+    capabilities: { courses: coursesCapability, features: memberFeatures(session) } });
 }
 
 function buildLiterature(session, week, records) {
+  const access = memberFeatures(session);
   const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
   const labels = literatureIdentityLookup(memberSnapshots.get(session) || [session.memberRecord].filter(Boolean));
   const items = records.map((record) => {
@@ -388,8 +410,10 @@ function buildLiterature(session, week, records) {
   return {
     weekId: week.id,
     mineCount,
-    minimum: 3,
-    completed: mineCount >= 3,
+    minimum: access.literatureSubmit ? 3 : 0,
+    completed: !access.literatureSubmit || mineCount >= 3,
+    canSubmit: access.literatureSubmit,
+    targetRequired: access.literatureSubmit,
     items
   };
 }
@@ -412,7 +436,7 @@ function formatRecordDate(value) {
 }
 
 async function getLiterature(request, env, session) {
-  if (!isInternalMember(session)) throw httpError(403,'组内文献仅向正式团队内成员开放');
+  if (!memberFeatures(session).literatureRead) throw httpError(403,'当前账号没有文献阅读权限');
   const tenantToken = await getTenantToken(env);
   const currentWeek = weekInfo(new Date());
   const previousWeek = weekInfo(new Date(Date.now() - 7 * 86400000));
@@ -421,6 +445,7 @@ async function getLiterature(request, env, session) {
 }
 
 async function coordinateLiteratureSave(request, env, session) {
+  if (!memberFeatures(session).literatureSubmit) throw httpError(403,'当前账号没有文献提交权限');
   if (!env.WEEKLY_WRITES) throw Object.assign(httpError(503, '文献保存保护尚未就绪，请稍后重试'), { code: 'LITERATURE_WRITE_FAILED' });
   const binding = resolveTableBinding(env, 'LITERATURE_TABLE_ID');
   const app = await resolveBitableAppToken(binding, await getTenantToken(env));
@@ -434,7 +459,7 @@ export async function executeLiteratureRequest(request, env, storage) {
   try {
     if (request.method !== 'POST' || new URL(request.url).pathname !== '/api/literature') throw httpError(404, '接口不存在');
     const session = await requireMemberIdentity(env, await requireSession(request, env));
-    if (!isInternalMember(session)) throw httpError(403,'组内文献仅向正式团队内成员开放');
+    if (!memberFeatures(session).literatureSubmit) throw httpError(403,'当前账号没有文献提交权限');
     return await saveLiterature(request, env, session, storage);
   } catch (error) {
     const status = Number(error.status || 500);
@@ -1707,7 +1732,8 @@ function readContextClaims(session, env = {}) {
         '人员状态': '在组',
         '人员边界': fields['人员边界'],
         '成员类别': fields['成员类别'],
-        '保密等级': fields['保密等级']
+        '保密等级': fields['保密等级'],
+        '功能授权': fields['功能授权'] || []
       }
     },
     exp: epoch() + Math.min(30, remaining)

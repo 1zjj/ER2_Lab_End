@@ -9,6 +9,12 @@ export const people = [
   ['P-004','学生乙','ou_other','博士',['管理员','课程审核']]
 ].map(([id,name,sub,kind,duties]) => ({ record_id: 'rec-' + id, fields: { '人员编号':id,'姓名':name,'飞书成员':[{id:sub}],
   '人员状态':'在组','人员边界':'团队内','成员类别':kind,'系统职责':duties } }));
+people.push(
+  { record_id:'rec-P-005', fields:{'人员编号':'P-005','姓名':'外部教授','飞书成员':[{id:'ou_external_professor'}],
+    '人员状态':'在组','人员边界':'团队外','成员类别':'联合培养','功能授权':['学习资料阅读']} },
+  { record_id:'rec-P-006', fields:{'人员编号':'P-006','姓名':'外部学生','飞书成员':[{id:'ou_external_student'}],
+    '人员状态':'在组','人员边界':'团队外','成员类别':'联合培养','功能授权':['学习资料阅读','学习记录提交']} }
+);
 export const env = { LEARNING_REVIEWER_PERSON_ID:'P-002', LEARNING_PROFESSOR_PERSON_ID:'P-001', FRONTEND_URL:'https://example.test/' };
 const context = sub => ({ actor: learningActor(people, sub), people, access: learningAccess(learningActor(people, sub), people, env) });
 class Storage {
@@ -35,9 +41,13 @@ assert.equal(learningRecipient(people,env,'professor').sub,'ou_professor');
 assert.throws(()=>learningInput(submit('01',{gains:' '}),'submit'));
 assert.throws(()=>learningInput(submit('01',{subject:'ou_other'}),'submit'));
 assert.throws(()=>learningInput(submit('01',{trackId:'B'}),'submit'));
-for (const [field,value] of [['人员状态','离组'],['人员编号',''],['人员边界','团队外']]) {
+for (const [field,value] of [['人员状态','离组'],['人员编号','']]) {
   const copy=structuredClone(people); copy[2].fields[field]=value; assert.throws(()=>learningActor(copy,'ou_student'));
 }
+assert.equal(learningAccess(learningActor(people,'ou_external_professor'),people,env).canSubmit,false);
+assert.equal(learningAccess(learningActor(people,'ou_external_student'),people,env).canSubmit,true);
+const noGrant=structuredClone(people); noGrant[4].fields['功能授权']=[];
+assert.throws(()=>learningActor(noGrant,'ou_external_professor'));
 assert.throws(()=>learningActor([...people,people[2]],'ou_student'));
 const first=await run('ou_student','/submit',submit('01'));
 assert.equal(first.saved,true); assert.equal(first.records.length,1);

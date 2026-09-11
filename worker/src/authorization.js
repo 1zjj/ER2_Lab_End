@@ -2,6 +2,33 @@
 export const AUTH_BINDINGS = ['MEMBERS_TABLE_ID', 'PROJECTS_TABLE_ID', 'AUTH_PROJECTS_TABLE_ID', 'PROJECT_MEMBERS_TABLE_ID'];
 export const text = value => Array.isArray(value) ? value.map(text).join('') : String(value && typeof value === 'object' ? value.text ?? value.name ?? value.value ?? '' : value ?? '').trim();
 const values = value => (Array.isArray(value) ? value : value ? [value] : []).map(text).filter(Boolean);
+export const FEATURE_GRANTS = Object.freeze({
+  BASIC_KNOWLEDGE_READ: '基础知识阅读',
+  LEARNING_READ: '学习资料阅读',
+  LEARNING_SUBMIT: '学习记录提交',
+  MEETING_READ: '组会资料阅读',
+  MEETING_EDIT: '组会资料编辑',
+  LITERATURE_READ: '文献阅读',
+  LITERATURE_SUBMIT: '文献提交',
+  WEEKLY_SUBMIT: '周报提交'
+});
+
+export function memberFeatures(context) {
+  const internal = isInternalMember(context);
+  const roles = Array.isArray(context?.roles) ? context.roles : [];
+  const explicit = new Set(values(context?.memberRecord?.fields?.['功能授权']));
+  const granted = key => explicit.has(FEATURE_GRANTS[key]);
+  return {
+    basicKnowledgeRead: internal || granted('BASIC_KNOWLEDGE_READ'),
+    learningRead: internal || granted('LEARNING_READ') || granted('LEARNING_SUBMIT'),
+    learningSubmit: internal ? roles.includes('student') : granted('LEARNING_SUBMIT'),
+    meetingRead: internal || granted('MEETING_READ') || granted('MEETING_EDIT'),
+    meetingEdit: internal || granted('MEETING_EDIT'),
+    literatureRead: internal || granted('LITERATURE_READ') || granted('LITERATURE_SUBMIT'),
+    literatureSubmit: internal || granted('LITERATURE_SUBMIT'),
+    weeklySubmit: internal ? roles.includes('student') : granted('WEEKLY_SUBMIT')
+  };
+}
 // Explicit user-approved matrix; personnel labels are not an ordinal scale.
 export function confidentialityAllows(personLevel, projectLevel) {
   const matrix = { '普通': ['公开'], '受限': ['公开', '内部'], '内部': ['公开', '内部', '机密', '绝密'] };
@@ -125,8 +152,10 @@ export function authority(people, projects, relations, openId, now = Date.now())
     const statuses = ['项目阶段', '项目状态', '状态'].map(k => text(p.fields?.[k])).filter(Boolean);
     return [id, { writable: new Set(statuses).size === 1 && ['执行中', '进行中'].includes(statuses[0]) }];
   }));
-  return { personId, sub: openId, name: text(f['姓名']), roles: [...new Set(roles)], duties: internal ? duties : [], projectPolicies,
+  const result = { personId, sub: openId, name: text(f['姓名']), roles: [...new Set(roles)], duties: internal ? duties : [], projectPolicies,
     teacherOpenId: supervisor ? identity(supervisor) : /^ou_[\w-]+$/.test(directId) ? directId : '', projectCode: '', track: '', grants, memberRecord: record };
+  result.features = memberFeatures(result);
+  return result;
 }
 export function canProject(context, id, action = 'read') {
   const required = { read: 1, edit: 2, manage: 3 }[action];

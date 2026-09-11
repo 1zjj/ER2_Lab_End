@@ -3,7 +3,7 @@ import { weeklyRevision } from './src/weekly-history.js';
 import { WEEKLY_FIELDS } from './src/weekly-write.js';
 import assert from 'node:assert/strict';
 import service from './src/runtime.js';
-import { authority, canProject, strictBinding, identity } from './src/authorization.js';
+import { authority, canProject, strictBinding, identity, memberFeatures } from './src/authorization.js';
 import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
 import { checkBindings } from './check-p0-bindings.mjs';
@@ -285,6 +285,15 @@ try {
   await test('master and mirror policy drift denies access until synchronized', async()=>{rows.projects[0].fields['项目阶段']='暂停';assert.equal((await call(1,'/api/projects/PRJ-001')).status,403);assert.equal((await call(9,'/api/projects/PRJ-001')).status,403);});
   await test('conflicting project status denies', async () => { projects[0].fields['状态'] = '已归档'; assert.equal((await call(1, '/api/projects/PRJ-001')).status, 403); });
   await test('external member cannot inherit global administrator duty', async () => { people[0].fields['人员边界'] = '团队外'; people[0].fields['系统职责'] = ['管理员', '课程审核']; const r = await (await call(1, '/api/me')).json(); assert.deepEqual(r.profile.roles, ['collaborator']); });
+  await test('external collaboration features are explicit and split read from submit', async () => {
+    people[0].fields['人员边界'] = '团队外';
+    people[0].fields['功能授权'] = ['学习资料阅读', '文献阅读', '组会资料编辑'];
+    const features = memberFeatures(authority(people, projects, relations, 'ou_1'));
+    assert.equal(features.learningRead, true); assert.equal(features.learningSubmit, false);
+    assert.equal(features.literatureRead, true); assert.equal(features.literatureSubmit, false);
+    assert.equal(features.meetingRead, true); assert.equal(features.meetingEdit, true);
+    assert.equal(features.weeklySubmit, false);
+  });
   await test('same-day Feishu numeric expiry includes Shanghai day', async () => {
     const midnight = Math.floor((Date.now() + 8 * 3600000) / 86400000) * 86400000 - 8 * 3600000;
     relations[0].fields['权限到期日'] = midnight;

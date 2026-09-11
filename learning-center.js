@@ -21,7 +21,7 @@
     dialog.addEventListener('close', () => { if (dialog.open) return; generation++; view++; pending = false; dialog.innerHTML = ''; });
     function shell() {
       dialog.innerHTML = '<header class="learning-modal-header"><div><p class="kicker">LEARNING</p><h2 id="learning-dialog-title">学习中心</h2></div><button type="button" class="button button-ghost" data-learning-close aria-label="关闭学习中心">×</button></header>' +
-        '<p class="learning-intro">每课提交文字学习记录即可继续。朱俊杰可回复；无需等待回复或审核。</p>' +
+        '<p class="learning-intro" data-learning-intro>正在确认当前账号的学习权限…</p>' +
         '<div class="learning-tabs" data-learning-tabs></div><p role="status" class="learning-status" data-learning-status>正在读取学习记录…</p>' +
         '<div class="learning-workspace"><nav aria-label="课程目录" data-learning-nav></nav><section class="learning-detail" data-learning-detail><p>请选择一节课程。</p></section></div>';
       dialog.querySelector('[data-learning-close]').onclick = () => dialog.close();
@@ -35,15 +35,21 @@
     }
     function progress() {
       const track = model.catalog.tracks.find(t => t.id === 'A');
+      if (!model.access.canSubmit) { status('只读参与 · 无学习记录提交要求'); return; }
       const completed = track.lessons.filter(l => model.records.some(r => r.trackId === 'A' && r.lessonId === l.id)).length;
       status('Track A：已提交 ' + completed + ' / ' + track.lessons.length + (completed === track.lessons.length ? ' · 已完成学习，完成提醒单独发送。' : ' · 回复不影响继续学习。'));
     }
     function renderCourses() {
       selection = null; pending = false; progress();
-      dialog.querySelector('[data-learning-detail]').innerHTML = '<p>选择课程后，可阅读知识库教材、提交学习记录和查看回复。</p><p class="muted">提交内容仅本人和管理员可查看；朱俊杰负责回复，教授接收 Track 全部完成提醒。</p>';
+      dialog.querySelector('[data-learning-intro]').textContent = model.access.canSubmit ?
+        '每课提交文字学习记录即可继续。朱俊杰可回复；无需等待回复或审核。' :
+        '当前为只读学习权限，可阅读全部已开放教材，不产生提交或进度要求。';
+      dialog.querySelector('[data-learning-detail]').innerHTML = model.access.canSubmit ?
+        '<p>选择课程后，可阅读知识库教材、提交学习记录和查看回复。</p><p class="muted">提交内容仅本人和管理员可查看；朱俊杰负责回复，教授接收 Track 全部完成提醒。</p>' :
+        '<p>选择课程后即可打开知识库教材。</p><p class="muted">只读参与，不显示学习进度，也不能查看其他成员的学习记录。</p>';
       dialog.querySelector('[data-learning-nav]').innerHTML = model.catalog.tracks.map(t => '<details class="learning-track"' + (t.id === 'A' ? ' open' : '') + '><summary>' + escape(t.title) + '</summary>' +
         (t.available ? t.lessons.map(l => { const record = model.records.find(r => r.trackId === t.id && r.lessonId === l.id);
-          return '<button type="button" class="learning-lesson-button" data-learning-lesson="' + escape(t.id + ':' + l.id) + '"><span>Lesson ' + escape(l.id) + ' · ' + escape(l.title) + '</span><small>' + (record ? record.lastKind === 'reply' ? '已提交 · 有回复' : '已提交' : '待提交') + '</small></button>'; }).join('') : '<p class="muted">待开放，暂不计入学习进度。</p>') + '</details>').join('');
+          return '<button type="button" class="learning-lesson-button" data-learning-lesson="' + escape(t.id + ':' + l.id) + '"><span>Lesson ' + escape(l.id) + ' · ' + escape(l.title) + '</span><small>' + (model.access.canSubmit ? (record ? record.lastKind === 'reply' ? '已提交 · 有回复' : '已提交' : '待提交') : '阅读教材') + '</small></button>'; }).join('') : '<p class="muted">待开放，暂不计入学习进度。</p>') + '</details>').join('');
       dialog.querySelectorAll('[data-learning-lesson]').forEach(b => b.onclick = () => {
         const [trackId, lessonId] = b.dataset.learningLesson.split(':');
         showLesson({ trackId, lessonId, subject: owner, name: getProfile().name });

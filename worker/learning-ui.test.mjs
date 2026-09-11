@@ -15,7 +15,7 @@ const records=[],events=[],writes=[];
 w.fetch=async(url,opts={})=>{
   const path=new URL(url).pathname;
   assert.ok(path.startsWith('/api/learning'),'learning UI cannot call weekly, people or project write routes');
-  if(path==='/api/learning')return Response.json({catalog:LEARNING_CATALOG,records,access:{canSubmit:profile.sub!=='ou_professor',canReview:profile.sub==='ou_junjie',canViewAll:profile.sub==='ou_professor'}});
+  if(path==='/api/learning')return Response.json({catalog:LEARNING_CATALOG,records,access:{canSubmit:!['ou_professor','ou_external_professor'].includes(profile.sub),canReview:profile.sub==='ou_junjie',canViewAll:profile.sub==='ou_professor'}});
   if(path==='/api/learning/inbox')return Response.json({records,next:'',notificationIssues:[]});
   if(path==='/api/learning/record'){
     if(slowResolve===true) return new Promise(resolve=>{slowResolve=resolve;});
@@ -55,6 +55,10 @@ try {
   assert.equal(writes.at(-1).path,'/api/learning/reply');assert.equal(writes.at(-1).body.subject,'ou_student');
   ui.reset();profile={sub:'ou_professor',personId:'P-001',name:'教授'};drafts.bind(profile.sub);await ui.open(true);
   d.querySelector('[data-inbox-index="0"]').click();await wait(()=>d.querySelector('.learning-history'));assert.equal(d.querySelector('.learning-form'),null,'Professor can read but cannot reply without review duty');
+  ui.reset();profile={sub:'ou_external_professor',personId:'P-005',name:'外部教授'};drafts.bind(profile.sub);await ui.open(false);
+  assert.match(d.querySelector('[data-learning-status]').textContent,/只读参与/);assert.doesNotMatch(d.querySelector('dialog').textContent,/待提交/);
+  d.querySelector('[data-learning-lesson="A:01"]').click();await wait(()=>d.querySelector('.learning-detail a'));
+  assert.equal(d.querySelector('.learning-form'),null,'External professor can read materials but cannot submit');
   assert.deepEqual(errors,[]);
   globalThis.console.log('PASS learning modal: ten linked lessons, one required field, text escaping, loss/retry, append-only history, reopen, account switch and reviewer reply; weekly form/draft unchanged');
 } finally {dom.window.close();}

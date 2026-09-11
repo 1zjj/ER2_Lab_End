@@ -7,7 +7,7 @@ export const SCHEMAS = Object.freeze({
       '成员编号', '姓名', '飞书成员', '人员边界', '成员类别', '人员状态',
       '入组时间', '保密等级', '培训状态', '直属负责人', '关联项目', '系统职责'
     ],
-    recommended: ['飞书OpenID', '离组时间', '联合培养/外部导师', '备注']
+    recommended: ['飞书OpenID', '离组时间', '联合培养/外部导师', '功能授权', '备注']
   },
   weekly: {
     tableBinding: 'WEEKLY_TABLE_ID',

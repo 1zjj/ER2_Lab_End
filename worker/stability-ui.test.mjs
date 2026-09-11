@@ -33,7 +33,7 @@ async function setup({deniedStorage=false,missingScript=false,collaborator=false
   let data;
   if(responses.has(path))data=await responses.get(path)(options);
   else if(path==='/data/catalog.json')data=[];
-  else if(path==='/api/bootstrap')data=collaborator?{collaborator:true,profile:{sub:'external-fixture',personId:'P-901',name:'合成协作者',roles:['collaborator']},student:{projects:[]},catalog:[],moduleErrors:{}}:structuredClone(core);
+  else if(path==='/api/bootstrap')data=collaborator==='deep'?{collaborator:true,progressive:true,profile:{sub:'external-deep',personId:'P-902',name:'深度合作教授',roles:['collaborator']},student:{projects:[]},literature:null,catalog:[],moduleErrors:{},moduleLoading:{literature:true},capabilities:{internal:false,features:{learningRead:true,learningSubmit:false,literatureRead:true,literatureSubmit:false}}}:collaborator?{collaborator:true,profile:{sub:'external-fixture',personId:'P-901',name:'合成协作者',roles:['collaborator']},student:{projects:[]},catalog:[],moduleErrors:{}}:structuredClone(core);
   else if(path==='/api/finance')data={ready:true,statuses:{draft:'草稿'},access:{canSubmit:true,canConfigure:true,canReview:true}};
   else if(path==='/api/weekly')data=await pending.get('weekly').promise;
   else if(path==='/api/projects')data=await pending.get('projects').promise;
@@ -151,4 +151,18 @@ console.log('PASS teacher feedback remains attached to its submitted student/rep
   assert.deepEqual(errors,[]);
  }finally{dom.window.close();}
  console.log('PASS collaborator UI only requests authorized project modules');
+}
+{
+ const {w,dom,errors,requests,pending}=await setup({collaborator:'deep'});
+ try{
+  await settle(()=>w.document.querySelector('[data-open-learning-center]'));
+  pending.get('literature').resolve({literature:{items:[],mineCount:0,minimum:0,canSubmit:false,targetRequired:false}});
+  await settle(()=>w.document.querySelector('.literature-panel')?.textContent.includes('只读参与'));
+  assert.match(w.document.querySelector('#app-root').textContent,/合作工作台/);
+  assert.equal(w.document.querySelector('[data-open-literature]'),null,'Read-only professor has no literature submit control');
+  assert.equal(w.document.querySelector('.finance-card'),null);
+  assert.deepEqual(requests.filter(r=>r.path.startsWith('/api/')).map(r=>r.path).sort(),['/api/bootstrap','/api/literature']);
+  assert.deepEqual(errors,[]);
+ }finally{dom.window.close();}
+ console.log('PASS deep collaborator UI: learning materials and read-only literature without internal modules');
 }

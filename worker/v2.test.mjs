@@ -33,12 +33,13 @@ import { nextPersonId, validatePersonRecord, mayUseWorkbench, normalizePersonRec
 }
 
 {
-  const fields = { 人员边界:'团队内', 成员类别:'硕士', 系统职责:['管理员','课程审核'] };
+  const fields = { 人员边界:'团队内', 成员类别:'硕士', 系统职责:['管理员','课程审核'], 功能授权:['文献阅读'] };
   const caps = capabilitiesFromMemberFields(fields);
   assert.ok(caps.includes('internal_member'));
   assert.ok(caps.includes('master'));
   assert.ok(caps.includes('admin'));
   assert.ok(caps.includes('course_reviewer'));
+  assert.ok(caps.includes('literature_read'));
   assert.equal(isAdmin({ capabilities: caps }), true);
   assert.equal(canReviewCourses({ capabilities: caps }), true);
   assert.equal(canHandleFinance({ capabilities: caps }), false);
