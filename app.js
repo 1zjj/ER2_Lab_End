@@ -450,7 +450,9 @@
         if (new URLSearchParams(location.search).get('page') === 'weekly') data = await loadRead('/api/weekly');
         else {
           try {
-            data = await loadRead('/api/dashboard' + (role ? '?role=' + encodeURIComponent(role) : ''));
+            const query = new URLSearchParams({ section: 'core' });
+            if (role) query.set('role', role);
+            data = await loadRead('/api/dashboard?' + query.toString());
           } catch (error) {
             if (!error.status || error.status < 500 || error.binding === 'MEMBERS_TABLE_ID' || error.code === 'REQUEST_TIMEOUT') throw error;
             data = await loadRead('/api/weekly');
@@ -479,7 +481,13 @@
       elements.loading.hidden = true;
       elements.app.hidden = false;
       if (new URLSearchParams(location.search).get('page') === 'weekly' && roles.includes('student')) openReportDialog();
-      if (data.progressive) (data.collaborator ? ['projects'] : ['weekly', 'projects', 'literature', 'extras']).forEach(function (name) { reloadModule(name); });
+      if (data.progressive) {
+        const pendingModules = Object.keys(data.moduleLoading || {});
+        pendingModules.filter(function (name) { return name !== 'extras'; }).forEach(function (name) { reloadModule(name); });
+        if (pendingModules.includes('extras')) setTimeout(function () {
+          if (current()) reloadModule('extras');
+        }, 350);
+      }
       const learningPage = new URLSearchParams(location.search).get('page');
       if (!data.collaborator && !DEMO_MODE && window.ER2LearningCenter && ['learning', 'learning-inbox'].includes(learningPage))
         learningUI().open(learningPage === 'learning-inbox');
@@ -1878,6 +1886,6 @@
     .catch(function () { /* Search metadata must not delay or clear live data. */ });
   if (DEMO_MODE) catalogRequest.finally(function () { loadDashboard(new URLSearchParams(location.search).get('view')); });
   else loadDashboard(new URLSearchParams(location.search).get('view'));
-  if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('./sw.js?v=20260911-1').catch(function () {});
+  if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('./sw.js?v=20260911-2').catch(function () {});
   window.ER2_APP_STARTED = true;
 }());

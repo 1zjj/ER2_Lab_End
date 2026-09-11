@@ -69,6 +69,10 @@ try {
     counts[path] = calls.length;
   }
   assert.deepEqual(counts, { '/api/me': 1, '/api/weekly': 2, '/api/reports/history': 2, '/api/dashboard': 8 });
+  calls = []; const core = await (await call('/api/dashboard?section=core')).json();
+  assert.equal(core.progressive, true); assert.deepEqual(core.moduleLoading, { literature: true, extras: true });
+  assert.equal(calls.length, 5, 'Core first paint only reads identity, weekly, projects and authorization');
+  assert.equal(calls.some(c => /^(literature|tasks|links):/.test(c)), false);
   calls = []; const first = await call('/api/reports', 1, draft);
   assert.equal(first.status, 200); assert.equal((await first.json()).readBackVerified, true);
   assert.equal(calls.length, 7); assert.equal(writes, 1);

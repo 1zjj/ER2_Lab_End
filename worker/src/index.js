@@ -200,7 +200,9 @@ async function dashboard(request, env, session) {
     const projects=visibleProjects(session,records).map(r=>projectView(r,session));
     return json(request,env,{collaborator:true,profile:{sub:session.sub,personId:session.personId,name:session.name,roles:session.roles},student:{projects},catalog:projects.map(p=>({title:p.title,url:p.url,category:'项目',subtitle:'进入项目'})),moduleErrors:{},capabilities:{internal:false}});
   }
-  const extrasOnly = new URL(request.url).searchParams.get('section') === 'extras';
+  const section = new URL(request.url).searchParams.get('section');
+  const extrasOnly = section === 'extras';
+  const coreOnly = section === 'core';
   const requestedRole = new URL(request.url).searchParams.get('role');
   const role = session.roles.includes(requestedRole) ? requestedRole : session.roles[0];
   if (!role) throw httpError(403, '账号没有可用角色');
@@ -240,10 +242,10 @@ async function dashboard(request, env, session) {
     memberSnapshots.get(session) || listRecords(env, tenantToken, 'MEMBERS_TABLE_ID'),
     extrasOnly ? [] : optionalFiltered('weekly', 'WEEKLY_TABLE_ID', weekFilter([currentWeek.id])),
     extrasOnly ? [] : (projectSnapshots.get(session)||optional('projects', 'PROJECTS_TABLE_ID')),
-    courseCapabilities(env).enabled ? optional('courses', 'COURSES_TABLE_ID') : Promise.resolve([]),
-    optional('tasks', 'TASKS_TABLE_ID'),
-    optional('links', 'LINKS_TABLE_ID'),
-    extrasOnly ? [] : optionalFiltered('literature', 'LITERATURE_TABLE_ID', weekFilter([currentWeek.id, previousWeek.id])),
+    !coreOnly && courseCapabilities(env).enabled ? optional('courses', 'COURSES_TABLE_ID') : Promise.resolve([]),
+    coreOnly ? [] : optional('tasks', 'TASKS_TABLE_ID'),
+    coreOnly ? [] : optional('links', 'LINKS_TABLE_ID'),
+    extrasOnly || coreOnly ? [] : optionalFiltered('literature', 'LITERATURE_TABLE_ID', weekFilter([currentWeek.id, previousWeek.id])),
     authorizationRead('AUTH_PROJECTS_TABLE_ID'),
     authorizationRead('PROJECT_MEMBERS_TABLE_ID')
   ]);
@@ -285,12 +287,13 @@ async function dashboard(request, env, session) {
     ? buildManager(members, permittedProjects, permittedCourses, env)
     : { stats: {}, automations: [] };
   if (session.roles.includes('manager')) manager.projects = permittedProjects.map(record => projectView(record, session));
-  const literature = moduleErrors.literature ? null : buildLiterature(session, currentWeek, literatureRecords);
+  const literature = coreOnly || extrasOnly || moduleErrors.literature ? null : buildLiterature(session, currentWeek, literatureRecords);
   const catalog = buildCatalog(session, permittedLinks);
   const coursesCapability = courseCapabilities(env);
   if (!coursesCapability.enabled) teacher.courseReview = { visible: false, canConfirm: false, pending: 0, submissions: [] };
   if (moduleErrors.projects) manager.stats.projects = null;
   return json(request, env, { profile, week: currentWeek, student, teacher, manager, literature, catalog, moduleErrors, moduleDiagnostics,
+    ...(coreOnly ? { progressive: true, moduleLoading: { literature: true, extras: true } } : {}),
     capabilities: { courses: coursesCapability } });
 }
 

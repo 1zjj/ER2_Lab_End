@@ -45,13 +45,13 @@ function dashboardContext(request) {
 const calls = [];
 const requiredFailure = dashboardContext(async path => { calls.push(path); throw Object.assign(Error('人员读取失败'), { status: 502, binding: 'MEMBERS_TABLE_ID' }); });
 await requiredFailure.context.loadDashboard();
-assert.deepEqual(calls, ['/api/dashboard'], 'Do not repeat a known failed MEMBERS read through fallback and /api/me');
+assert.deepEqual(calls, ['/api/dashboard?section=core'], 'Do not repeat a known failed MEMBERS read through fallback and /api/me');
 assert.deepEqual(requiredFailure.effects, ['人员读取失败']);
 
 let clock = 0; const budgets = [];
 const fallback = dashboardContext(async (path, options) => {
   budgets.push(options.readTimeoutMs);
-  if (path === '/api/dashboard') { clock = 24000; throw Object.assign(Error('project read failed'), { status: 502, binding: 'AUTH_PROJECTS_TABLE_ID' }); }
+  if (path === '/api/dashboard?section=core') { clock = 24000; throw Object.assign(Error('project read failed'), { status: 502, binding: 'AUTH_PROJECTS_TABLE_ID' }); }
   return { profile: { sub: 'same-user', roles: ['student'] }, weeklyOnly: true };
 });
 fallback.context.Date = { now: () => clock };

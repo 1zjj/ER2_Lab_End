@@ -101,7 +101,7 @@ async function setup({ mineCount = 2, studentRows = students, weeklyError = fals
     assert.ok(['fixture.test', 'api.test'].includes(url.hostname));
     requests.push({ path, method: options.method || 'GET' });
     const data = {
-      '/data/catalog.json': [], '/api/dashboard': { ...bootstrap, progressive: false, moduleLoading: {},
+      '/data/catalog.json': [], '/api/dashboard?section=core': { ...bootstrap, progressive: true, moduleLoading: { literature: true, extras: true },
         moduleErrors: weeklyError ? { weekly: '暂时无法读取' } : {},
         literature: { mineCount, minimum: 3, completed: mineCount >= 3, items: [{ id: 'shared-other', submitter: '其他合成成员', title: '共享文献', contribution: '合成贡献' }] } },
       '/api/weekly': weeklyError ? Response.json({ error: 'synthetic weekly failure' }, { status: 503 }) : weekly,

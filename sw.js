@@ -1,6 +1,6 @@
-const CACHE = 'er2-static-20260911-1';
+const CACHE = 'er2-static-20260911-2';
 const ASSETS = [
-  './styles.css?v=teacher-attention-20260910-1',
+  './styles.css?v=first-paint-20260911-1',
   './learning-center.css?v=learning-text-1',
   './finance.css?v=finance-contact-20260910-1',
   './config.js?v=permissions-20260910-4',
@@ -8,7 +8,7 @@ const ASSETS = [
   './guide-store.js?v=permissions-20260910-4',
   './learning-center.js?v=permissions-20260910-4',
   './finance.js?v=finance-background-sync-20260911-1',
-  './app.js?v=read-performance-20260911-1',
+  './app.js?v=progressive-performance-20260911-1',
   './data/catalog.json'
 ];
 

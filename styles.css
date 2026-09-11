@@ -134,15 +134,27 @@ a { color: inherit; text-decoration: none; }
 .environment-notice strong { padding: 4px 7px; background: #ffecaa; border-radius: 6px; font-size: 11px; }
 .loading-state {
   min-height: 460px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
-  gap: 10px;
+  display: grid;
+  align-content: start;
+  gap: 18px;
   color: var(--muted);
 }
+.loading-copy { display: flex; align-items: center; justify-content: center; gap: 12px; padding-top: 34px; }
+.loading-copy > div { display: grid; gap: 4px; text-align: left; }
 .loading-state strong { color: var(--ink); }
-.loading-state small { font-size: 12px; }
+.loading-state small { display: block; font-size: 12px; }
+.loading-shell { display: grid; gap: 14px; width: 100%; }
+.loading-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.loading-card, .loading-line { position: relative; overflow: hidden; border: 1px solid var(--line); background: #fff; }
+.loading-card { min-height: 180px; border-radius: 22px; }
+.loading-card-wide { min-height: 220px; }
+.loading-line { height: 14px; border: 0; border-radius: 999px; background: #e9eef7; }
+.loading-line-title { width: min(280px, 54%); height: 25px; }
+.loading-line-copy { width: min(480px, 78%); }
+.loading-card::after, .loading-line::after { content: ""; position: absolute; inset: 0; transform: translateX(-100%); background: linear-gradient(90deg, transparent, rgba(47,109,246,.08), transparent); animation: loading-sweep 1.25s infinite; }
+@keyframes loading-sweep { to { transform: translateX(100%); } }
+@media (max-width: 720px) { .loading-grid { grid-template-columns: 1fr; } .loading-card { min-height: 150px; } }
+@media (prefers-reduced-motion: reduce) { .loading-card::after, .loading-line::after { animation: none; } }
 .spinner { width: 34px; height: 34px; border: 3px solid #dce5f8; border-top-color: var(--blue); border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .error-state {

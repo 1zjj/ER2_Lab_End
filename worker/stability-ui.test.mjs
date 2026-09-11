@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { JSDOM, VirtualConsole } from 'jsdom';
 const source = readFileSync(new URL('../app.js', import.meta.url), 'utf8');
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-const settle = async predicate => { for (let i=0;i<100;i++) { if (predicate()) return; await new Promise(r=>setTimeout(r,2)); } throw Error('UI did not settle'); };
+const settle = async predicate => { for (let i=0;i<1000;i++) { if (predicate()) return; await new Promise(r=>setTimeout(r,2)); } throw Error('UI did not settle'); };
 const deferred = () => { let resolve; const promise=new Promise(r=>resolve=r); return {promise,resolve}; };
 const profile={sub:'fixture',personId:'P-001',name:'合成用户',roles:['student','teacher','manager']};
 const week={id:'2026-W37',label:'合成周次',dueLabel:'周五18:00'};
@@ -15,6 +15,9 @@ const extras={...bootstrap,moduleErrors:{},catalog:[],student:{...bootstrap.stud
 const reading={literature:{items:[],mineCount:0,minimum:3}};
 const consolidated={...structuredClone(extras),progressive:false,moduleLoading:{},literature:reading.literature};
 consolidated.student.home=buildStudentHome(consolidated);
+const core=structuredClone(consolidated);
+core.progressive=true;core.moduleLoading={literature:true,extras:true};core.literature=null;core.student.tasks=[];core.student.links=[];
+core.student.home=buildStudentHome(core);
 async function setup({deniedStorage=false,missingScript=false,collaborator=false}={}) {
  const errors=[],requests=[],responses=new Map(),pending=new Map();
  const virtualConsole=new VirtualConsole();virtualConsole.on('jsdomError',e=>errors.push(e.message));
@@ -30,7 +33,7 @@ async function setup({deniedStorage=false,missingScript=false,collaborator=false
   let data;
   if(responses.has(path))data=await responses.get(path)(options);
   else if(path==='/data/catalog.json')data=[];
-  else if(path==='/api/dashboard')data=collaborator?{collaborator:true,profile:{sub:'external-fixture',personId:'P-901',name:'合成协作者',roles:['collaborator']},student:{projects:[]},catalog:[],moduleErrors:{}}:structuredClone(consolidated);
+  else if(path==='/api/dashboard?section=core')data=collaborator?{collaborator:true,profile:{sub:'external-fixture',personId:'P-901',name:'合成协作者',roles:['collaborator']},student:{projects:[]},catalog:[],moduleErrors:{}}:structuredClone(core);
   else if(path==='/api/finance')data={ready:true,statuses:{draft:'草稿'},access:{canSubmit:true,canConfigure:true,canReview:true}};
   else if(path==='/api/weekly')data=await pending.get('weekly').promise;
   else if(path==='/api/projects')data=await pending.get('projects').promise;
@@ -48,18 +51,22 @@ async function setup({deniedStorage=false,missingScript=false,collaborator=false
  const {w,dom,errors,requests,responses,pending}=await setup({deniedStorage:true});
  try{
   await settle(()=>!w.document.querySelector('#app-root').hidden);
+  pending.get('literature').resolve(reading);pending.get('extras').resolve(extras);
   const complete=structuredClone(consolidated);
   const clientHome=JSON.parse(JSON.stringify(w.ER2BuildStudentHome(complete)));delete clientHome.moduleLoading;
   assert.deepEqual(clientHome,buildStudentHome(complete),'Loaded home summary stays equivalent to the original server model');
   assert.equal(w.document.querySelector('#account-name').textContent,'合成用户');
   assert.ok(w.document.querySelector('[data-open-learning-center]'),'Learning is available after the consolidated read');
   await settle(()=>w.document.querySelector('[data-open-report]')&&w.document.querySelector('[data-open-literature]'));
+  await settle(()=>w.document.querySelector('.home-todos')?.textContent.includes('合成任务'));
   assert.match(w.document.querySelector('.home-todos').textContent,/合成任务/);
   assert.ok(w.document.querySelector('[data-home-action="report"]'),'Original weekly todo button remains');
   assert.ok(w.document.querySelector('[data-home-action="literature"]'),'Original literature todo button remains');
   assert.ok(w.document.querySelector('[data-home-action="project"]'),'Original project todo button remains');
-  assert.equal(requests.filter(r=>r.path==='/api/dashboard').length,1,'The initial page uses one consolidated dashboard read');
-  assert.equal(requests.filter(r=>['/api/weekly','/api/projects','/api/literature','/api/dashboard?section=extras'].includes(r.path)).length,0,'Initial modules do not duplicate identity and permission reads');
+  assert.equal(requests.filter(r=>r.path==='/api/dashboard?section=core').length,1,'The initial page reads only the core dashboard');
+  assert.equal(requests.filter(r=>['/api/weekly','/api/projects'].includes(r.path)).length,0,'Core weekly and project reads are not duplicated');
+  assert.equal(requests.filter(r=>r.path==='/api/literature').length,1,'Literature hydrates independently');
+  assert.equal(requests.filter(r=>r.path==='/api/dashboard?section=extras').length,1,'Non-critical modules hydrate after first paint');
   assert.equal(requests.filter(r=>r.path==='/api/finance').length,1,'The visible finance card loads once');
   const save=deferred(),refresh=deferred();responses.set('/api/reports',()=>save.promise);responses.set('/api/weekly',()=>refresh.promise);
   w.document.querySelector('[data-open-report]').click();const form=w.document.querySelector('#report-form');
@@ -138,7 +145,7 @@ console.log('PASS teacher feedback remains attached to its submitted student/rep
   assert.match(w.document.querySelector('#app-root').textContent,/项目协作/);
   assert.equal(w.document.querySelector('.finance-card'),null);assert.equal(w.document.querySelector('.literature-panel'),null);
   assert.equal(w.document.querySelector('[data-open-learning-center]'),null);
-  assert.deepEqual(requests.filter(r=>r.path.startsWith('/api/')).map(r=>r.path).sort(),['/api/dashboard']);
+  assert.deepEqual(requests.filter(r=>r.path.startsWith('/api/')).map(r=>r.path).sort(),['/api/dashboard?section=core']);
   await settle(()=>w.document.querySelector('.project-home-card').textContent.includes('暂无正式分配项目'));
   assert.deepEqual(errors,[]);
  }finally{dom.window.close();}

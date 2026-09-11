@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://er2-lab-api.zhujunjie418.workers.dev" crossorigin>
   <link rel="dns-prefetch" href="//er2-lab-api.zhujunjie418.workers.dev">
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="./styles.css?v=teacher-attention-20260910-1">
+  <link rel="stylesheet" href="./styles.css?v=first-paint-20260911-1">
   <link rel="stylesheet" href="./learning-center.css?v=learning-text-1">
   <link rel="stylesheet" href="./finance.css?v=finance-contact-20260910-1">
 </head>
@@ -45,9 +45,12 @@
     </div>
 
     <section class="loading-state" id="loading-state" aria-live="polite">
-      <span class="spinner" aria-hidden="true"></span>
-      <strong>正在读取你的工作台…</strong>
-      <small>正在确认飞书身份和访问权限</small>
+      <div class="loading-copy"><span class="spinner" aria-hidden="true"></span><div><strong>正在读取你的工作台…</strong><small>正在确认飞书身份和访问权限</small></div></div>
+      <div class="loading-shell" aria-hidden="true">
+        <div class="loading-line loading-line-title"></div><div class="loading-line loading-line-copy"></div>
+        <div class="loading-grid"><div class="loading-card"></div><div class="loading-card"></div></div>
+        <div class="loading-card loading-card-wide"></div>
+      </div>
     </section>
 
     <section class="error-state" id="error-state" hidden role="alert">
@@ -284,6 +287,6 @@
   <script src="./guide-store.js?v=permissions-20260910-4"></script>
   <script src="./learning-center.js?v=permissions-20260910-4"></script>
   <script src="./finance.js?v=finance-background-sync-20260911-1"></script>
-  <script src="./app.js?v=read-performance-20260911-1"></script>
+  <script src="./app.js?v=progressive-performance-20260911-1"></script>
 </body>
 </html>
