@@ -9,6 +9,7 @@ import { resolveTableBinding as resolveBinding } from './v2/bindings.js';
 import { courseCapabilities } from './capabilities.js';
 import { canonicalProjectData, projectState } from './project-master.js';
 import { readScope, readOptions, measureRead, readHeaders } from './read-performance.js';
+import { snapshotRecords, invalidateSnapshot } from './snapshot-cache.js';
 const FEISHU_API = 'https://open.feishu.cn/open-apis';
 const FEISHU_AUTHORIZE = 'https://accounts.feishu.cn/open-apis/authen/v1/authorize';
 const wikiTokenCache = new Map();
@@ -43,9 +44,10 @@ const TRACK_A_LESSONS = [
 ];
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     env = readScope(env, request);
     env.__er2ReadOnly = request.method === 'GET';
+    if (ctx?.waitUntil) env.__er2WaitUntil = promise => ctx.waitUntil(promise);
     const url = new URL(request.url);
     requestIds.set(request, request.headers.get('X-Request-ID') || crypto.randomUUID());
     if (request.method === 'OPTIONS') return corsResponse(request, env, null, 204);
@@ -224,7 +226,7 @@ async function dashboardBootstrap(request, env, session) {
   memberSnapshots.set(current, people);
   projectSnapshots.set(current, master);
   projectCatalogSnapshots.set(current, catalog);
-  const readContext = await signToken(readContextClaims(current), env.SESSION_SECRET);
+  const readContext = await signToken(readContextClaims(current, env), env.SESSION_SECRET);
   return dashboard(request, env, current, {
     coreOnly: true,
     authorizationReady: true,
@@ -1408,8 +1410,11 @@ async function resolveBitableAppToken(binding, token, options = {}) {
 
 export async function listRecords(env, token, tableBinding, options = {}) {
   const key = readFlightKey(env, tableBinding, null, options.budgetMs);
-  const upstream = () => readTableRecords(env, token, tableBinding, readOptions(env, options.budgetMs));
-  try { return await measureRead(env, tableBinding, () => env.__er2ReadOnly ? coalesceRead(key, upstream) : upstream()); }
+  const binding = resolveTableBinding(env, tableBinding);
+  const direct = () => readTableRecords(env, token, tableBinding, readOptions(env, options.budgetMs));
+  const shared = () => coalesceRead(key, direct);
+  try { return await measureRead(env, tableBinding, () => env.__er2ReadOnly
+    ? snapshotRecords(env, tableBinding, binding, shared) : direct()); }
   catch (error) { error.binding = tableBinding; throw error; }
 }
 
@@ -1504,12 +1509,14 @@ async function createRecord(env, token, tableBinding, fields, strictWeeklyWrite 
   const appToken = await resolveBitableAppToken(binding, token);
   const tableId = binding.tableId;
   if (!appToken || !tableId) throw httpError(500, '目标数据表尚未配置：' + tableBinding);
-  return feishuRequest('/bitable/v1/apps/' + appToken + '/tables/' + tableId + '/records', {
+  const result = await feishuRequest('/bitable/v1/apps/' + appToken + '/tables/' + tableId + '/records', {
     method: 'POST',
     bearer: token,
     body: { fields },
     strictWeeklyWrite
   });
+  await invalidateSnapshot(env, tableBinding, binding);
+  return result;
 }
 
 async function updateRecord(env, token, tableBinding, recordId, fields, strictWeeklyWrite = false) {
@@ -1517,12 +1524,14 @@ async function updateRecord(env, token, tableBinding, recordId, fields, strictWe
   const appToken = await resolveBitableAppToken(binding, token);
   const tableId = binding.tableId;
   if (!appToken || !tableId) throw httpError(500, '目标数据表尚未配置：' + tableBinding);
-  return feishuRequest('/bitable/v1/apps/' + appToken + '/tables/' + tableId + '/records/' + recordId, {
+  const result = await feishuRequest('/bitable/v1/apps/' + appToken + '/tables/' + tableId + '/records/' + recordId, {
     method: 'PUT',
     bearer: token,
     body: { fields },
     strictWeeklyWrite
   });
+  await invalidateSnapshot(env, tableBinding, binding);
+  return result;
 }
 
 async function sendText(env, token, openId, text, uuid = '') {
@@ -1672,8 +1681,10 @@ export async function requireSession(request, env) {
   return session;
 }
 
-function readContextClaims(session) {
+function readContextClaims(session, env = {}) {
   const fields = session.memberRecord?.fields || {};
+  const snapshotDeadline = Number(env.__er2AuthSnapshotDeadline);
+  const remaining = Number.isFinite(snapshotDeadline) ? Math.max(1, Math.floor((snapshotDeadline - Date.now()) / 1000)) : 30;
   return {
     purpose: 'read-context',
     sub: session.sub,
@@ -1699,7 +1710,7 @@ function readContextClaims(session) {
         '保密等级': fields['保密等级']
       }
     },
-    exp: epoch() + 30
+    exp: epoch() + Math.min(30, remaining)
   };
 }
 
@@ -1903,7 +1914,7 @@ function corsResponse(request, env, body, status) {
       'Access-Control-Allow-Origin': origin,
       'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Request-ID, X-ER2-Read-Context',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Expose-Headers': 'X-Request-ID, Server-Timing, X-ER2-Read-Version',
+      'Access-Control-Expose-Headers': 'X-Request-ID, Server-Timing, X-ER2-Read-Version, X-ER2-Snapshot',
       'X-Request-ID': requestIds.get(request) || request.headers.get('X-Request-ID') || crypto.randomUUID(),
       'Vary': 'Origin'
     }

@@ -1,6 +1,8 @@
-// Per-operation metadata only. No cross-request member, grant or record cache.
+// Per-operation metadata. The authorization source reader may additionally
+// report its bounded server snapshot state; personalized responses are never
+// cached here.
 const scopes = new WeakMap();
-export const READ_VERSION = 'read-stability-v1';
+export const READ_VERSION = 'read-stability-v2';
 export function readScope(env, request) {
   const scoped = { ...env };
   scopes.set(scoped, { start: Date.now(), requestId: crypto.randomUUID(),
@@ -27,6 +29,8 @@ export function readHeaders(env, response) {
   response.headers.set('Server-Timing', ['total;dur=' + ms, ...scope.stages.map((s, i) =>
     s.stage.toLowerCase() + '_' + i + ';dur=' + s.ms)].join(', '));
   response.headers.set('X-ER2-Read-Version', READ_VERSION);
+  if (Array.isArray(env.__er2SnapshotEvents) && env.__er2SnapshotEvents.length)
+    response.headers.set('X-ER2-Snapshot', env.__er2SnapshotEvents.join(','));
   // Binding names/timing only; no identities, tokens, URLs or business content.
   if (ms >= 1500 || response.status >= 400 || scope.stages.some(s => s.failed))
     console.log('ER2_READ_TIMING', JSON.stringify({ requestId: response.headers.get('X-Request-ID') || scope.requestId,

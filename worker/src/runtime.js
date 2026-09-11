@@ -72,7 +72,14 @@ export default {
     if (request.method !== 'OPTIONS' && /^\/api\/ai(?:\/|$)/.test(path)) return aiPaused(request, env);
 
     if (request.method === 'GET' && path === '/api/v2/health') {
-      return jsonNoStore({ ...buildV2Health(env), release: BUILD_INFO }, env);
+      return jsonNoStore({ ...buildV2Health(env), release: BUILD_INFO, snapshot: {
+        enabled: env.SERVER_SNAPSHOT_CACHE === 'true',
+        mode: 'authorization_source_short_ttl',
+        identityFreshMs: Number(env.SNAPSHOT_IDENTITY_FRESH_MS) || 12000,
+        identityMaxMs: Number(env.SNAPSHOT_IDENTITY_MAX_MS) || 20000,
+        projectFreshMs: Number(env.SNAPSHOT_PROJECT_FRESH_MS) || 30000,
+        projectMaxMs: Number(env.SNAPSHOT_PROJECT_MAX_MS) || 45000
+      } }, env);
     }
     if (request.method === 'GET' && path === '/api/v2/health/deep') {
       return jsonNoStore(await cachedDeepHealth(env), env);
