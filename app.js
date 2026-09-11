@@ -132,6 +132,8 @@
     catalog: [],
     baseCatalog: [],
     moduleGeneration: {},
+    readContext: '',
+    dashboardLoading: false,
     toastTimer: null
   };
 
@@ -353,6 +355,8 @@
     memberGuide.bind('');
     state.loadGeneration = (state.loadGeneration || 0) + 1;
     state.moduleGeneration = {};
+    state.readContext = '';
+    state.dashboardLoading = false;
     state.dashboard = null;
     state.catalog = [];
     state.activeStudentId = '';
@@ -388,16 +392,17 @@
     if (budget <= 0) { const error = new Error('读取时间过长，请稍后重新载入。'); error.status = 504; error.code = 'REQUEST_TIMEOUT'; throw error; }
     const timer = setTimeout(function () { controller.abort(); }, budget);
     try {
-      const fetchOptions = Object.assign({
-        headers: {
-          'Accept': 'application/json',
-          'Authorization': 'Bearer ' + state.session
-        }
-      }, options || {}, { signal: controller.signal });
+      const headers = Object.assign({
+        'Accept': 'application/json',
+        'Authorization': 'Bearer ' + state.session
+      }, options?.headers || {});
+      if (!writing && state.readContext) headers['X-ER2-Read-Context'] = state.readContext;
+      const fetchOptions = Object.assign({}, options || {}, { headers, signal: controller.signal });
       delete fetchOptions.readTimeoutMs;
       const response = await authenticatedFetch(API_BASE + path, fetchOptions);
       if (response.status === 401) {
         tabStorage.removeItem('er2-session');
+        state.readContext = '';
         location.href = API_BASE + '/auth/launch?returnTo=' + encodeURIComponent(location.href);
         throw new Error('身份已过期，正在重新登录');
       }
@@ -418,6 +423,8 @@
   }
 
   async function loadDashboard(role) {
+    if (state.dashboardLoading) return;
+    state.dashboardLoading = true;
     const generation = state.loadGeneration = (state.loadGeneration || 0) + 1;
     const session = state.session;
     const current = function () { return generation === state.loadGeneration && session === state.session; };
@@ -443,6 +450,7 @@
           data.literature.completed = data.literature.mineCount >= data.literature.minimum;
         }
       } else {
+        state.readContext = '';
         if (!state.session) {
           location.href = API_BASE + '/auth/launch?returnTo=' + encodeURIComponent(location.href);
           return;
@@ -450,9 +458,10 @@
         if (new URLSearchParams(location.search).get('page') === 'weekly') data = await loadRead('/api/weekly');
         else {
           try {
-            const query = new URLSearchParams({ section: 'core' });
+            const query = new URLSearchParams();
             if (role) query.set('role', role);
-            data = await loadRead('/api/dashboard?' + query.toString());
+            const queryText = query.toString();
+            data = await loadRead('/api/bootstrap' + (queryText ? '?' + queryText : ''));
           } catch (error) {
             if (!error.status || error.status < 500 || error.binding === 'MEMBERS_TABLE_ID' || error.code === 'REQUEST_TIMEOUT') throw error;
             data = await loadRead('/api/weekly');
@@ -464,6 +473,7 @@
       privateDrafts.bind(DEMO_MODE ? 'demo' : data.profile.sub);
       memberGuide.bind(DEMO_MODE ? 'demo' : data.profile.sub);
       state.learningCenterOpen = false;
+      state.readContext = typeof data.readContext === 'string' ? data.readContext : '';
       state.dashboard = data;
       state.moduleGeneration = {};
       state.catalog = mergeCatalog(data.collaborator ? [] : state.baseCatalog, data.catalog || []);
@@ -483,10 +493,7 @@
       if (new URLSearchParams(location.search).get('page') === 'weekly' && roles.includes('student')) openReportDialog();
       if (data.progressive) {
         const pendingModules = Object.keys(data.moduleLoading || {});
-        pendingModules.filter(function (name) { return name !== 'extras'; }).forEach(function (name) { reloadModule(name); });
-        if (pendingModules.includes('extras')) setTimeout(function () {
-          if (current()) reloadModule('extras');
-        }, 350);
+        pendingModules.forEach(function (name) { reloadModule(name); });
       }
       const learningPage = new URLSearchParams(location.search).get('page');
       if (!data.collaborator && !DEMO_MODE && window.ER2LearningCenter && ['learning', 'learning-inbox'].includes(learningPage))
@@ -503,6 +510,8 @@
           elements.logoutButton.hidden = false;
         } catch (_) { /* Keep the original failure and do not assume an identity. */ }
       }
+    } finally {
+      state.dashboardLoading = false;
     }
   }
 
@@ -520,6 +529,7 @@
     const revision = state.moduleGeneration[name] = (state.moduleGeneration[name] || 0) + 1;
     const current = () => state.dashboard === dashboard && state.session === session && generation === state.loadGeneration && revision === state.moduleGeneration[name];
     dashboard.moduleLoading ||= {}; dashboard.moduleErrors ||= {};
+    if (dashboard.moduleDeferred) delete dashboard.moduleDeferred[name];
     dashboard.moduleLoading[name] = true; delete dashboard.moduleErrors[name];
     renderActiveView(true);
     try {
@@ -622,6 +632,7 @@
           renderAccount();
           renderRoleNavigation(roles);
           renderActiveView();
+          if (role === 'manager' && state.dashboard.moduleDeferred?.extras) reloadModule('extras');
           window.scrollTo({ top: 0, behavior: 'smooth' });
         });
       });
@@ -1025,7 +1036,8 @@
       '<div class="student-home-layout"><div class="stack student-main">',
       renderWeeklyCard(),
       renderLiteratureSection(),
-      (state.dashboard.moduleLoading?.extras || state.dashboard.moduleErrors?.extras ? modulePlaceholder('extras', '本周待办', 'panel home-todos') : '<details class="panel home-todos"><summary>本周待办</summary><div class="panel-title"><h2>本周待办</h2>' + tag(data.tasks.length + '项') + '</div><ol class="task-list">' +
+      (state.dashboard.moduleDeferred?.extras ? '<section class="panel home-todos"><h2>本周待办</h2><p>需要时再读取任务与课程信息，不影响首页其他内容。</p><button type="button" class="button button-secondary" data-load-module="extras">加载待办</button></section>' :
+      state.dashboard.moduleLoading?.extras || state.dashboard.moduleErrors?.extras ? modulePlaceholder('extras', '本周待办', 'panel home-todos') : '<details class="panel home-todos"><summary>本周待办</summary><div class="panel-title"><h2>本周待办</h2>' + tag(data.tasks.length + '项') + '</div><ol class="task-list">' +
       data.tasks.map(function (item, index) {
         return '<li><span class="task-number">' + (index + 1) + '</span><div><strong>' + escapeHtml(item.title) + '</strong><small>' + escapeHtml(item.detail) + '</small></div>' + tag(item.type) + '</li>';
       }).join('') + '</ol></details>'),
@@ -1108,6 +1120,7 @@
   function bindViewActions() {
     bindProjectRetry();
     elements.app.querySelectorAll('[data-reload-module]').forEach(button => button.addEventListener('click', () => reloadModule(button.dataset.reloadModule)));
+    elements.app.querySelectorAll('[data-load-module]').forEach(button => button.addEventListener('click', () => reloadModule(button.dataset.loadModule)));
     try { mountFinance(); } catch (_) { /* Finance setup must not interrupt other homepage actions. */ }
     elements.app.querySelectorAll('[data-reload-dashboard]').forEach(function (button) {
       button.addEventListener('click', function () { if (button.disabled) return; button.disabled = true; loadDashboard(state.activeRole); });
@@ -1873,6 +1886,7 @@
     tabStorage.removeItem(draftKeys.courseReviewRequest);
     memberGuide.bind('');
     state.session = '';
+    state.readContext = '';
     location.href = API_BASE + '/auth/launch?returnTo=' + encodeURIComponent(location.origin + location.pathname);
   });
 

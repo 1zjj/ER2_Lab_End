@@ -89,7 +89,7 @@ export default {
       }
     }
 
-    if (request.method === 'GET' && path === '/api/dashboard' && response.ok) {
+    if (request.method === 'GET' && ['/api/dashboard', '/api/bootstrap'].includes(path) && response.ok) {
       const dashboard = await response.json();
       return cloneJsonResponse(response, enrichStudentDashboard(dashboard));
     }

@@ -95,13 +95,13 @@ async function setup({ mineCount = 2, studentRows = students, weeklyError = fals
   w.ER2_CONFIG = { demo: false, apiBase: 'https://api.test', feishuWikiUrl: 'https://fixture.feishu.cn/wiki/fixture' };
   const profile = { sub: 'fixture', personId: 'P-001', name: '合成登录人', roles, memberCategory };
   const weekly = { profile, week, student: { report: { status: 'pending', values: {} }, history: [] }, teacher: { students: structuredClone(studentRows), stats: { submitted: 2, missing: 1, blocked: 1 } } };
-  const bootstrap = { progressive: true, profile, week, student: { ...weekly.student, course: { lessons: [] }, tasks: [], links: [], projects: [] }, teacher: { ...weekly.teacher, commonIssues: ['不再显示'], courseReview: { visible: false } }, manager: { stats: { members: 4, projects: null, courses: 1 }, automations: [] }, literature: null, catalog: [], moduleErrors: {}, moduleLoading: { weekly: true, projects: true, literature: true, extras: true }, capabilities: { courses: { enabled: false } } };
+  const bootstrap = { progressive: true, profile, week, student: { ...weekly.student, course: { lessons: [] }, tasks: [], links: [], projects: [] }, teacher: { ...weekly.teacher, commonIssues: ['不再显示'], courseReview: { visible: false } }, manager: { stats: { members: 4, projects: null, courses: 1 }, automations: [] }, literature: null, catalog: [], moduleErrors: {}, moduleLoading: { literature: true }, moduleDeferred: { extras: true }, capabilities: { courses: { enabled: false } } };
   w.fetch = async (input, options = {}) => {
     const url = new URL(input, w.location.href), path = url.pathname + url.search;
     assert.ok(['fixture.test', 'api.test'].includes(url.hostname));
     requests.push({ path, method: options.method || 'GET' });
     const data = {
-      '/data/catalog.json': [], '/api/dashboard?section=core': { ...bootstrap, progressive: true, moduleLoading: { literature: true, extras: true },
+      '/data/catalog.json': [], '/api/bootstrap': { ...bootstrap,
         moduleErrors: weeklyError ? { weekly: '暂时无法读取' } : {},
         literature: { mineCount, minimum: 3, completed: mineCount >= 3, items: [{ id: 'shared-other', submitter: '其他合成成员', title: '共享文献', contribution: '合成贡献' }] } },
       '/api/weekly': weeklyError ? Response.json({ error: 'synthetic weekly failure' }, { status: 503 }) : weekly,

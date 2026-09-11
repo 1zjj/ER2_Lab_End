@@ -34,7 +34,7 @@ await bodyReading; abortBody(); await assert.rejects(waitingForBody, e => e.code
 function dashboardContext(request) {
   const effects = [];
   const context = vm.createContext({ DEMO_MODE: false, URLSearchParams, location: { search: '', href: 'https://test.invalid' }, window: {},
-    state: { session: 'fixture', activeRole: 'student' }, roleMeta: { student: {} }, request,
+    state: { session: 'fixture', activeRole: 'student', readContext: '', dashboardLoading: false }, roleMeta: { student: {} }, request,
     tabStorage: { persistent: true }, privateDrafts: { bind() {} }, memberGuide: { bind() {} },
     elements: { accountName: {}, accountRole: {}, logoutButton: {}, notice: {}, error: {}, loading: {}, app: {} },
     setBusy() {}, showError: (_, message) => effects.push(message), renderAccount() {}, renderRoleNavigation() {},
@@ -45,13 +45,13 @@ function dashboardContext(request) {
 const calls = [];
 const requiredFailure = dashboardContext(async path => { calls.push(path); throw Object.assign(Error('人员读取失败'), { status: 502, binding: 'MEMBERS_TABLE_ID' }); });
 await requiredFailure.context.loadDashboard();
-assert.deepEqual(calls, ['/api/dashboard?section=core'], 'Do not repeat a known failed MEMBERS read through fallback and /api/me');
+assert.deepEqual(calls, ['/api/bootstrap'], 'Do not repeat a known failed MEMBERS read through fallback and /api/me');
 assert.deepEqual(requiredFailure.effects, ['人员读取失败']);
 
 let clock = 0; const budgets = [];
 const fallback = dashboardContext(async (path, options) => {
   budgets.push(options.readTimeoutMs);
-  if (path === '/api/dashboard?section=core') { clock = 24000; throw Object.assign(Error('project read failed'), { status: 502, binding: 'AUTH_PROJECTS_TABLE_ID' }); }
+  if (path === '/api/bootstrap') { clock = 24000; throw Object.assign(Error('project read failed'), { status: 502, binding: 'AUTH_PROJECTS_TABLE_ID' }); }
   return { profile: { sub: 'same-user', roles: ['student'] }, weeklyOnly: true };
 });
 fallback.context.Date = { now: () => clock };
@@ -62,10 +62,11 @@ const pending = [];
 const stale = dashboardContext(() => new Promise(resolve => pending.push(resolve)));
 const a = stale.context.loadDashboard(), b = stale.context.loadDashboard();
 const payload = sub => ({ profile: { sub, roles: ['student'] } });
-pending[1](payload('newer')); await b;
-pending[0](payload('older')); await a;
-assert.equal(stale.context.state.dashboard.profile.sub, 'newer');
-assert.deepEqual(stale.effects, ['render'], 'An earlier refresh cannot overwrite newer data');
+await b;
+assert.equal(pending.length, 1, 'A duplicate refresh while bootstrap is pending is suppressed');
+pending[0](payload('first')); await a;
+assert.equal(stale.context.state.dashboard.profile.sub, 'first');
+assert.deepEqual(stale.effects, ['render']);
 const accountChange = dashboardContext(async () => { accountChange.context.state.session = ''; return payload('old-account'); });
 await accountChange.context.loadDashboard(); assert.equal(accountChange.context.state.dashboard, undefined);
 

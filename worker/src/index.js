@@ -18,6 +18,10 @@ const courseConfirmationLocks = new Map();
 const memberSnapshots = new WeakMap();
 const projectSnapshots = new WeakMap();
 const projectCatalogSnapshots = new WeakMap();
+// Collapse only identical reads that are already in flight. Results are not
+// retained after completion, so later requests and every write still re-check
+// the current Feishu state.
+const readFlights = new Map();
 let tenantTokenCache = { token: '', expiresAt: 0 };
 const LITERATURE_TABLE_FALLBACK = 'tblyHLZpybGVU364';
 const TRACK_A_ID = 'track-a';
@@ -41,6 +45,7 @@ const TRACK_A_LESSONS = [
 export default {
   async fetch(request, env) {
     env = readScope(env, request);
+    env.__er2ReadOnly = request.method === 'GET';
     const url = new URL(request.url);
     requestIds.set(request, request.headers.get('X-Request-ID') || crypto.randomUUID());
     if (request.method === 'OPTIONS') return corsResponse(request, env, null, 204);
@@ -77,8 +82,12 @@ export default {
       if (url.pathname === '/auth/callback') return await authCallback(request, env);
 
       let session = await requireSession(request, env);
+      env.__er2ReadSubject = session.sub;
+      if (url.pathname === '/api/bootstrap' && request.method === 'GET') return await dashboardBootstrap(request, env, session);
+      const readContext = request.method === 'GET' ? await readContextSession(request, env, session) : null;
+      if (readContext) session = readContext;
       const personalRoutes = ['/api/me', '/api/dashboard/start', '/api/weekly', '/api/reports/history', '/api/reports', '/api/literature', '/api/admin/weekly-source', '/api/admin/literature-source'];
-      if (url.pathname.startsWith('/api/')) session = (personalRoutes.includes(url.pathname)||url.pathname==='/api/dashboard')
+      if (url.pathname.startsWith('/api/') && !readContext) session = (personalRoutes.includes(url.pathname)||url.pathname==='/api/dashboard')
         ? await requireMemberIdentity(env, session) : await requireActiveMember(env, session);
       if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(request.method) && url.pathname.startsWith('/api/')) enforceWriteRateLimit(session.sub);
       if (url.pathname === '/api/me' && request.method === 'GET') return json(request, env, { profile: { sub: session.sub, personId: session.personId, name: session.name, roles: session.roles } });
@@ -91,7 +100,8 @@ export default {
       if (url.pathname === '/api/reports/history' && request.method === 'GET') return await reportHistory(request, env, session);
       if (url.pathname === '/api/weekly' && request.method === 'GET') return await weeklyPage(request, env, session);
       if (url.pathname === '/api/dashboard/start' && request.method === 'GET') return await dashboardStart(request, env, session);
-      if (url.pathname === '/api/dashboard' && request.method === 'GET') return await dashboard(request, env, session);
+      if (url.pathname === '/api/dashboard' && request.method === 'GET') return await dashboard(request, env, session,
+        readContext ? { authorizationReady: true, memberRecords: [session.memberRecord].filter(Boolean) } : {});
       if (url.pathname === '/api/reports' && request.method === 'POST') return await coordinateWeeklySave(request, env, session);
       if (url.pathname === '/api/literature' && request.method === 'GET') return await getLiterature(request, env, session);
       if (url.pathname === '/api/literature' && request.method === 'POST') return await coordinateLiteratureSave(request, env, session);
@@ -193,16 +203,50 @@ async function dashboardStart(request, env, session) {
   });
 }
 
-async function dashboard(request, env, session) {
+// First paint has one authorization round. Identity, project authorization and
+// this week's report are started together instead of making the browser wait
+// for an identity request followed by a second permissions request.
+async function dashboardBootstrap(request, env, session) {
+  AUTH_BINDINGS.forEach(key => strictBinding(env, key));
+  const tenantToken = await getTenantToken(env);
+  const currentWeek = weekInfo(new Date());
+  const weeklyRead = filteredRecords(env, tenantToken, 'WEEKLY_TABLE_ID', weekFilter([currentWeek.id]), { budgetMs: 4000 })
+    .then(records => ({ records })).catch(error => ({ error }));
+  const [people, master, mirrors, relations, weekly] = await Promise.all([
+    listRecords(env, tenantToken, 'MEMBERS_TABLE_ID'),
+    listRecords(env, tenantToken, 'PROJECTS_TABLE_ID'),
+    listRecords(env, tenantToken, 'AUTH_PROJECTS_TABLE_ID'),
+    listRecords(env, tenantToken, 'PROJECT_MEMBERS_TABLE_ID'),
+    weeklyRead
+  ]);
+  const catalog = canonicalProjectData(master, mirrors, relations);
+  const current = { ...session, ...authority(people, catalog.projects, catalog.relations, session.sub) };
+  memberSnapshots.set(current, people);
+  projectSnapshots.set(current, master);
+  projectCatalogSnapshots.set(current, catalog);
+  const readContext = await signToken(readContextClaims(current), env.SESSION_SECRET);
+  return dashboard(request, env, current, {
+    coreOnly: true,
+    authorizationReady: true,
+    memberRecords: people,
+    reportRecords: weekly.records || [],
+    projectRecords: master,
+    projectCatalog: catalog,
+    weeklyError: weekly.error,
+    readContext
+  });
+}
+
+async function dashboard(request, env, session, options = {}) {
   if (!isInternalMember(session)) {
-    session=await requireActiveMember(env,session);
-    const records=projectSnapshots.get(session)||await listRecords(env,await getTenantToken(env),'PROJECTS_TABLE_ID');
+    if (!options.authorizationReady) session=await requireActiveMember(env,session);
+    const records=options.projectRecords || projectSnapshots.get(session)||await listRecords(env,await getTenantToken(env),'PROJECTS_TABLE_ID');
     const projects=visibleProjects(session,records).map(r=>projectView(r,session));
-    return json(request,env,{collaborator:true,profile:{sub:session.sub,personId:session.personId,name:session.name,roles:session.roles},student:{projects},catalog:projects.map(p=>({title:p.title,url:p.url,category:'项目',subtitle:'进入项目'})),moduleErrors:{},capabilities:{internal:false}});
+    return json(request,env,{collaborator:true,profile:{sub:session.sub,personId:session.personId,name:session.name,roles:session.roles},student:{projects},catalog:projects.map(p=>({title:p.title,url:p.url,category:'项目',subtitle:'进入项目'})),moduleErrors:{},...(options.readContext?{readContext:options.readContext}:{}),capabilities:{internal:false}});
   }
   const section = new URL(request.url).searchParams.get('section');
   const extrasOnly = section === 'extras';
-  const coreOnly = section === 'core';
+  const coreOnly = options.coreOnly || section === 'core';
   const requestedRole = new URL(request.url).searchParams.get('role');
   const role = session.roles.includes(requestedRole) ? requestedRole : session.roles[0];
   if (!role) throw httpError(403, '账号没有可用角色');
@@ -211,26 +255,27 @@ async function dashboard(request, env, session) {
   const previousWeek = weekInfo(new Date(Date.now() - 7 * 86400000));
   const moduleErrors = {};
   const moduleDiagnostics = {};
+  const markModuleError = (name, error, message = '暂时无法读取，请稍后重新载入') => {
+    moduleErrors[name] = message;
+    moduleDiagnostics[name] = {
+      requestId: requestIds.get(request) || '',
+      code: ['READ_TIMEOUT', 'UPSTREAM_UNAVAILABLE'].includes(error?.code) ? error.code : 'TABLE_READ_FAILED',
+      ...(Number.isInteger(error?.upstreamCode) ? { upstreamCode: error.upstreamCode } : {})
+    };
+  };
+  if (options.weeklyError) markModuleError('weekly', options.weeklyError);
   const optional = async (name, binding) => {
     try { return await listRecords(env, tenantToken, binding, { budgetMs: 4000 }); }
     catch (error) {
-      moduleErrors[name] = '暂时无法读取，请稍后重新载入';
       // Allow only diagnostic metadata, never upstream messages, URLs or records.
-      moduleDiagnostics[name] = {
-        requestId: requestIds.get(request) || '',
-        code: ['READ_TIMEOUT', 'UPSTREAM_UNAVAILABLE'].includes(error.code) ? error.code : 'TABLE_READ_FAILED',
-        ...(Number.isInteger(error.upstreamCode) ? { upstreamCode: error.upstreamCode } : {})
-      };
+      markModuleError(name, error);
       return [];
     }
   };
   const optionalFiltered = async (name, binding, filter) => {
     try { return await filteredRecords(env, tenantToken, binding, filter, { budgetMs: 4000 }); }
     catch (error) {
-      moduleErrors[name] = '暂时无法读取，请稍后重新载入';
-      moduleDiagnostics[name] = { requestId: requestIds.get(request) || '',
-        code: ['READ_TIMEOUT', 'UPSTREAM_UNAVAILABLE'].includes(error.code) ? error.code : 'TABLE_READ_FAILED',
-        ...(Number.isInteger(error.upstreamCode) ? { upstreamCode: error.upstreamCode } : {}) };
+      markModuleError(name, error);
       return [];
     }
   };
@@ -239,29 +284,31 @@ async function dashboard(request, env, session) {
     catch (error) { return { error }; }
   };
   const [memberRecords, reportRecords, projectRecords, courseRecords, taskRecords, linkRecords, literatureRecords, projectMirrorRead, projectRelationRead] = await Promise.all([
-    memberSnapshots.get(session) || listRecords(env, tenantToken, 'MEMBERS_TABLE_ID'),
-    extrasOnly ? [] : optionalFiltered('weekly', 'WEEKLY_TABLE_ID', weekFilter([currentWeek.id])),
-    extrasOnly ? [] : (projectSnapshots.get(session)||optional('projects', 'PROJECTS_TABLE_ID')),
+    options.memberRecords ?? memberSnapshots.get(session) ?? listRecords(env, tenantToken, 'MEMBERS_TABLE_ID'),
+    options.reportRecords ?? (extrasOnly ? [] : optionalFiltered('weekly', 'WEEKLY_TABLE_ID', weekFilter([currentWeek.id]))),
+    options.projectRecords ?? (extrasOnly ? [] : (projectSnapshots.get(session)||optional('projects', 'PROJECTS_TABLE_ID'))),
     !coreOnly && courseCapabilities(env).enabled ? optional('courses', 'COURSES_TABLE_ID') : Promise.resolve([]),
     coreOnly ? [] : optional('tasks', 'TASKS_TABLE_ID'),
     coreOnly ? [] : optional('links', 'LINKS_TABLE_ID'),
     extrasOnly || coreOnly ? [] : optionalFiltered('literature', 'LITERATURE_TABLE_ID', weekFilter([currentWeek.id, previousWeek.id])),
-    authorizationRead('AUTH_PROJECTS_TABLE_ID'),
-    authorizationRead('PROJECT_MEMBERS_TABLE_ID')
+    options.authorizationReady ? { records: [] } : authorizationRead('AUTH_PROJECTS_TABLE_ID'),
+    options.authorizationReady ? { records: [] } : authorizationRead('PROJECT_MEMBERS_TABLE_ID')
   ]);
   const scopedRecords=[...projectRecords,...reportRecords,...courseRecords,...taskRecords,...linkRecords];
-  try{
-    if(projectMirrorRead.error)throw projectMirrorRead.error;if(projectRelationRead.error)throw projectRelationRead.error;
-    session=await accessForRecords(env,session,scopedRecords,projectRecords,projectMirrorRead.records,projectRelationRead.records);
+  if (!options.authorizationReady) {
+    try{
+      if(projectMirrorRead.error)throw projectMirrorRead.error;if(projectRelationRead.error)throw projectRelationRead.error;
+      session=await accessForRecords(env,session,scopedRecords,projectRecords,projectMirrorRead.records,projectRelationRead.records);
+    }
+    catch(error){
+      moduleErrors.projects='项目权限暂时无法读取，请稍后重新载入';
+      for(const [name,records] of [['weekly',reportRecords],['courses',courseRecords],['tasks',taskRecords],['links',linkRecords]])
+        if(records.some(hasProjectScope))moduleErrors[name]='相关项目权限暂时无法核验，请稍后重新载入';
+      // Keep the freshly verified identity. It has no project grants, so scoped
+      // resources stay denied while independent personal modules remain usable.
+    }
   }
-  catch(error){
-    moduleErrors.projects='项目权限暂时无法读取，请稍后重新载入';
-    for(const [name,records] of [['weekly',reportRecords],['courses',courseRecords],['tasks',taskRecords],['links',linkRecords]])
-      if(records.some(hasProjectScope))moduleErrors[name]='相关项目权限暂时无法核验，请稍后重新载入';
-    // Keep the freshly verified identity. It has no project grants, so scoped
-    // resources stay denied while independent personal modules remain usable.
-  }
-  const projectCatalog = projectCatalogSnapshots.get(session) || { projects: [], relations: [] };
+  const projectCatalog = options.projectCatalog || projectCatalogSnapshots.get(session) || { projects: [], relations: [] };
   const members = memberRecords.flatMap(record => { try {
     const member = authority(memberRecords, projectCatalog.projects, projectCatalog.relations, identity(record));
     return [{ ...member, openId: member.sub, enabled: true,
@@ -293,7 +340,8 @@ async function dashboard(request, env, session) {
   if (!coursesCapability.enabled) teacher.courseReview = { visible: false, canConfirm: false, pending: 0, submissions: [] };
   if (moduleErrors.projects) manager.stats.projects = null;
   return json(request, env, { profile, week: currentWeek, student, teacher, manager, literature, catalog, moduleErrors, moduleDiagnostics,
-    ...(coreOnly ? { progressive: true, moduleLoading: { literature: true, extras: true } } : {}),
+    ...(options.readContext ? { readContext: options.readContext } : {}),
+    ...(coreOnly ? { progressive: true, moduleLoading: { literature: true }, moduleDeferred: { extras: true } } : {}),
     capabilities: { courses: coursesCapability } });
 }
 
@@ -1359,16 +1407,20 @@ async function resolveBitableAppToken(binding, token, options = {}) {
 }
 
 export async function listRecords(env, token, tableBinding, options = {}) {
-  try { return await measureRead(env, tableBinding, () => readTableRecords(env, token, tableBinding, readOptions(env, options.budgetMs))); }
+  const key = readFlightKey(env, tableBinding, null, options.budgetMs);
+  const upstream = () => readTableRecords(env, token, tableBinding, readOptions(env, options.budgetMs));
+  try { return await measureRead(env, tableBinding, () => env.__er2ReadOnly ? coalesceRead(key, upstream) : upstream()); }
   catch (error) { error.binding = tableBinding; throw error; }
 }
 
 export async function filteredRecords(env, token, tableBinding, filter, options = {}) {
   if (env.FILTERED_READS !== 'true') return listRecords(env, token, tableBinding, options);
+  const key = readFlightKey(env, tableBinding, filter, options.budgetMs);
   try {
-    return await measureRead(env, tableBinding + '_FILTERED', () => readFilteredTableRecords(
+    const upstream = () => readFilteredTableRecords(
       env, token, tableBinding, filter, readOptions(env, options.budgetMs)
-    ));
+    );
+    return await measureRead(env, tableBinding + '_FILTERED', () => env.__er2ReadOnly ? coalesceRead(key, upstream) : upstream());
   } catch (error) {
     // A renamed or temporarily incompatible field must not make a core module
     // disappear. Fall back to the existing full read and keep the optimization
@@ -1377,6 +1429,23 @@ export async function filteredRecords(env, token, tableBinding, filter, options 
       code: error.upstreamCode || error.code || error.name }));
     return listRecords(env, token, tableBinding, options);
   }
+}
+
+function readFlightKey(env, tableBinding, filter, budgetMs) {
+  const binding = resolveTableBinding(env, tableBinding);
+  return JSON.stringify([env.__er2ReadSubject || 'system', tableBinding, binding.appToken || binding.wikiToken, binding.tableId,
+    filter || null, Number.isFinite(budgetMs) ? budgetMs : null]);
+}
+
+function coalesceRead(key, factory) {
+  const existing = readFlights.get(key);
+  if (existing) return existing;
+  const current = Promise.resolve().then(factory);
+  readFlights.set(key, current);
+  current.finally(() => {
+    if (readFlights.get(key) === current) readFlights.delete(key);
+  }).catch(() => {});
+  return current;
 }
 
 async function readFilteredTableRecords(env, token, tableBinding, filter, options = {}) {
@@ -1603,6 +1672,64 @@ export async function requireSession(request, env) {
   return session;
 }
 
+function readContextClaims(session) {
+  const fields = session.memberRecord?.fields || {};
+  return {
+    purpose: 'read-context',
+    sub: session.sub,
+    personId: session.personId,
+    name: session.name,
+    roles: session.roles,
+    duties: session.duties || [],
+    teacherOpenId: session.teacherOpenId || '',
+    projectCode: session.projectCode || '',
+    track: session.track || '',
+    grants: session.grants || {},
+    projectPolicies: session.projectPolicies || {},
+    memberRecord: {
+      record_id: session.memberRecord?.record_id || '',
+      fields: {
+        '人员编号': session.personId,
+        '姓名': session.name,
+        '飞书成员': [{ id: session.sub }],
+        '飞书OpenID': session.sub,
+        '人员状态': '在组',
+        '人员边界': fields['人员边界'],
+        '成员类别': fields['成员类别'],
+        '保密等级': fields['保密等级']
+      }
+    },
+    exp: epoch() + 30
+  };
+}
+
+async function readContextSession(request, env, baseSession) {
+  const path = new URL(request.url).pathname;
+  const section = new URL(request.url).searchParams.get('section');
+  const eligible = path === '/api/literature' || path === '/api/projects' || path.startsWith('/api/projects/') ||
+    (path === '/api/dashboard' && section === 'extras');
+  const raw = request.headers.get('X-ER2-Read-Context') || '';
+  if (!eligible || !raw) return null;
+  try {
+    const context = await verifyToken(raw, env.SESSION_SECRET);
+    const allowedRoles = new Set(['student', 'teacher', 'manager', 'collaborator']);
+    const validRoles = Array.isArray(context.roles) && context.roles.length > 0 && context.roles.every(role => allowedRoles.has(role));
+    const validGrants = context.grants && typeof context.grants === 'object' && !Array.isArray(context.grants) &&
+      Object.entries(context.grants).every(([id, grant]) => /^PRJ-\d{3,}$/.test(id) && Number.isFinite(grant?.level) &&
+        Number.isFinite(grant?.expiresAt) && typeof grant?.projectRecordId === 'string');
+    const validPolicies = context.projectPolicies && typeof context.projectPolicies === 'object' && !Array.isArray(context.projectPolicies) &&
+      Object.entries(context.projectPolicies).every(([id, policy]) => /^PRJ-\d{3,}$/.test(id) && typeof policy?.writable === 'boolean');
+    if (context.purpose !== 'read-context' || context.sub !== baseSession.sub || !/^ou_[\w-]+$/.test(context.sub) ||
+      !/^P-\d{3,}$/.test(context.personId) || typeof context.name !== 'string' || !context.name ||
+      !validRoles || !validGrants || !validPolicies || !['团队内', '团队外'].includes(context.memberRecord?.fields?.['人员边界'])) return null;
+    return { ...baseSession, ...context };
+  } catch (_) {
+    // Expired or malformed read acceleration never grants access. Fall back to
+    // the normal fresh authorization path for this request.
+    return null;
+  }
+}
+
 function authorizationBindingsConfigured(env) {
   try {
     AUTH_BINDINGS.forEach(key => strictBinding(env, key));
@@ -1774,7 +1901,7 @@ function corsResponse(request, env, body, status) {
     status,
     headers: {
       'Access-Control-Allow-Origin': origin,
-      'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Request-ID',
+      'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Request-ID, X-ER2-Read-Context',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       'Access-Control-Expose-Headers': 'X-Request-ID, Server-Timing, X-ER2-Read-Version',
       'X-Request-ID': requestIds.get(request) || request.headers.get('X-Request-ID') || crypto.randomUUID(),

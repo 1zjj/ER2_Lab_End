@@ -51,14 +51,14 @@ globalThis.fetch = async (input, options = {}) => {
   if (table === 'literature' && !id) literatureRows.push(record);
   return Response.json({ code: 0, data: { record } }, { status: 200 });
 };
-async function request(path, n = 1, body) {
+async function request(path, n = 1, body, extraHeaders = {}) {
   const encoded = Buffer.from(JSON.stringify({ purpose: 'session', sub: 'ou_' + n, exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url');
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(env.SESSION_SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
   const sig = Buffer.from(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(encoded))).toString('base64url');
   return new Request('https://fixture.test' + path, { method: body ? 'POST' : 'GET',
-    headers: { Authorization: 'Bearer ' + encoded + '.' + sig, 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
+    headers: { Authorization: 'Bearer ' + encoded + '.' + sig, 'Content-Type': 'application/json', ...extraHeaders }, ...(body ? { body: JSON.stringify(body) } : {}) });
 }
-const call = async (path, n, body, config = env) => service.fetch(await request(path, n, body), config);
+const call = async (path, n, body, config = env, headers = {}) => service.fetch(await request(path, n, body, headers), config);
 const draft = { requestId: 'performance-weekly-1', progress: '原五项测试正文', learning: '学习收获', evidence: 'https://example.com', blockers: '', nextPlan: '后续计划', baseRevision: '' };
 try {
   env.WEEKLY_WRITES = mockWeeklyCoordinator(env);
@@ -70,13 +70,29 @@ try {
   }
   assert.deepEqual(counts, { '/api/me': 1, '/api/weekly': 2, '/api/reports/history': 2, '/api/dashboard': 8 });
   calls = []; const core = await (await call('/api/dashboard?section=core')).json();
-  assert.equal(core.progressive, true); assert.deepEqual(core.moduleLoading, { literature: true, extras: true });
+  assert.equal(core.progressive, true); assert.deepEqual(core.moduleLoading, { literature: true });
+  assert.deepEqual(core.moduleDeferred, { extras: true });
   assert.equal(calls.length, 5, 'Core first paint only reads identity, weekly, projects and authorization');
   assert.equal(calls.some(c => /^(literature|tasks|links):/.test(c)), false);
-  calls = []; const first = await call('/api/reports', 1, draft);
+  calls = []; const bootResponse = await call('/api/bootstrap'); const boot = await bootResponse.json();
+  assert.equal(bootResponse.status, 200); assert.equal(calls.length, 5, 'Bootstrap starts all required first-paint reads in one round');
+  assert.ok(typeof boot.readContext === 'string' && boot.readContext.includes('.'));
+  calls = []; const acceleratedLiterature = await call('/api/literature', 1, undefined, env, { 'X-ER2-Read-Context': boot.readContext });
+  assert.equal(acceleratedLiterature.status, 200);
+  assert.deepEqual(calls.map(c => c.split(':')[0]), ['literature'], 'A signed read context avoids repeating the personnel read');
+
+  calls = []; let releaseMember;
+  const memberGate = new Promise(resolve => { releaseMember = resolve; });
+  holdMember = () => memberGate;
+  const simultaneous = [call('/api/me'), call('/api/me')];
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(calls.filter(c => c.startsWith('members:')).length, 1, 'Identical concurrent reads share one Feishu request');
+  releaseMember();
+  assert.deepEqual((await Promise.all(simultaneous)).map(response => response.status), [200, 200]);
+  calls = []; const first = await call('/api/reports', 1, draft, env, { 'X-ER2-Read-Context': boot.readContext });
   assert.equal(first.status, 200); assert.equal((await first.json()).readBackVerified, true);
   assert.equal(calls.length, 7); assert.equal(writes, 1);
-  assert.equal(calls.filter(c => c.startsWith('members:')).length, 3, 'Entry, coordinator and pre-write identities remain fresh');
+  assert.equal(calls.filter(c => c.startsWith('members:')).length, 3, 'Writes ignore the read context; entry, coordinator and pre-write identities remain fresh');
   console.log('PASS read counts:', JSON.stringify({ ...counts, 'POST /api/reports': calls.length }));
 
   calls = []; const start = await (await call('/api/dashboard/start')).json();
