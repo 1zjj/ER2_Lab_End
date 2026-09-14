@@ -1,7 +1,7 @@
 import { LITERATURE_FIELDS } from './src/literature-write.js';
 import assert from 'node:assert/strict';
 import service from './src/runtime.js';
-import { feishuRequest } from './src/index.js';
+import { feishuRequest, listRecords } from './src/index.js';
 import { LearningRecords } from './src/learning-coordinator.js';
 import { mockWeeklyCoordinator } from './test-weekly-coordinator.mjs';
 import { WEEKLY_FIELDS } from './src/weekly-write.js';
@@ -87,11 +87,22 @@ try {
   calls = []; let releaseMember;
   const memberGate = new Promise(resolve => { releaseMember = resolve; });
   holdMember = () => memberGate;
-  const simultaneous = [call('/api/me'), call('/api/me')];
-  await new Promise(resolve => setTimeout(resolve, 0));
+  let coalescingStarted, coalescingTimer;
+  const memberStarted = new Promise((resolve, reject) => {
+    coalescingStarted = resolve;
+    coalescingTimer = setTimeout(() => reject(new Error('Concurrent member reads did not start')), 2000);
+  });
+  onRead = table => { if (table === 'members') coalescingStarted(); };
+  // Exercise the overlapping reads directly. Independently signing/verifying
+  // two HTTP requests does not guarantee their upstream reads overlap.
+  // The authenticated /api/me route is checked separately above.
+  const coalescingEnv = { ...env, __er2ReadOnly: true };
+  const simultaneous = [listRecords(coalescingEnv, 'fixture', 'MEMBERS_TABLE_ID'), listRecords(coalescingEnv, 'fixture', 'MEMBERS_TABLE_ID')];
+  try { await memberStarted; } finally { clearTimeout(coalescingTimer); onRead = null; }
   assert.equal(calls.filter(c => c.startsWith('members:')).length, 1, 'Identical concurrent reads share one Feishu request');
   releaseMember();
-  assert.deepEqual((await Promise.all(simultaneous)).map(response => response.status), [200, 200]);
+  for (const records of await Promise.all(simultaneous)) assert.deepEqual(records, people);
+  assert.equal(calls.filter(c => c.startsWith('members:')).length, 1, 'Both completed requests shared one upstream read');
   calls = []; const first = await call('/api/reports', 1, draft, env, { 'X-ER2-Read-Context': boot.readContext });
   assert.equal(first.status, 200); assert.equal((await first.json()).readBackVerified, true);
   assert.equal(calls.length, 7); assert.equal(writes, 1);

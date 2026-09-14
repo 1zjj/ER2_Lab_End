@@ -1,6 +1,7 @@
 import { authority, identity } from './authorization.js';
 import { weeklyText } from './weekly-write.js';
 import { resolveTableBinding } from './v2/bindings.js';
+import { owesWeekly, weeklyPolicyEnabled } from './weekly-access.js';
 
 export function weeklyAutomationConfiguration(env) {
   const bound = key => {
@@ -15,11 +16,11 @@ export function weeklyAutomationConfiguration(env) {
 
 // All weekly consumers use the same current personnel policy. A student who
 // also reviews courses or manages the workbench still owes a weekly report.
-export function weeklyRoster(people) {
+export function weeklyRoster(people, env = {}) {
   return people.flatMap(record => {
     try {
       const member = authority(people, [], [], identity(record));
-      return member.roles.includes('student') ? [{ ...member, openId: member.sub }] : [];
+      return (weeklyPolicyEnabled(env) ? owesWeekly(member) : member.roles.includes('student')) ? [{ ...member, openId: member.sub }] : [];
     } catch (_) { return []; }
   });
 }

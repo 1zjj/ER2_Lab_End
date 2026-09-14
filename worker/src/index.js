@@ -3,6 +3,7 @@ import { literatureMemberCategory, literatureIdentityLookup, literatureByline } 
 import { weeklyHash, weeklyRevision, weeklyDates, historyPage } from './weekly-history.js';
 import { evidenceText, serializeWeekly, weeklyValues, weeklyMatches, weeklyCompatibility, WEEKLY_VERSION } from './weekly-write.js';
 import { weeklyRoster, isWeeklySubmitted, hasWeeklyIssue, weeklyAutomationConfiguration } from './weekly-policy.js';
+import { owesWeekly, reviewsWeekly, canReadWeekly, selectWeeklyTarget, shanghaiWeek, weeklyPolicyEnabled } from './weekly-access.js';
 import { recordPage } from './feishu-record-page.js';
 import { authority, AUTH_BINDINGS, strictBinding, identity, canProject, requireProject, businessProjectId, visibleProjects, hasProjectScope, isInternalMember, isAdministrator, memberFeatures } from './authorization.js';
 import { resolveTableBinding as resolveBinding } from './v2/bindings.js';
@@ -43,12 +44,13 @@ const TRACK_A_LESSONS = [
   { id: '10', title: '综合实验与课程总结', prompt: '如何将感知、定位、建图、规划和控制组成完整闭环？' }
 ];
 
-function externalRouteAllowed(session, path, method) {
+function externalRouteAllowed(session, path, method, env = {}) {
   if (['/api/dashboard', '/api/dashboard/start', '/api/projects'].includes(path) || path.startsWith('/api/projects/')) return true;
   const features = memberFeatures(session);
   if (path === '/api/literature') return method === 'GET' ? features.literatureRead : method === 'POST' && features.literatureSubmit;
-  if (path === '/api/weekly' || path === '/api/reports/history') return method === 'GET' && features.weeklySubmit;
-  if (path === '/api/reports') return method === 'POST' && features.weeklySubmit;
+  const weekly = weeklyPolicyEnabled(env) ? owesWeekly(session) : features.weeklySubmit;
+  if (path === '/api/weekly' || path === '/api/reports/history') return method === 'GET' && weekly;
+  if (path === '/api/reports') return method === 'POST' && weekly;
   return false;
 }
 
@@ -102,7 +104,7 @@ export default {
         ? await requireMemberIdentity(env, session) : await requireActiveMember(env, session);
       if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(request.method) && url.pathname.startsWith('/api/')) enforceWriteRateLimit(session.sub);
       if (url.pathname === '/api/me' && request.method === 'GET') return json(request, env, { profile: { sub: session.sub, personId: session.personId, name: session.name, roles: session.roles } });
-      if (!isInternalMember(session) && !externalRouteAllowed(session, url.pathname, request.method))
+      if (!isInternalMember(session) && !externalRouteAllowed(session, url.pathname, request.method, env))
         throw httpError(403, '当前协作者没有该功能权限');
       if (url.pathname.startsWith('/api/courses/') && request.method === 'POST' && !courseCapabilities(env).submissionEnabled)
         return json(request, env, { code: 'COURSE_UNAVAILABLE', message: '课程提交暂未开放，请在本周工作记录中填写学习与方法。' }, 503);
@@ -196,10 +198,12 @@ async function authCallback(request, env) {
 async function dashboardStart(request, env, session) {
   if (!isInternalMember(session)) {
     const features = memberFeatures(session);
+    const weekly = weeklyPolicyEnabled(env) && owesWeekly(session);
     return json(request, env, { progressive: true, collaborator: true,
       profile: {sub:session.sub,personId:session.personId,name:session.name,roles:session.roles},
-      student:{projects:[]}, literature:null, catalog:[], moduleErrors:{},
-      moduleLoading:{projects:true,...(features.literatureRead?{literature:true}:{})}, capabilities:{internal:false,features} });
+      student:{projects:[],...(weekly?{report:{status:'pending'}}:{})},
+      ...(weekly?{week:weekInfo(new Date()),teacher:{students:[],stats:{}}}:{}), literature:null, catalog:[], moduleErrors:{},
+      moduleLoading:{projects:true,...(weekly?{weekly:true}:{}),...(features.literatureRead?{literature:true}:{})}, capabilities:{internal:false,features:{...features,...(weeklyPolicyEnabled(env)?{weeklySubmit:weekly}:{})}} });
   }
   const people = memberSnapshots.get(session) || [];
   const members = people.flatMap(record => { try {
@@ -259,13 +263,15 @@ async function dashboard(request, env, session, options = {}) {
   if (!isInternalMember(session)) {
     if (!options.authorizationReady) session=await requireActiveMember(env,session);
     const features=memberFeatures(session);
+    const weekly = weeklyPolicyEnabled(env) && owesWeekly(session);
     const records=options.projectRecords || projectSnapshots.get(session)||await listRecords(env,await getTenantToken(env),'PROJECTS_TABLE_ID');
     const projects=visibleProjects(session,records).map(r=>projectView(r,session));
     return json(request,env,{collaborator:true,progressive:Boolean(options.coreOnly),
-      profile:{sub:session.sub,personId:session.personId,name:session.name,roles:session.roles},student:{projects},literature:null,
+      profile:{sub:session.sub,personId:session.personId,name:session.name,roles:session.roles},student:{projects,...(weekly?{report:{status:'pending'}}:{})},
+      ...(weekly?{week:weekInfo(new Date()),teacher:{students:[],stats:{}}}:{}),literature:null,
       catalog:projects.map(p=>({title:p.title,url:p.url,category:'项目',subtitle:'进入项目'})),moduleErrors:{},
-      ...(options.coreOnly&&features.literatureRead?{moduleLoading:{literature:true}}:{}),
-      ...(options.readContext?{readContext:options.readContext}:{}),capabilities:{internal:false,features}});
+      moduleLoading:{...(weekly?{weekly:true}:{}),...(options.coreOnly&&features.literatureRead?{literature:true}:{})},
+      ...(options.readContext?{readContext:options.readContext}:{}),capabilities:{internal:false,features:{...features,...(weeklyPolicyEnabled(env)?{weeklySubmit:weekly}:{})}}});
   }
   const section = new URL(request.url).searchParams.get('section');
   const extrasOnly = section === 'extras';
@@ -347,7 +353,8 @@ async function dashboard(request, env, session, options = {}) {
   const permittedProjects = visibleProjects(session, projectRecords);
   const assignedProjects = permittedProjects.filter(record => Boolean(session.grants?.[businessProjectId(record)]));
   const allowedResource = record => !hasProjectScope(record) || canProject(session, businessProjectId(record));
-  const permittedReports = reportRecords.filter(allowedResource);
+  const permittedReports = reportRecords.filter(record => allowedResource(record) &&
+    (!weeklyPolicyEnabled(env) || canReadWeekly(session, record, env)));
   const permittedCourses = courseRecords.filter(allowedResource);
   const permittedLinks = linkRecords.filter(allowedResource);
   const student = await buildStudent(session, currentWeek, permittedReports, assignedProjects, permittedCourses, taskRecords.filter(allowedResource), permittedLinks);
@@ -364,7 +371,7 @@ async function dashboard(request, env, session, options = {}) {
   if (moduleErrors.projects) manager.stats.projects = null;
   return json(request, env, { profile, week: currentWeek, student, teacher, manager, literature, catalog, moduleErrors, moduleDiagnostics,
     ...(options.readContext ? { readContext: options.readContext } : {}),
-    ...(coreOnly ? { progressive: true, moduleLoading: { literature: true }, moduleDeferred: { extras: true } } : {}),
+    ...(coreOnly ? { progressive: true, moduleLoading: { literature: true, ...(weeklyPolicyEnabled(env)?{weekly:true}:{}) }, moduleDeferred: { extras: true } } : {}),
     capabilities: { courses: coursesCapability, features: memberFeatures(session) } });
 }
 
@@ -590,6 +597,9 @@ function normalizeReport(record) {
     weekId: clean(field(record, '周次', 'WeekID')),
     weekNumber: field(record, '周序号') || '',
     submittedAt: formatRecordDate(field(record, '提交时间')),
+    submissionType: clean(field(record, '提交类型')),
+    firstSubmittedAt: formatRecordDate(field(record, '首次提交时间')),
+    modifiedAt: formatRecordDate(field(record, '最近修改时间')),
     status: clean(field(record, '审核状态')) || '已提交',
     feedback: clean(field(record, '教师反馈')),
     feedbackAt: formatRecordDate(field(record, '反馈时间')),
@@ -798,7 +808,7 @@ async function buildStudent(session, week, reports, projects, courses, tasks, li
       revision: await weeklyRevision(currentReport),
       recordId: currentReport?.record_id || '',
       status: currentReport ? 'submitted' : 'pending',
-      label: currentReport ? '已提交' : '未提交',
+      label: currentReport ? (clean(field(currentReport, '提交类型')) === '逾期提交' ? '逾期已提交' : '已提交') : '未提交',
       values: currentReport ? reportValues(currentReport) : {},
       submittedAt: currentReport ? formatRecordDate(field(currentReport, '提交时间')) : '',
       feedback: currentReport ? clean(field(currentReport, '教师反馈')) : ''
@@ -827,10 +837,14 @@ async function buildStudent(session, week, reports, projects, courses, tasks, li
 
 function buildTeacher(session, week, members, reports, courses, env) {
   reports = reports.filter(isWeeklySubmitted);
-  const managed = members.filter((member) => session.roles.includes('manager') ||
-    (session.roles.includes('teacher') && String(member.teacherOpenId) === String(session.sub)));
+  const managed = weeklyPolicyEnabled(env) ? (reviewsWeekly(session, env) ? members : []) :
+    members.filter((member) => session.roles.includes('manager') ||
+      (session.roles.includes('teacher') && String(member.teacherOpenId) === String(session.sub)));
   const currentReports = reports.filter((record) => String(field(record, '周次', 'WeekID')) === week.id);
-  const students = managed.filter((member) => member.roles.includes('student')).map((member) => {
+  const students = managed.filter((member) => {
+    if (!weeklyPolicyEnabled(env)) return member.roles.includes('student');
+    try { selectWeeklyTarget(member, env, week.id); return true; } catch (_) { return false; }
+  }).map((member) => {
     const memberReports = reports.filter((record) => String(field(record, '飞书OpenID', '人员OpenID', 'OpenID')) === String(member.openId));
     const report = currentReports.find((record) => String(field(record, '飞书OpenID', '人员OpenID', 'OpenID')) === String(member.openId));
     const blocker = report ? reportValues(report).blockers : '';
@@ -855,6 +869,9 @@ function buildTeacher(session, week, members, reports, courses, env) {
       blocked: students.filter((student) => student.tone === 'red').length
     },
     students,
+    ...(weeklyPolicyEnabled(env) ? { weeklyReviewer: reviewsWeekly(session, env), recentBackfills:
+      students.flatMap(student => student.history.filter(report => report.submissionType === '历史补交')
+        .map(report => ({ ...report, studentId: student.id, name: student.name }))).slice(0, 20) } : {}),
     commonIssues: students.filter((student) => hasWeeklyIssue(student.blocker) && student.status === '已提交')
       .map((student) => student.name + '：' + student.blocker).slice(0, 5),
     courseReview: buildCourseReview(session, members, courses, env)
@@ -1117,6 +1134,25 @@ async function weeklySchema(app, table, token) {
   return fields;
 }
 
+export async function weeklyBackfillReadiness(env) {
+  if (!weeklyPolicyEnabled(env)) return {enabled:false};
+  try {
+    const token = await getTenantToken(env);
+    const people = await listRecords(env, token, 'MEMBERS_TABLE_ID');
+    const reviewer = authority(people, [], [], env.WEEKLY_REVIEWER_OPEN_ID || env.PROFESSOR_OPEN_ID);
+    if (!reviewsWeekly(reviewer, env) || reviewer.sub !== env.PROFESSOR_OPEN_ID) return {enabled:true,ready:false};
+    const roster = weeklyRoster(people, env);
+    for (const member of roster) selectWeeklyTarget(member, env, null);
+    const binding = resolveTableBinding(env, 'WEEKLY_TABLE_ID');
+    const schema = await weeklySchema(await resolveBitableAppToken(binding, token), binding.tableId, token);
+    const compatible = ['首次提交时间','最近修改时间','提交类型'].every(name => {
+      const matches = schema.filter(f => f.field_name === name);
+      return matches.length === 1 && (name === '提交类型' ? [1] : [1,5]).includes(matches[0].type);
+    });
+    return {enabled:true,ready:compatible,previousWeeks:1,soleReviewer:true,independentPermissions:true};
+  } catch (_) { return {enabled:true,ready:false}; }
+}
+
 async function weeklyPage(request, env, session) {
   const binding = resolveTableBinding(env, 'WEEKLY_TABLE_ID');
   if (!binding.tableId || (!binding.appToken && !binding.wikiToken))
@@ -1125,7 +1161,8 @@ async function weeklyPage(request, env, session) {
   const week = weekInfo(new Date());
   const [people, records] = await Promise.all([
     memberSnapshots.get(session) || listRecords(env, token, 'MEMBERS_TABLE_ID'),
-    filteredRecords(env, token, 'WEEKLY_TABLE_ID', weekFilter([week.id]))
+    filteredRecords(env, token, 'WEEKLY_TABLE_ID', weekFilter(weeklyPolicyEnabled(env)
+      ? [week.id, shanghaiWeek(Date.now() - 7 * 86400000).id] : [week.id]))
   ]);
   session = await accessForRecords(env, session, records);
   if (!projectCatalogSnapshots.has(session) &&
@@ -1133,7 +1170,8 @@ async function weeklyPage(request, env, session) {
       authorizationBindingsConfigured(env)) {
     session = await requireActiveMember(env, session);
   }
-  const reports = records.filter(record => !hasProjectScope(record) || canProject(session, businessProjectId(record)));
+  const reports = records.filter(record => (!hasProjectScope(record) || canProject(session, businessProjectId(record))) &&
+    (!weeklyPolicyEnabled(env) || canReadWeekly(session, record, env)));
   const projectCatalog = projectCatalogSnapshots.get(session) || { projects: [], relations: [] };
   const members = people.flatMap(record => { try {
     const member = authority(people, projectCatalog.projects, projectCatalog.relations, identity(record));
@@ -1142,10 +1180,24 @@ async function weeklyPage(request, env, session) {
   } catch (_) { return []; } });
   const student = await buildStudent(session, week, reports, [], [], [], []);
   const teacher = buildTeacher(session, week, members, reports, [], env);
+  let backfill = null;
+  if (weeklyPolicyEnabled(env) && owesWeekly(session)) {
+    const previous = shanghaiWeek(Date.now() - 7 * 86400000);
+    try {
+      selectWeeklyTarget(session, env, previous.id);
+      const prior = reports.filter(record => String(field(record, '飞书OpenID')) === session.sub && String(field(record, '周次')) === previous.id);
+      if (prior.length > 1) throw httpError(409, '上周存在重复周报，请先核对');
+      const record = prior[0];
+      backfill = { week: previous, allowed: !record || !isWeeklySubmitted(record),
+        submitted: Boolean(record && isWeeklySubmitted(record)), values: record ? reportValues(record) : {},
+        revision: await weeklyRevision(record) };
+    } catch (error) { backfill = { week: previous, allowed: false, reason: error.message }; }
+  }
   return json(request, env, { weeklyOnly: true, weeklyVersion: WEEKLY_VERSION,
     profile: { sub: session.sub, personId: session.personId, name: session.name, roles: session.roles }, week,
-    student: { report: student.report, history: student.history },
-    teacher: { students: teacher.students, stats: teacher.stats, commonIssues: teacher.commonIssues } });
+    student: { report: student.report, history: student.history, backfill },
+    teacher: { students: teacher.students, stats: teacher.stats, commonIssues: teacher.commonIssues,
+      ...(weeklyPolicyEnabled(env) ? {weeklyReviewer:teacher.weeklyReviewer,recentBackfills:teacher.recentBackfills} : {}) } });
 }
 
 async function weeklySource(request, env, session, tableKey = 'WEEKLY_TABLE_ID') {
@@ -1213,12 +1265,16 @@ export async function executeWeeklyRequest(request, env, storage) {
 }
 
 async function reportHistory(request, env, session) {
+  const requestedOwner = new URL(request.url).searchParams.get('person');
+  if (requestedOwner && requestedOwner !== session.sub && (!weeklyPolicyEnabled(env) || !reviewsWeekly(session, env)))
+    throw httpError(403, '没有查看其他成员周报的权限');
+  const owner = requestedOwner || session.sub;
   const binding = resolveTableBinding(env, 'WEEKLY_TABLE_ID');
   if (!binding.tableId || !(binding.appToken || binding.wikiToken))
     throw Object.assign(httpError(503, '周报尚未配置'), { code: 'WEEKLY_BINDING_MISSING' });
   const records = await listRecords(env, await getTenantToken(env), 'WEEKLY_TABLE_ID');
   const own = records.filter(r => isWeeklySubmitted(r) &&
-    String(field(r, '飞书OpenID', '人员OpenID', 'OpenID')) === session.sub);
+    String(field(r, '飞书OpenID', '人员OpenID', 'OpenID')) === owner);
   session = await accessForRecords(env, session, own);
   const mine = own.filter(r => !hasProjectScope(r) || canProject(session, businessProjectId(r)));
   const { records: page, ...pagination } = historyPage(mine, new URL(request.url).searchParams);
@@ -1226,7 +1282,7 @@ async function reportHistory(request, env, session) {
 }
 
 async function saveReport(request, env, session, storage) {
-  if (!session.roles.includes('student')) throw httpError(403, '只有学生账号可以提交本人周报');
+  if (!(weeklyPolicyEnabled(env) ? owesWeekly(session) : session.roles.includes('student'))) throw httpError(403, '只有学生账号可以提交本人周报');
   const body = await readJson(request);
   const businessRequestId = requestBusinessId(request, body, 'weekly');
   for (const key of ['progress', 'learning', 'blockers', 'nextPlan']) {
@@ -1239,8 +1295,8 @@ async function saveReport(request, env, session, storage) {
   try { body.evidence = evidenceText(body.evidence); }
   catch (error) { throw httpError(400, error.message); }
 
-  const currentWeek = weekInfo(new Date());
-  if (body.weekId && body.weekId !== currentWeek.id) throw httpError(400, '只能提交当前周记录');
+  const currentWeek = weeklyPolicyEnabled(env) ? selectWeeklyTarget(session, env, body.weekId) : weekInfo(new Date());
+  if (!weeklyPolicyEnabled(env) && body.weekId && body.weekId !== currentWeek.id) throw httpError(400, '只能提交当前周记录');
   const durableStorage = storage;
   storage = { get: key => durableStorage.get(currentWeek.id + ':' + key),
     put: (key, value) => durableStorage.put(currentWeek.id + ':' + key, value),
@@ -1279,6 +1335,8 @@ async function saveReport(request, env, session, storage) {
     await storage.put(receiptKey, { hash: payloadHash, recordId: existing.record_id });
     return success(existing, true, true);
   }
+  if (weeklyPolicyEnabled(env) && currentWeek.submissionType === '历史补交' && existing && isWeeklySubmitted(existing))
+    throw httpError(409, '上周周报已经提交，不能重复补交或覆盖');
   if (receipt) throw httpError(409, '本周记录已被更新，请刷新后核对，当前草稿已保留');
   if ((body.baseRevision || '') !== await weeklyRevision(existing))
     throw httpError(409, '本周记录已在其他页面更新，请刷新后核对，当前草稿已保留');
@@ -1296,15 +1354,30 @@ async function saveReport(request, env, session, storage) {
     '问题与阻塞': clean(body.blockers),
     '下周计划': clean(body.nextPlan),
     '提交状态': '已提交',
-    '提交时间': new Date().toISOString()
+    '提交时间': weeklyPolicyEnabled(env) && existing && isWeeklySubmitted(existing) && field(existing, '提交时间')
+      ? field(existing, '提交时间') : new Date().toISOString()
   };
   const binding = resolveTableBinding(env, 'WEEKLY_TABLE_ID');
   const appToken = await resolveBitableAppToken(binding, tenantToken);
   const schema = await weeklySchema(appToken, binding.tableId, tenantToken);
   const payload = serializeWeekly(schema, fields);
+  if (weeklyPolicyEnabled(env)) {
+    const first = existing && isWeeklySubmitted(existing)
+      ? field(existing, '首次提交时间') : new Date().toISOString();
+    const metadata = { '首次提交时间': first || '', '最近修改时间': new Date().toISOString(),
+      '提交类型': existing && isWeeklySubmitted(existing) ? clean(field(existing, '提交类型')) : currentWeek.submissionType };
+    for (const [name, value] of Object.entries(metadata)) {
+      const columns = schema.filter(column => column.field_name === name);
+      if (columns.length !== 1 || !(name === '提交类型' ? [1] : [1, 5]).includes(columns[0].type))
+        throw Object.assign(httpError(503, '周报补交字段尚未配置完整'), { code: 'WEEKLY_SCHEMA_MISMATCH' });
+      payload[name] = columns[0].type === 5 ? (value ? (typeof value === 'number' ? value : Date.parse(value)) : null) : String(value);
+      if (typeof payload[name] === 'number' && !Number.isFinite(payload[name])) throw httpError(409, '原有提交时间无效，请先核对');
+    }
+  }
   let current = await requireMemberIdentity(env, session);
   current = await accessForRecords(env, current, existing ? [existing] : []);
-  if (!current.roles.includes('student')) throw httpError(403, '周报提交资格已撤销');
+  if (!(weeklyPolicyEnabled(env) ? owesWeekly(current) : current.roles.includes('student'))) throw httpError(403, '周报提交资格已撤销');
+  if (weeklyPolicyEnabled(env)) selectWeeklyTarget(current, env, currentWeek.id);
   if (existing) requireResource(current, existing, 'edit');
   // Journal before the non-transactional remote write; survives worker restarts.
   await storage.put('pending', { requestId: businessRequestId, hash: payloadHash, recordId: existing?.record_id || '', at: Date.now() });
@@ -1326,7 +1399,7 @@ async function saveReport(request, env, session, storage) {
 }
 
 async function saveTeacherReview(request, env, session) {
-  if (!session.roles.some((role) => role === 'teacher' || role === 'manager')) throw httpError(403, '没有教师反馈权限');
+  if (weeklyPolicyEnabled(env) ? !reviewsWeekly(session, env) : !session.roles.some((role) => role === 'teacher' || role === 'manager')) throw httpError(403, '没有教师反馈权限');
   const body = await readJson(request);
   const businessRequestId = requestBusinessId(request, body, 'review');
   validateText(body.recordId, '记录ID', 1, 100);
@@ -1336,9 +1409,9 @@ async function saveTeacherReview(request, env, session) {
   const targetReport = reports.find((record) => record.record_id === body.recordId);
   if (!targetReport) throw httpError(404, '周报记录不存在');
   session = await requireActiveMember(env, session);
-  if (!session.roles.some(role => ['teacher', 'manager'].includes(role))) throw httpError(403, '教师职责已撤销');
+  if (weeklyPolicyEnabled(env) ? !reviewsWeekly(session, env) : !session.roles.some(role => ['teacher', 'manager'].includes(role))) throw httpError(403, '教师职责已撤销');
   requireResource(session, targetReport, 'edit');
-  if (!session.roles.includes('manager')) {
+  if (!weeklyPolicyEnabled(env) && !session.roles.includes('manager')) {
     const targetOpenId = String(field(targetReport, '飞书OpenID', '人员OpenID', 'OpenID'));
     const members = await listRecords(env, tenantToken, 'MEMBERS_TABLE_ID');
     const targetRecord = members.find(record => identity(record) === targetOpenId);
@@ -1377,7 +1450,10 @@ async function runScheduledTask(scheduledTime, env) {
     listRecords(env, tenantToken, 'WEEKLY_TABLE_ID'),
     listRecords(env, tenantToken, 'AUTOMATION_LOGS_TABLE_ID')
   ]);
-  const members = weeklyRoster(memberRecords);
+  const members = weeklyRoster(memberRecords, env).filter(member => {
+    if (!weeklyPolicyEnabled(env)) return true;
+    try { selectWeeklyTarget(member, env, null, scheduledTime); return true; } catch (_) { return false; }
+  });
   const week = weekInfo(new Date(scheduledTime));
   const currentReports = reports.filter(record => isWeeklySubmitted(record) && String(field(record, '周次', 'WeekID')) === week.id);
   const runKey = week.id + '-weekly-reminder';
@@ -1389,10 +1465,11 @@ async function runScheduledTask(scheduledTime, env) {
     const recipientKey = runKey + '-' + await stableMessageUuid(member.sub);
     if (succeeded(recipientKey)) return;
     const current = await requireMemberIdentity(env, { sub: member.sub });
-    if (!current.roles.includes('student')) return;
+    if (!(weeklyPolicyEnabled(env) ? owesWeekly(current) : current.roles.includes('student'))) return;
+    if (weeklyPolicyEnabled(env)) selectWeeklyTarget(current, env, null, scheduledTime);
     await sendText(env, tenantToken, member.sub,
       'ER² Lab提醒：你本周的工作记录尚未提交，请在今天18:00前进入工作台完成。',
-      await stableMessageUuid(recipientKey));
+      await stableMessageUuid(recipientKey), weeklyPolicyEnabled(env) ? 'weekly' : 'internal');
     await writeAutomationLog(env, tenantToken, recipientKey, '未交周报提醒', '成功', '单人提醒已发送');
   }));
   const failed = results.filter(result => result.status === 'rejected').length;
@@ -1559,8 +1636,11 @@ async function updateRecord(env, token, tableBinding, recordId, fields, strictWe
   return result;
 }
 
-async function sendText(env, token, openId, text, uuid = '') {
-  if(!isInternalMember(await requireMemberIdentity(env,{sub:openId})))throw httpError(403,'内部业务通知接收资格已撤销');
+async function sendText(env, token, openId, text, uuid = '', purpose = 'internal') {
+  const recipient = await requireMemberIdentity(env,{sub:openId});
+  if (purpose === 'weekly' && weeklyPolicyEnabled(env)) {
+    selectWeeklyTarget(recipient, env, null);
+  } else if (!isInternalMember(recipient)) throw httpError(403,'内部业务通知接收资格已撤销');
   if (!openId) return;
   return feishuRequest('/im/v1/messages?receive_id_type=open_id', {
     method: 'POST',

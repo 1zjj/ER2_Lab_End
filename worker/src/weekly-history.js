@@ -30,7 +30,7 @@ export function weeklyDates(record) {
     const sunday = new Date(monday); sunday.setUTCDate(sunday.getUTCDate() + 6);
     weekStart ||= monday.toISOString().slice(0, 10); weekEnd ||= sunday.toISOString().slice(0, 10);
   }
-  const submitted = f['提交时间'];
+  const submitted = f['最近修改时间'] || f['提交时间'];
   const date = new Date(typeof submitted === 'number' ? submitted : weeklyText(submitted));
   const savedAt = Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat('zh-CN', {
     timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',

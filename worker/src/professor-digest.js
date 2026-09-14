@@ -1,5 +1,6 @@
 import { weeklyValues } from './weekly-write.js';
 import { weeklyRoster, isWeeklySubmitted as isSubmitted, hasWeeklyIssue as hasIssue } from './weekly-policy.js';
+import { weeklyPolicyEnabled, reviewsWeekly, selectWeeklyTarget } from './weekly-access.js';
 import { recordPage } from './feishu-record-page.js';
 import { authority, strictBinding, hasProjectScope } from './authorization.js';
 import { resolveTableBinding } from './v2/bindings.js';
@@ -250,8 +251,12 @@ export async function runProfessorDigest(at, env) {
     })().catch(() => ({ records: [], available: false }))
   ]);
   const recipient = authority(masterRecords, [], [], env.PROFESSOR_OPEN_ID);
+  if (weeklyPolicyEnabled(env) && !reviewsWeekly(recipient, env)) throw new Error('Weekly digest recipient is not the designated weekly reviewer');
   if (!recipient.duties.includes('教授周报接收')) throw new Error('Professor recipient has no current digest duty');
-  const members = weeklyRoster(masterRecords).map(member => ({ ...member.memberRecord,
+  const members = weeklyRoster(masterRecords, env).filter(member => {
+    if (!weeklyPolicyEnabled(env)) return true;
+    try { selectWeeklyTarget(member, env, null, new Date(at).getTime()); return true; } catch (_) { return false; }
+  }).map(member => ({ ...member.memberRecord,
     fields: { ...member.memberRecord.fields, '飞书OpenID': member.sub, '角色': ['学生'], '是否启用': true }
   }));
   // Weekly reports are personal records. Project-labelled material requires separate project authorization.
@@ -270,6 +275,7 @@ export async function runProfessorDigest(at, env) {
       if (success(partKey)) continue;
       const uuid = await stableId(`${partKey}:${env.PROFESSOR_OPEN_ID}:${snapshotId}`);
       const currentRecipient = authority(await list(memberPath, token), [], [], env.PROFESSOR_OPEN_ID);
+      if (weeklyPolicyEnabled(env) && !reviewsWeekly(currentRecipient, env)) throw new Error('Weekly reviewer was revoked');
       if (!currentRecipient.duties.includes('教授周报接收')) throw new Error('Professor digest duty was revoked');
       await request('/im/v1/messages?receive_id_type=open_id', token, messageBody(cards[i], env.PROFESSOR_OPEN_ID, uuid));
       await log(partKey, '成功', `${snapshotId}:${i + 1}/${cards.length}`);

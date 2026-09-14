@@ -9,7 +9,7 @@ import { routeLearning, learningEnabled, learningRecipientsReady, LEARNING_STORE
 import { LEARNING_VERSION } from './learning-catalog.js';
 export { WeeklyWriteCoordinator } from './weekly-coordinator.js';
 import { WEEKLY_VERSION } from './weekly-write.js';
-import legacy from './index.js';
+import legacy, { weeklyBackfillReadiness } from './index.js';
 import { runProfessorDigest, DIGEST_VERSION } from './professor-digest.js';
 import { buildV2Health } from './v2/health.js';
 import { buildDeepHealth } from './v2/deep-health.js';
@@ -128,7 +128,8 @@ export default {
       ...body,
       release: BUILD_INFO,
       capabilities: { finance: { version: 'finance-v1', configured: env.FINANCE_ENABLED === 'true' && Boolean(env.FINANCE_RECORDS), independentPermissions: true }, learning: { version: LEARNING_VERSION, storageReady: learningReady, recipientsReady, independentPermissions: true }, courses: courseCapabilities(env), weekly: {
-        version: 'weekly-save-history-v1', coordinatedWrites, historyPagination: true
+        version: 'weekly-save-history-v1', coordinatedWrites, historyPagination: true,
+        backfill: await weeklyBackfillReadiness(env)
       } },
       coreReady: body.authConfigured === true && body.dataConfigured === true && deep.ok === true &&
         AUTH_BINDINGS.every(key => { try { strictBinding(env, key); return true; } catch (_) { return false; } }),

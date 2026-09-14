@@ -526,7 +526,7 @@
     const paths = { weekly: '/api/weekly', projects: '/api/projects', literature: '/api/literature', extras: '/api/dashboard?section=extras' };
     const featureAccess = state.dashboard?.capabilities?.features || {};
     if (!paths[name] || !state.dashboard || state.dashboard.collaborator &&
-      !(name === 'projects' || name === 'literature' && featureAccess.literatureRead === true)) return;
+      !(name === 'projects' || name === 'weekly' && featureAccess.weeklySubmit === true || name === 'literature' && featureAccess.literatureRead === true)) return;
     const dashboard = state.dashboard, session = state.session, generation = state.loadGeneration;
     const revision = state.moduleGeneration[name] = (state.moduleGeneration[name] || 0) + 1;
     const current = () => state.dashboard === dashboard && state.session === session && generation === state.loadGeneration && revision === state.moduleGeneration[name];
@@ -933,6 +933,7 @@
       '<section class="welcome"><div><p class="kicker">' + (enhanced ? 'DEEP COLLABORATION' : 'PROJECT COLLABORATION') + '</p><h1>' + (enhanced ? '合作工作台' : '项目协作') + '</h1><p>' +
         (enhanced ? escapeHtml(profile.name || '合作成员') + '可访问获授权的学习、分享与项目内容。' : '仅显示当前已授权的项目。') + '</p></div></section>',
       '<div class="student-home-layout"><div class="stack student-main">',
+      features.weeklySubmit ? renderWeeklyCard() : '',
       features.literatureRead ? renderLiteratureSection() : '',
       '</div><aside class="stack student-side" aria-label="合作资源与项目">',
       features.learningRead ? renderLearningCard() : '',
@@ -1045,6 +1046,8 @@
       '<section class="hero-card weekly-home-card"><div><p class="kicker">本周工作记录</p><h2>' + (submitted ? '本周工作记录已提交' : '记录这一周的进展') + '</h2>',
       '<p>' + escapeHtml(week.label || '') + '</p><div class="weekly-home-status">' + tag(data.report.label, submitted ? 'green' : 'orange') + '<span>项目进展、学习收获与下周计划</span></div><div class="action-row">',
       '<button class="button button-primary" type="button" data-open-report>' + (submitted ? '修改本周记录' : '填写本周记录') + '</button>',
+      data.backfill?.allowed ? '<button class="button button-secondary" type="button" data-open-backfill>补交上周周报</button>' : '',
+      data.backfill && !data.backfill.allowed ? '<span>' + escapeHtml(data.backfill.submitted ? '上周已提交' : data.backfill.reason || '') + '</span>' : '',
       '<button class="button button-secondary" type="button" data-open-report-history>查看历史记录</button></div></div></section>',
     ].join('');
   }
@@ -1085,7 +1088,10 @@
       '<div class="metric-grid"><article class="metric-card"><span>本周已交</span><strong>' + data.stats.submitted + '</strong><small>已完成本周工作记录</small></article>',
       '<article class="metric-card alert"><span>本周未交</span><strong>' + data.stats.missing + '</strong><small>周五11:00自动提醒</small></article>',
       '<button type="button" class="metric-card alert metric-action" data-open-teacher-attention aria-haspopup="dialog" aria-controls="teacher-attention-dialog"><span>需要关注</span><strong>' + teacherAttentionStudents().length + '</strong><small>本周周报中的问题 · 查看清单 ›</small></button></div>',
-      '<section class="panel"><div class="panel-title"><h2>学生状态</h2><span>按负责关系显示</span></div><ul class="student-list">',
+      data.weeklyReviewer ? '<section class="panel"><h2>最近补交</h2>' + (data.recentBackfills || []).map(report =>
+        '<p>' + escapeHtml(report.name + ' · ' + report.weekId + ' · 已补交 · ' + report.firstSubmittedAt) +
+        ' <button type="button" class="button button-secondary" data-backfill-detail="' + escapeHtml(report.recordId) + '">查看与反馈</button></p>').join('') + '</section>' : '',
+      '<section class="panel"><div class="panel-title"><h2>学生状态</h2><span>周报授权范围内的学生</span></div><ul class="student-list">',
       data.students.map(function (student) {
         return '<li><span class="student-avatar">' + escapeHtml(student.name.slice(-1)) + '</span><div><strong>' + escapeHtml(student.name) +
           '</strong><small>' + escapeHtml(student.project + ' · ' + student.blocker) + '</small></div>' + tag(student.status, student.tone) +
@@ -1165,6 +1171,12 @@
     });
     const reportButton = elements.app.querySelector('[data-open-report]');
     if (reportButton) reportButton.addEventListener('click', openReportDialog);
+    const backfillButton = elements.app.querySelector('[data-open-backfill]');
+    if (backfillButton) backfillButton.addEventListener('click', openBackfillDialog);
+    elements.app.querySelectorAll('[data-backfill-detail]').forEach(button => button.addEventListener('click', () => {
+      const report = (state.dashboard?.teacher?.recentBackfills || []).find(item => item.recordId === button.dataset.backfillDetail);
+      if (report) openStudentDetail(report.studentId, report);
+    }));
     const reportHistoryButton = elements.app.querySelector('[data-open-report-history]');
     if (reportHistoryButton) reportHistoryButton.addEventListener('click', openReportHistory);
     const literatureButton = elements.app.querySelector('[data-open-literature]');
@@ -1202,6 +1214,55 @@
     return '<section' + (wide ? ' class="detail-wide"' : '') + '><h3>' + escapeHtml(title) + '</h3><p>' + escapeHtml(value).replace(/\n/g, '<br>') + '</p></section>';
   }
 
+  async function openBackfillDialog() {
+    const dashboard = state.dashboard, session = state.session;
+    const backfill = dashboard?.student?.backfill;
+    if (!backfill?.allowed) return;
+    const weekId = backfill.week.id, scope = 'backfill:' + weekId;
+    const draftKey = 'er2-weekly-backfill', requestKey = draftKey + ':request';
+    let draft = {};
+    try { draft = JSON.parse(privateDrafts.get(draftKey, scope) || '{}'); } catch (_) {}
+    const values = { ...(backfill.values || {}), ...draft };
+    const dialog = document.createElement('dialog');
+    const fields = [['progress','该周完成与结果',5000,true],['learning','该周学习与方法',3000,false],
+      ['evidence','产出与证据',5000,false],['blockers','该周问题与阻塞',3000,false],['nextPlan','该周结束时的下一步计划',3000,true]];
+    dialog.innerHTML = '<form><h2>补交上周周报</h2><p>' + escapeHtml(backfill.week.start + '—' + backfill.week.end) +
+      '</p><p>保留真实提交时间，不抵扣本周任务。提交后不能再次补交覆盖。</p>' + fields.map(([key,label,max,required]) =>
+        '<label>' + label + '<textarea name="' + key + '" maxlength="' + max + '"' + (required?' required':'') + '>' +
+        escapeHtml(values[key] || '') + '</textarea></label>').join('') +
+      '<p role="alert"></p><button type="button" data-cancel>取消</button><button type="submit">提交补交周报</button></form>';
+    const form = dialog.querySelector('form'), submit = form.querySelector('[type="submit"]'), error = form.querySelector('[role="alert"]');
+    const current = () => state.session === session && state.dashboard === dashboard;
+    form.addEventListener('input', () => {
+      if (current()) privateDrafts.set(draftKey, scope, JSON.stringify({ ...Object.fromEntries(new FormData(form)), _baseRevision: draft._baseRevision ?? backfill.revision ?? '' }));
+    });
+    form.querySelector('[data-cancel]').addEventListener('click', () => dialog.close());
+    dialog.addEventListener('close', () => dialog.remove());
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      if (submit.disabled || !current() || !form.reportValidity()) return;
+      const content = Object.fromEntries(new FormData(form));
+      const intent = JSON.stringify(content);
+      let receipt;
+      try { receipt = JSON.parse(privateDrafts.get(requestKey, scope) || 'null'); } catch (_) {}
+      if (!receipt || receipt.intent !== intent) receipt = { intent, id: 'weekly-backfill-' + crypto.randomUUID() };
+      privateDrafts.set(requestKey, scope, JSON.stringify(receipt));
+      submit.disabled = true; error.textContent = '';
+      for (const field of form.querySelectorAll('textarea')) field.readOnly = true;
+      try {
+        const saved = await request('/api/reports', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ ...content, weekId,
+          requestId:receipt.id, baseRevision:draft._baseRevision ?? backfill.revision ?? '' }) });
+        if (!current()) return dialog.close();
+        if (saved.readBackVerified !== true || saved.weekId !== weekId) throw new Error('补交结果尚未确认，内容已保留');
+        privateDrafts.remove(draftKey, scope); privateDrafts.remove(requestKey, scope);
+        dialog.close(); showToast('上周周报已补交，本周任务不受影响');
+        await reloadModule('weekly');
+      } catch (failure) { if (current()) error.textContent = failure.message || '补交失败，请保留内容后重试'; }
+      finally { submit.disabled = false; for (const field of form.querySelectorAll('textarea')) field.readOnly = false; }
+    });
+    document.body.appendChild(dialog); dialog.showModal();
+  }
+
   function openReportDialog() {
     elements.reportWeekLabel.textContent = state.dashboard.week.label;
     elements.reportError.hidden = true;
@@ -1221,7 +1282,7 @@
     return history.length ? history.map(function (report) {
       const values = report.values || {};
       const evidence = evidenceMarkup(values.evidence);
-      return '<article class="history-record"><div class="history-record-head"><div><strong>' + escapeHtml(report.weekLabel || report.title || report.weekId || '历史周报') + '</strong><small>最近保存：' + escapeHtml(report.savedAt || report.submittedAt || report.date || '时间未记录') + '</small></div>' + tag(report.status || '已提交', report.feedback ? 'green' : '') + '</div><div class="literature-detail-grid">' +
+      return '<article class="history-record"><div class="history-record-head"><div><strong>' + escapeHtml(report.weekLabel || report.title || report.weekId || '历史周报') + '</strong><small>最近保存：' + escapeHtml(report.savedAt || report.submittedAt || report.date || '时间未记录') + '</small></div>' + tag(report.status || '已提交', report.feedback ? 'green' : '') + (report.submissionType ? tag(report.submissionType, 'orange') : '') + '</div><div class="literature-detail-grid">' +
         detailSection('本周完成与结果', values.progress, true) + detailSection('学习与方法', values.learning, true) +
         detailSection('当前问题与阻塞', values.blockers, true) + detailSection('下周计划', values.nextPlan, true) +
         detailSection('教师反馈', report.feedback, true) + '</div>' + evidence + '</article>';
@@ -1395,13 +1456,13 @@
     if (renderTeacherAttention()) showDialog(elements.teacherAttentionDialog);
   }
 
-  function openStudentDetail(id) {
+  function openStudentDetail(id, selectedReport = null) {
     const student = (state.dashboard.teacher.students || []).find(function (item) { return String(item.id) === String(id); });
     if (!student) return showToast('学生信息暂时不可用');
     state.activeStudentId = student.id;
     elements.studentDetailTitle.textContent = student.name;
     elements.studentDetailMeta.textContent = [student.track, student.project, student.status].filter(Boolean).join(' · ');
-    const report = student.currentReport;
+    const report = selectedReport || student.currentReport;
     if (report) {
       const values = report.values || {};
       const evidence = evidenceMarkup(values.evidence);
@@ -1409,7 +1470,7 @@
       const previousHtml = previous.length ? '<div class="student-history"><h3>最近历史记录</h3>' + previous.map(function (item) {
         return '<div><span><strong>' + escapeHtml(item.weekId || '历史周报') + '</strong><small>' + escapeHtml(item.submittedAt || '') + '</small></span>' + tag(item.feedback ? '已反馈' : '已提交', item.feedback ? 'green' : '') + '</div>';
       }).join('') + '</div>' : '';
-      elements.studentDetailBody.innerHTML = '<div class="student-report-summary"><span>本周周报</span><strong>' + escapeHtml(report.weekId || '') + ' · ' + escapeHtml(report.submittedAt || '') + '</strong></div><div class="literature-detail-grid">' +
+      elements.studentDetailBody.innerHTML = '<div class="student-report-summary"><span>' + (selectedReport ? '历史补交周报' : '本周周报') + '</span><strong>' + escapeHtml(report.weekId || '') + ' · ' + escapeHtml(report.submittedAt || '') + '</strong></div><div class="literature-detail-grid">' +
         detailSection('本周完成与结果', values.progress, true) + detailSection('学习与方法', values.learning, true) +
         detailSection('当前问题与阻塞', values.blockers, true) + detailSection('下周计划', values.nextPlan, true) +
         detailSection('已有教师反馈', report.feedback, true) + '</div>' + evidence + previousHtml;
@@ -1763,6 +1824,9 @@
       if (student?.currentReport?.recordId === fields.recordId) {
         student.currentReport.feedback = fields.comment;
         student.currentReport.status = '已反馈';
+      }
+      for (const report of [...(student?.history || []), ...(state.dashboard.teacher.recentBackfills || [])]) {
+        if (report.recordId === fields.recordId) { report.feedback = fields.comment; report.status = '已反馈'; }
       }
       privateDrafts.remove(requestKey, draftScope());
       privateDrafts.remove(requestKey + ":intent", draftScope());

@@ -140,6 +140,8 @@ try {
   for (let attempt = 0; attempt < 3; attempt++) {
     try { const h = await verify(commit);
       if (h.capabilities?.weekly?.coordinatedWrites !== true || h.capabilities?.weekly?.historyPagination !== true || h.capabilities?.weekly?.version !== 'weekly-save-history-v1') throw new Error('Weekly save/history capability check failed');
+      if (config.vars.WEEKLY_BACKFILL_ENABLED === 'true' && h.capabilities?.weekly?.backfill?.ready !== true)
+        throw new Error('Weekly backfill identity/start-week/schema verification failed');
       if (config.vars.LEARNING_RECORDS_ENABLED === 'true') {
         if (h.capabilities?.learning?.storageReady !== true || h.capabilities.learning.recipientsReady !== true || h.capabilities.learning.version !== 'learning-text-v1') throw new Error('Learning storage or recipient verification failed');
         for (const path of ['/api/learning', '/api/learning/inbox', '/api/learning/record?track=A&lesson=01']) {

@@ -52,16 +52,17 @@ globalThis.fetch = async (url, opts = {}) => {
       securityPatch: 'p0-20260907-2', weeklyPatch: 'weekly-stability-v3',
       authorization: { enforced: true, mode: 'authoritative-fail-closed', bindings: { MEMBERS_TABLE_ID: true, AUTH_PROJECTS_TABLE_ID: true, PROJECT_MEMBERS_TABLE_ID: true } },
       ai: { enabled: false }, weeklyAutomation: { remindersConfigured: true, digestConfigured: true }, courseConfigured: false,
-      capabilities: { learning: { version: 'learning-text-v1', storageReady: true, recipientsReady: true }, weekly: { version: 'weekly-save-history-v1', coordinatedWrites: true, historyPagination: true } },
+      capabilities: { learning: { version: 'learning-text-v1', storageReady: true, recipientsReady: true }, weekly: { version: 'weekly-save-history-v1', coordinatedWrites: true, historyPagination: true, backfill: {ready: true} } },
       release: { commit: state === 'new' ? 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' : 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' } };
     if (state === 'new' && ['failed', 'external', 'bootstrap-failed', 'learning-failed'].includes(process.env.MOCK_MODE)) h.weeklySchemaOk = false;
+    if (state === 'new' && process.env.MOCK_MODE === 'backfill-failed') h.capabilities.weekly.backfill.ready = false;
     return Response.json(h);
   }
   if (url.includes('/api/learning') || url.endsWith('/api/dashboard') || url.endsWith('/api/admin/weekly-source') || url.endsWith('/api/reports/history')) return new Response('', { status: 401 });
   throw new Error('Unexpected network request in release simulation');
 };
 `);
-  for (const mode of ['check', 'success', 'failed', 'binding', 'external', 'bootstrap', 'bootstrap-failed', 'learning', 'learning-failed']) {
+  for (const mode of ['check', 'success', 'failed', 'binding', 'external', 'bootstrap', 'bootstrap-failed', 'learning', 'learning-failed', 'backfill-failed']) {
     fixtureConfig.vars.LEARNING_RECORDS_ENABLED = mode.startsWith('learning') ? 'true' : 'false';
     writeFileSync(join(root, 'wrangler.jsonc'), JSON.stringify(fixtureConfig));
     const state = join(root, 'state'), events = join(root, 'events');
@@ -75,7 +76,7 @@ globalThis.fetch = async (url, opts = {}) => {
     assert.equal(result.status, ['check', 'success', 'bootstrap', 'learning'].includes(mode) ? 0 : 1, result.stderr);
     assert.equal(readFileSync(join(root, 'src/build-info.js'), 'utf8'), source, 'Build metadata must be restored');
     const network = readFileSync(events, 'utf8');
-    assert.equal(network.includes('POST '), ['failed', 'bootstrap-failed', 'learning-failed'].includes(mode), 'Rollback only the failed release owned by this run');
+    assert.equal(network.includes('POST '), ['failed', 'bootstrap-failed', 'learning-failed', 'backfill-failed'].includes(mode), 'Rollback only the failed release owned by this run');
     assert.doesNotMatch(result.stdout + result.stderr, /mock-not-a-real-secret/);
     if (mode === 'check' || mode === 'binding') assert.equal(readFileSync(state, 'utf8'), 'initial', 'Preflight cannot deploy');
     if (mode === 'failed') assert.equal(readFileSync(state, 'utf8'), 'restored');
