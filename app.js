@@ -1224,19 +1224,26 @@
     try { draft = JSON.parse(privateDrafts.get(draftKey, scope) || '{}'); } catch (_) {}
     const values = { ...(backfill.values || {}), ...draft };
     const dialog = document.createElement('dialog');
-    const fields = [['progress','该周完成与结果',5000,true],['learning','该周学习与方法',3000,false],
-      ['evidence','产出与证据',5000,false],['blockers','该周问题与阻塞',3000,false],['nextPlan','该周结束时的下一步计划',3000,true]];
-    dialog.innerHTML = '<form><h2>补交上周周报</h2><p>' + escapeHtml(backfill.week.start + '—' + backfill.week.end) +
-      '</p><p>保留真实提交时间，不抵扣本周任务。提交后不能再次补交覆盖。</p>' + fields.map(([key,label,max,required]) =>
-        '<label>' + label + '<textarea name="' + key + '" maxlength="' + max + '"' + (required?' required':'') + '>' +
+    dialog.className = 'modal';
+    dialog.setAttribute('aria-labelledby', 'backfill-dialog-title');
+    const fields = [['progress','该周完成与结果',5000,true,4,'完成了什么？结果和结论是什么？'],
+      ['learning','学习与方法',3000,false,3,'在科研过程中，掌握的学习经验、技术'],
+      ['evidence','产出（若有阶段性成果，可以提交文档链接）',5000,false,3,'可填写产出说明、普通网页或飞书文档链接；多个链接可换行填写'],
+      ['blockers','该周问题与阻塞',3000,false,3,'现象、已尝试的方法和需要的帮助'],
+      ['nextPlan','该周结束时的下一步计划',3000,true,3,'填写当时计划的下一步任务和预计完成时间']];
+    dialog.innerHTML = '<form><div class="modal-head"><div><p class="kicker">WEEKLY RECORD</p><h2 id="backfill-dialog-title">补交上周周报</h2><p>' +
+      escapeHtml(backfill.week.start + '—' + backfill.week.end) + '</p></div><button class="icon-button" type="button" data-cancel aria-label="关闭">×</button></div>' +
+      '<div class="form-body"><p class="form-hint">保留真实提交时间，不抵扣本周任务。提交后不能再次补交覆盖。</p>' + fields.map(([key,label,max,required,rows,placeholder]) =>
+        '<label>' + label + '<textarea name="' + key + '" maxlength="' + max + '" rows="' + rows + '" placeholder="' + escapeHtml(placeholder) + '"' + (required?' required':'') + '>' +
         escapeHtml(values[key] || '') + '</textarea></label>').join('') +
-      '<p role="alert"></p><button type="button" data-cancel>取消</button><button type="submit">提交补交周报</button></form>';
+      '<p class="form-error" role="alert" hidden></p></div><div class="modal-actions"><button class="button button-secondary" type="button" data-cancel>取消</button>' +
+      '<button class="button button-primary" type="submit">提交补交周报</button></div></form>';
     const form = dialog.querySelector('form'), submit = form.querySelector('[type="submit"]'), error = form.querySelector('[role="alert"]');
     const current = () => state.session === session && state.dashboard === dashboard;
     form.addEventListener('input', () => {
       if (current()) privateDrafts.set(draftKey, scope, JSON.stringify({ ...Object.fromEntries(new FormData(form)), _baseRevision: draft._baseRevision ?? backfill.revision ?? '' }));
     });
-    form.querySelector('[data-cancel]').addEventListener('click', () => dialog.close());
+    form.querySelectorAll('[data-cancel]').forEach(button => button.addEventListener('click', () => dialog.close()));
     dialog.addEventListener('close', () => dialog.remove());
     form.addEventListener('submit', async event => {
       event.preventDefault();
@@ -1247,7 +1254,7 @@
       try { receipt = JSON.parse(privateDrafts.get(requestKey, scope) || 'null'); } catch (_) {}
       if (!receipt || receipt.intent !== intent) receipt = { intent, id: 'weekly-backfill-' + crypto.randomUUID() };
       privateDrafts.set(requestKey, scope, JSON.stringify(receipt));
-      submit.disabled = true; error.textContent = '';
+      submit.disabled = true; error.textContent = ''; error.hidden = true;
       for (const field of form.querySelectorAll('textarea')) field.readOnly = true;
       try {
         const saved = await request('/api/reports', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ ...content, weekId,
@@ -1257,7 +1264,7 @@
         privateDrafts.remove(draftKey, scope); privateDrafts.remove(requestKey, scope);
         dialog.close(); showToast('上周周报已补交，本周任务不受影响');
         await reloadModule('weekly');
-      } catch (failure) { if (current()) error.textContent = failure.message || '补交失败，请保留内容后重试'; }
+      } catch (failure) { if (current()) { error.textContent = failure.message || '补交失败，请保留内容后重试'; error.hidden = false; } }
       finally { submit.disabled = false; for (const field of form.querySelectorAll('textarea')) field.readOnly = false; }
     });
     document.body.appendChild(dialog); dialog.showModal();
