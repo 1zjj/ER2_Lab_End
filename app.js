@@ -1118,6 +1118,78 @@
       '<label>ER2 页面链接<input type="url" id="permission-node-url" value="'+escapeHtml(wikiUrl())+'"></label><button class="button button-secondary" type="button" data-permission-read="native">核对页面原生权限</button><button class="button button-secondary" type="button" data-permission-read="sync-inspect">检查项目权限对账条件</button><button class="button button-secondary" type="button" data-permission-read="sync-status">读取对账结果</button><pre id="permission-read-result" style="white-space:pre-wrap;overflow-wrap:anywhere" aria-live="polite"></pre></div></details>';
   }
 
+  function openMemberIntake() {
+    if (state.activeRole !== 'manager' || !state.dashboard?.profile?.roles?.includes('manager')) return;
+    const owner = state.dashboard.profile.sub;
+    const dialog = document.createElement('dialog');
+    dialog.className = 'modal';
+    dialog.setAttribute('aria-labelledby', 'member-intake-title');
+    const select = (name, label, choices) => '<label>' + label + '<select required name="' + name + '">' + choices.map(v => '<option>' + escapeHtml(v) + '</option>').join('') + '</select></label>';
+    const field = (name, label, type, required, max) => '<label>' + label + '<input name="' + name + '" type="' + type + '"' + (required ? ' required' : '') + ' maxlength="' + (max || 300) + '"></label>';
+    dialog.innerHTML = '<form><div class="modal-head"><div><p class="kicker">MEMBER INTAKE</p><h2 id="member-intake-title">成员入组</h2><p>第一阶段：资料准备与检查，不直接开通权限</p></div><button type="button" class="icon-button" data-intake-close aria-label="关闭">×</button></div><div class="form-body">' +
+      '<p>资料仅在当前窗口暂存。关闭前可下载“待完善资料”；该文件不是正式人员记录，请妥善保管。</p>' +
+      select('template','权限模板（仅建议，不授予权限）',['请选择','组内学生','组内临时成员','外部合作学生','外部合作老师']) +
+      '<h3>基本资料</h3>' + field('name','姓名 *','text',true) + field('account','飞书账号／显示名 *（开通前必须核验唯一账号）','text',true) +
+      select('boundary','课题组归属 *',['团队内','团队外']) + select('category','成员类别 *',['博士','硕士','本科生','联合培养','临时','PI','RA']) +
+      select('organization','飞书组织状态 *（填报信息，尚未核验）',['待确认','已加入','未加入']) +
+      field('start','开始日期 *','date',true) + field('end','到期日期（可空白，表示不自动到期）','date',false) +
+      '<h3>功能与任务方案</h3>' + select('weekly','是否要求周报 *',['需要','不需要']) + field('weeklyStart','周报起始周（需要周报时必填该周周一）','date',false) +
+      select('learning','学习资料与记录 *',['阅读','阅读与提交','不开放']) + select('literatureRead','共享文献阅读 *',['允许','不允许']) +
+      select('literatureShare','自愿分享文献 *',['允许','不允许']) + select('literatureRequired','文献任务 *',['不考核','每周3篇']) +
+      '<h3>项目与备注</h3>' + field('projects','意向项目（可空白；例如 PRJ-004，不代表授权）','text',false) +
+      '<label>备注（可空白）<textarea name="notes" maxlength="1000" rows="3"></textarea></label>' +
+      '<p>项目角色、编辑范围、知识页及附件需后续单独确认。本入口不授予财务、管理、审核或他人周报访问权。</p>' +
+      '<p role="alert" data-intake-error></p><section aria-live="polite" data-intake-result></section></div><div class="modal-actions">' +
+      '<button type="button" class="button button-secondary" data-intake-close>关闭</button><button type="button" class="button button-secondary" data-intake-download>下载待完善资料</button><button type="submit" class="button button-primary">检查开通条件</button></div></form>';
+    const form = dialog.querySelector('form'), error = dialog.querySelector('[data-intake-error]'), result = dialog.querySelector('[data-intake-result]'), button = form.querySelector('[type=submit]');
+    const current = () => dialog.isConnected && state.activeRole === 'manager' && state.dashboard?.profile?.sub === owner && state.dashboard.profile.roles?.includes('manager');
+    const values = () => { const data = Object.fromEntries(new FormData(form)); delete data.template; return data; };
+    const date = new Date(Date.now() + 8 * 3600000).toISOString().slice(0,10);
+    form.elements.start.value = date;
+    form.elements.template.addEventListener('change', () => {
+      const name = form.elements.template.value;
+      if (name === '请选择') return;
+      form.elements.boundary.value = name.startsWith('外部') ? '团队外' : '团队内';
+      form.elements.category.value = name === '组内临时成员' || name === '外部合作老师' ? '临时' : name === '外部合作学生' ? '联合培养' : '博士';
+      form.elements.weekly.value = name === '外部合作老师' ? '不需要' : '需要';
+      form.elements.learning.value = name === '外部合作老师' ? '阅读' : '阅读与提交';
+      form.elements.literatureRead.value = '允许';
+      form.elements.literatureShare.value = name === '外部合作老师' ? '不允许' : '允许';
+      form.elements.literatureRequired.value = name === '组内学生' ? '每周3篇' : '不考核';
+      result.textContent = ''; error.textContent = '';
+    });
+    form.addEventListener('input', () => { result.textContent = ''; });
+    let dirty = false, revision = 0;
+    form.addEventListener('input', () => { dirty = true; revision++; });
+    form.addEventListener('change', () => { dirty = true; revision++; result.textContent = ''; });
+    const unload = event => { if (dirty && current()) { event.preventDefault(); event.returnValue = ''; } };
+    window.addEventListener('beforeunload', unload);
+    const close = () => { if (!dirty || !current() || window.confirm('资料尚未持久保存，关闭将丢弃当前填写内容。是否关闭？')) closeDialog(dialog); };
+    dialog.querySelectorAll('[data-intake-close]').forEach(b => b.addEventListener('click', close));
+    dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
+    dialog.addEventListener('close', () => { window.removeEventListener('beforeunload', unload); dialog.remove(); });
+    dialog.querySelector('[data-intake-download]').addEventListener('click', () => {
+      if (!current()) return closeDialog(dialog);
+      const blob = new Blob([JSON.stringify({version:1,status:'待完善，未开通',plan:values()},null,2)], {type:'application/json'});
+      const url = URL.createObjectURL(blob), link = document.createElement('a');
+      link.href = url; link.download = 'member-intake-draft.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+      error.textContent = '已发起资料下载；请确认文件保存成功。本操作不创建人员或授予权限。';
+    });
+    form.addEventListener('submit', async event => {
+      event.preventDefault(); if (!current() || button.disabled) return;
+      if (form.elements.template.value === '请选择') { error.textContent = '请先选择权限模板。'; return; }
+      const sentRevision = revision; button.disabled = true; button.textContent = '正在核验管理员身份与资料…'; error.textContent = ''; result.textContent = '';
+      try {
+        const checked = await request('/api/admin/member-intake/check', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(values())});
+        if (!current() || revision !== sentRevision) return;
+        if (checked.mode !== 'planning-only' || checked.accessGranted !== false || !Array.isArray(checked.checks)) throw new Error('检查结果格式不正确');
+        result.innerHTML = '<h3>入组检查单 · 未开通</h3>' + checked.checks.map(c => '<p><strong>' + escapeHtml(c.label + '：' + c.status) + '</strong><br>' + escapeHtml(c.detail) + '</p>').join('');
+      } catch (e) { if (current()) error.textContent = e.message || '检查失败，资料仍保留在当前窗口，可单独重试。'; }
+      finally { button.disabled = false; button.textContent = '检查开通条件'; }
+    });
+    document.body.appendChild(dialog); showDialog(dialog);
+  }
+
   function renderManager() {
     const data = state.dashboard.manager;
     const managedProjects = Array.isArray(data.projects) ? data.projects
@@ -1138,6 +1210,7 @@
     return [
       '<section class="welcome"><div><p class="kicker">MANAGEMENT WORKSPACE</p><h1>管理配置</h1><p>人员、项目、课程和自动化的统一状态。</p></div>',
       '<a class="button button-primary" href="' + safeUrl(wikiUrl()) + '">进入飞书管理后台</a></section>',
+      '<section class="panel"><div class="panel-title"><h2>成员与权限</h2><span>仅管理员</span></div><p>准备新成员资料、配置功能方案并检查开通待办。不自动授予权限，不修改现有人员。</p><button type="button" class="button button-primary" data-member-intake>成员入组</button></section>',
       '<div class="metric-grid"><article class="metric-card"><span>启用成员</span><strong>' + data.stats.members + '</strong><small>来自飞书人员表</small></article>',
       '<article class="metric-card"><span>进行中项目</span><strong>' + (data.stats.projects == null ? '暂未读到' : data.stats.projects) + '</strong><small>具有负责人和成员</small></article>',
       '<article class="metric-card"><span>正式课程</span><strong>' + data.stats.courses + '</strong><small>Lesson与培训资料</small></article></div>',
@@ -1155,6 +1228,7 @@
   }
 
   function bindViewActions() {
+    elements.app.querySelector('[data-member-intake]')?.addEventListener('click', openMemberIntake);
     bindProjectRetry();
     elements.app.querySelectorAll('[data-reload-module]').forEach(button => button.addEventListener('click', () => reloadModule(button.dataset.reloadModule)));
     elements.app.querySelectorAll('[data-load-module]').forEach(button => button.addEventListener('click', () => reloadModule(button.dataset.loadModule)));

@@ -4,6 +4,7 @@ import { weeklyHash, weeklyRevision, weeklyDates, historyPage } from './weekly-h
 import { evidenceText, serializeWeekly, weeklyValues, weeklyMatches, weeklyCompatibility, WEEKLY_VERSION } from './weekly-write.js';
 import { weeklyRoster, isWeeklySubmitted, hasWeeklyIssue, weeklyAutomationConfiguration } from './weekly-policy.js';
 import { temporaryWeeklyReader } from './temporary-participation.js';
+import { checkMemberIntake } from './member-intake.js';
 import {draftsEnabled,validateWeeklyImages,publishWeeklySnapshot} from './weekly-drafts.js';
 import {imageManifest,WEEKLY_IMAGE_FIELD} from './weekly-images.js';
 import { owesWeekly, reviewsWeekly, canReadWeekly, selectWeeklyTarget, shanghaiWeek, weeklyPolicyEnabled } from './weekly-access.js';
@@ -100,6 +101,17 @@ export default {
 
       let session = await requireSession(request, env);
       env.__er2ReadSubject = session.sub;
+      if (url.pathname === '/api/admin/member-intake/check') {
+        session = await requireMemberIdentity(env, session);
+        env.__er2IdentityVerified = true;
+        if (!isAdministrator(session)) throw httpError(403, '仅管理员可检查成员入组资料');
+        if (request.method !== 'POST') throw httpError(405, '仅支持入组方案检查');
+        enforceWriteRateLimit(session.sub);
+        const raw = await request.text();
+        if (raw.length > 12000) throw httpError(413, '入组资料过长');
+        let input; try { input = JSON.parse(raw); } catch (_) { throw httpError(400, '入组资料格式无效'); }
+        return json(request, env, checkMemberIntake(session, input, memberSnapshots.get(session) || []));
+      }
       if (url.pathname === '/api/bootstrap' && request.method === 'GET') return await dashboardBootstrap(request, env, session);
       const readContext = request.method === 'GET' ? await readContextSession(request, env, session) : null;
       if (readContext) session = readContext;

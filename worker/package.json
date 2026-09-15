@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
+    "test:member-intake": "node member-intake.test.mjs",
     "dev": "wrangler dev",
     "deploy": "node release.mjs --apply",
     "pretest": "node snapshot-cache.test.mjs && node weekly-access.test.mjs && node weekly-backfill.test.mjs && node weekly-backfill-ui.test.mjs && node weekly-recovery-ui.test.mjs && node temporary-participation.test.mjs && node weekly-drafts.test.mjs && node weekly-drafts-ui.test.mjs && node weekly-drafts-app.test.mjs && node weekly-drafts-runtime.test.mjs",
