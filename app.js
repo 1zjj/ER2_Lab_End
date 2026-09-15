@@ -351,6 +351,7 @@
   }
 
   window.addEventListener('er2-session-denied', function (event) {
+    cloudDraftInstance?.reset();
     learningUIInstance?.reset();
     if (event.detail?.status !== 401) privateDrafts.clear();
     memberGuide.bind('');
@@ -503,7 +504,7 @@
     const loading = state.dashboard?.moduleLoading?.[name];
     return '<section class="' + className + '" aria-busy="' + Boolean(loading) + '"><h2>' + title + '</h2><p role="status">' +
       (loading ? '正在读取…' : '暂时无法读取，请重试。') + '</p>' +
-      (loading ? '' : '<button type="button" class="button button-secondary" data-reload-module="' + name + '">重新读取</button>') + '</section>';
+      (loading ? '' : '<button type="button" class="button button-secondary" data-reload-module="' + name + '">重新读取</button>') + (name==='weekly'&&state.dashboard?.capabilities?.weeklyDrafts?.enabled?'<button type="button" class="button button-secondary" data-open-draft>本周草稿本</button>':'') + '</section>';
   }
 
   async function reloadModule(name, refreshAfterFlight = false) {
@@ -1030,6 +1031,15 @@
     }
   }
 
+  let cloudDraftInstance;
+  function cloudDraftUI(){
+    if(!state.dashboard?.capabilities?.weeklyDrafts?.enabled||!window.ER2WeeklyDrafts)return null;
+    if(!cloudDraftInstance)cloudDraftInstance=window.ER2WeeklyDrafts.create({apiBase:API_BASE,getSession:()=>state.session,getProfile:()=>state.dashboard?.profile,
+      onUnauthorized:()=>window.dispatchEvent(new CustomEvent('er2-session-denied',{detail:{status:401}})),
+      onPrepare:(weekId,draft)=>{state.weeklyDraftPrepared={weekId,...draft};if(weekId===state.dashboard?.week?.id)openReportDialog();else if(state.dashboard?.student?.backfill?.allowed&&state.dashboard.student.backfill.week.id===weekId)openBackfillDialog();else showToast('该周暂不能提交，草稿仍保留，可查看或导出。');}});
+    return cloudDraftInstance;
+  }
+
   function renderWeeklyCard() {
     if (state.dashboard.moduleLoading?.weekly || state.dashboard.moduleErrors?.weekly)
       return modulePlaceholder('weekly', '本周工作记录', 'hero-card weekly-home-card');
@@ -1039,6 +1049,7 @@
       '<section class="hero-card weekly-home-card"><div><p class="kicker">本周工作记录</p><h2>' + (submitted ? '本周工作记录已提交' : '记录这一周的进展') + '</h2>',
       '<p>' + escapeHtml(week.label || '') + '</p><div class="weekly-home-status">' + tag(data.report.label, submitted ? 'green' : 'orange') + '<span>项目进展、学习收获与下周计划</span></div><div class="action-row">',
       '<button class="button button-primary" type="button" data-open-report>' + (submitted ? '修改本周记录' : '填写本周记录') + '</button>',
+      state.dashboard.capabilities?.weeklyDrafts?.enabled ? '<button class="button button-secondary" type="button" data-open-draft>本周草稿本</button>' : '',
       data.backfill?.allowed ? '<button class="button button-secondary" type="button" data-open-backfill>补交上周周报</button>' : '',
       data.backfill && !data.backfill.allowed ? '<span>' + escapeHtml(data.backfill.submitted ? '上周已提交' : data.backfill.reason || '') + '</span>' : '',
       '<button class="button button-secondary" type="button" data-open-report-history>查看历史记录</button></div></div></section>',
@@ -1164,6 +1175,7 @@
     });
     const reportButton = elements.app.querySelector('[data-open-report]');
     if (reportButton) reportButton.addEventListener('click', openReportDialog);
+    elements.app.querySelectorAll('[data-open-draft]').forEach(button=>button.addEventListener('click',()=>{const ui=cloudDraftUI();if(ui)ui.open();else showToast('草稿组件尚未载入，请刷新后重试；现有内容不会删除。');}));
     const backfillButton = elements.app.querySelector('[data-open-backfill]');
     if (backfillButton) backfillButton.addEventListener('click', openBackfillDialog);
     elements.app.querySelectorAll('[data-backfill-detail]').forEach(button => button.addEventListener('click', () => {
@@ -1212,10 +1224,11 @@
     const backfill = dashboard?.student?.backfill;
     if (!backfill?.allowed) return;
     const weekId = backfill.week.id, scope = 'backfill:' + weekId;
+    const prepared=state.weeklyDraftPrepared?.weekId===weekId?state.weeklyDraftPrepared:null;
     const draftKey = 'er2-weekly-backfill', requestKey = draftKey + ':request';
     let draft = {};
     try { draft = JSON.parse(privateDrafts.get(draftKey, scope) || '{}'); } catch (_) {}
-    const values = { ...(backfill.values || {}), ...draft };
+    const values = { ...(backfill.values || {}), ...draft, ...(prepared?.values||{}) };
     const dialog = document.createElement('dialog');
     dialog.className = 'modal';
     dialog.setAttribute('aria-labelledby', 'backfill-dialog-title');
@@ -1246,6 +1259,7 @@
       if (!current()) { dialog.close(); return; }
       if (saved.readBackVerified !== true || saved.weekId !== weekId) throw Object.assign(new Error('补交结果尚未确认，内容已保留'),{status:503,code:'WEEKLY_READBACK_FAILED'});
       privateDrafts.remove(draftKey, scope); privateDrafts.remove(requestKey, scope);
+      if(state.dashboard?.capabilities?.weeklyDrafts?.enabled)cloudDraftUI()?.markSubmitted(form);
       unresolved = false; dialog.close(); showToast('上周周报已补交，本周任务不受影响');
       await reloadModule('weekly',true);
     };
@@ -1282,6 +1296,7 @@
       if (!current()) { error.textContent = '登录账号已变化，请重新打开补交表单。'; error.hidden = false; return; }
       if (submit.disabled || !form.reportValidity()) return;
       const content = Object.fromEntries(new FormData(form));
+      if(state.dashboard?.capabilities?.weeklyDrafts?.enabled){try{const ui=cloudDraftUI();if(ui)content.images=ui.imagesFor(form);}catch(errorValue){error.textContent=errorValue.message;error.hidden=false;return;}}
       const intent = JSON.stringify(content);
       let receipt;
       try { receipt = JSON.parse(privateDrafts.get(requestKey, scope) || 'null'); } catch (_) {}
@@ -1303,6 +1318,7 @@
       } finally { setSubmitting(false); }
     });
     document.body.appendChild(dialog); dialog.showModal();
+    if(state.dashboard?.capabilities?.weeklyDrafts?.enabled){cloudDraftUI()?.bindForm(form,weekId,prepared?.images||backfill.images||[]);state.weeklyDraftPrepared=null;}
   }
 
   function openReportDialog() {
@@ -1332,7 +1348,12 @@
       }
     } catch (_) {}
     showDialog(elements.reportDialog);
+    if(state.dashboard?.capabilities?.weeklyDrafts?.enabled){const prepared=state.weeklyDraftPrepared?.weekId===state.dashboard.week.id?state.weeklyDraftPrepared:null;
+      if(prepared&&!state.reportNeedsVerification)setFormValues(elements.reportForm,prepared.values);
+      cloudDraftUI()?.bindForm(elements.reportForm,state.dashboard.week.id,prepared?.images||report.images||[]);state.weeklyDraftPrepared=null;}
   }
+
+  function reportImageMarkup(report){return '<div class="weekly-report-images">'+(report.images||[]).map(image=>'<figure><button type="button" data-weekly-image="'+escapeHtml(image.id)+'" data-owner="'+escapeHtml(report.imageOwner)+'" data-record="'+escapeHtml(report.recordId)+'" data-submission="'+escapeHtml(report.imageSubmission)+'" data-caption="'+escapeHtml(image.caption)+'">正在读取私有图片…</button><figcaption>'+escapeHtml((image.section==='blockers'?'问题：':'成果：')+image.caption)+'</figcaption></figure>').join('')+'</div>';}
 
   function historyMarkup(history) {
     return history.length ? history.map(function (report) {
@@ -1341,7 +1362,7 @@
       return '<article class="history-record"><div class="history-record-head"><div><strong>' + escapeHtml(report.weekLabel || report.title || report.weekId || '历史周报') + '</strong><small>最近保存：' + escapeHtml(report.savedAt || report.submittedAt || report.date || '时间未记录') + '</small></div>' + tag(report.status || '已提交', report.feedback ? 'green' : '') + (report.submissionType ? tag(report.submissionType, 'orange') : '') + '</div><div class="literature-detail-grid">' +
         detailSection('本周完成与结果', values.progress, true) + detailSection('学习与方法', values.learning, true) +
         detailSection('当前问题与阻塞', values.blockers, true) + detailSection('下周计划', values.nextPlan, true) +
-        detailSection('教师反馈', report.feedback, true) + '</div>' + evidence + '</article>';
+        detailSection('教师反馈', report.feedback, true) + '</div>' + evidence + (report.images?.length?reportImageMarkup(report):'') + '</article>';
     }).join('') : '<div class="empty">所选范围内还没有已提交的周报。</div>';
   }
 
@@ -1380,6 +1401,7 @@
       elements.reportHistoryYear.value = year;
       view.page = result.page; view.pages = result.pages;
       elements.reportHistoryBody.innerHTML = historyMarkup(result.reports);
+      if(state.dashboard?.capabilities?.weeklyDrafts?.enabled)cloudDraftUI()?.mountImages(elements.reportHistoryBody);
       elements.reportHistoryBody.scrollTop = 0;
       elements.reportHistoryStatus.textContent = '共 ' + result.total + ' 条 · 第 ' + result.page + ' / ' + result.pages + ' 页';
     } catch (error) {
@@ -1545,6 +1567,7 @@
     }
     elements.feedbackError.hidden = true;
     showDialog(elements.studentDetailDialog);
+    if(report?.images?.length){elements.studentDetailBody.insertAdjacentHTML('beforeend',reportImageMarkup(report));cloudDraftUI()?.mountImages(elements.studentDetailBody);}
   }
 
   async function submitReport(event, verifyOnly = false) {
@@ -1557,6 +1580,7 @@
     state.moduleGeneration ||= {};
     state.moduleGeneration.weekly = (state.moduleGeneration.weekly || 0) + 1;
     const fields = verifyOnly ? {...state.reportPending} : Object.fromEntries(new FormData(elements.reportForm).entries());
+    if(!verifyOnly&&state.dashboard?.capabilities?.weeklyDrafts?.enabled){try{const ui=cloudDraftUI();if(ui)fields.images=ui.imagesFor(elements.reportForm);}catch(error){elements.reportError.textContent=error.message;elements.reportError.hidden=false;return;}}
     if (!verifyOnly) { fields.baseRevision = state.reportBaseRevision || ''; fields.weekId = dashboard.week.id; }
     const intent = JSON.stringify(fields);
     if (!verifyOnly && privateDrafts.get('er2-report-intent', draftScope()) !== intent) {
@@ -1605,6 +1629,7 @@
         return;
       }
       state.reportNeedsVerification = false; state.reportPending = null;
+      if(state.dashboard?.capabilities?.weeklyDrafts?.enabled)cloudDraftUI()?.markSubmitted(elements.reportForm);
       if (elements.reportCheck) elements.reportCheck.hidden = true;
       if (fields.weekId && fields.weekId !== dashboard.week.id) {
         privateDrafts.remove(draftKeys.report,fields.weekId); privateDrafts.remove('er2-request-report',fields.weekId); privateDrafts.remove('er2-report-intent',fields.weekId);
@@ -2062,6 +2087,7 @@
   });
   elements.searchForm.addEventListener('submit', runSearch);
   elements.logoutButton.addEventListener('click', function () {
+    cloudDraftInstance?.reset();
     privateDrafts.clear();
     tabStorage.removeItem('er2-session');
     privateDrafts.remove('er2-request-report', draftScope());

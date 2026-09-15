@@ -4,6 +4,8 @@ import { weeklyHash, weeklyRevision, weeklyDates, historyPage } from './weekly-h
 import { evidenceText, serializeWeekly, weeklyValues, weeklyMatches, weeklyCompatibility, WEEKLY_VERSION } from './weekly-write.js';
 import { weeklyRoster, isWeeklySubmitted, hasWeeklyIssue, weeklyAutomationConfiguration } from './weekly-policy.js';
 import { temporaryWeeklyReader } from './temporary-participation.js';
+import {draftsEnabled,validateWeeklyImages,publishWeeklySnapshot} from './weekly-drafts.js';
+import {imageManifest,WEEKLY_IMAGE_FIELD} from './weekly-images.js';
 import { owesWeekly, reviewsWeekly, canReadWeekly, selectWeeklyTarget, shanghaiWeek, weeklyPolicyEnabled } from './weekly-access.js';
 import { recordPage } from './feishu-record-page.js';
 import { authority, AUTH_BINDINGS, strictBinding, identity, canProject, requireProject, businessProjectId, visibleProjects, hasProjectScope, isInternalMember, isAdministrator, memberFeatures } from './authorization.js';
@@ -207,7 +209,7 @@ async function dashboardStart(request, env, session) {
       profile: {sub:session.sub,personId:session.personId,name:session.name,roles:session.roles},
       student:{projects:[],...(weekly?{report:{status:'pending'}}:{})},
       ...(weekly?{week:weekInfo(new Date()),teacher:{students:[],stats:{}}}:{}), literature:null, catalog:[], moduleErrors:{},
-      moduleLoading:{projects:true,...(weekly?{weekly:true}:{}),...(features.literatureRead?{literature:true}:{})}, capabilities:{internal:false,features:{...features,...(weeklyPolicyEnabled(env)?{weeklySubmit:weekly}:{})}} });
+      moduleLoading:{projects:true,...(weekly?{weekly:true}:{}),...(features.literatureRead?{literature:true}:{})}, capabilities:{internal:false,weeklyDrafts:{enabled:draftsEnabled(env)},features:{...features,...(weeklyPolicyEnabled(env)?{weeklySubmit:weekly}:{})}} });
   }
   const people = memberSnapshots.get(session) || [];
   const members = people.flatMap(record => { try {
@@ -225,7 +227,7 @@ async function dashboardStart(request, env, session) {
     profile: { sub: session.sub, personId: session.personId, name: session.name, track: session.track || '', roles: session.roles, memberCategory: session.memberRecord?.fields?.['成员类别'] },
     week, student, teacher, manager, literature: null, catalog: [], moduleErrors: {},
     moduleLoading: { weekly: true, projects: true, literature: true }, moduleDeferred: { extras: true },
-    capabilities: { courses: courseCapabilities(env), features: memberFeatures(session, env) }
+    capabilities: { courses: courseCapabilities(env), weeklyDrafts:{enabled:draftsEnabled(env)}, features: memberFeatures(session, env) }
   });
 }
 
@@ -275,7 +277,7 @@ async function dashboard(request, env, session, options = {}) {
       ...(weekly?{week:weekInfo(new Date()),teacher:{students:[],stats:{}}}:{}),literature:null,
       catalog:projects.map(p=>({title:p.title,url:p.url,category:'项目',subtitle:'进入项目'})),moduleErrors:{},
       moduleLoading:{...(weekly?{weekly:true}:{}),...(options.coreOnly&&features.literatureRead?{literature:true}:{})},
-      ...(options.readContext?{readContext:options.readContext}:{}),capabilities:{internal:false,features:{...features,...(weeklyPolicyEnabled(env)?{weeklySubmit:weekly}:{})}}});
+      ...(options.readContext?{readContext:options.readContext}:{}),capabilities:{internal:false,weeklyDrafts:{enabled:draftsEnabled(env)},features:{...features,...(weeklyPolicyEnabled(env)?{weeklySubmit:weekly}:{})}}});
   }
   const section = new URL(request.url).searchParams.get('section');
   const extrasOnly = section === 'extras';
@@ -376,7 +378,7 @@ async function dashboard(request, env, session, options = {}) {
   return json(request, env, { profile, week: currentWeek, student, teacher, manager, literature, catalog, moduleErrors, moduleDiagnostics,
     ...(options.readContext ? { readContext: options.readContext } : {}),
     ...(coreOnly ? { progressive: true, moduleLoading: { literature: true, ...(weeklyPolicyEnabled(env)?{weekly:true}:{}) }, moduleDeferred: { extras: true } } : {}),
-    capabilities: { courses: coursesCapability, features: memberFeatures(session, env) } });
+    capabilities: { courses: coursesCapability, weeklyDrafts:{enabled:draftsEnabled(env)}, features: memberFeatures(session, env) } });
 }
 
 function buildLiterature(session, week, records, env = {}) {
@@ -600,6 +602,7 @@ function normalizeReport(record) {
   return {
     ...weeklyDates(record),
     recordId: record.record_id || '',
+    images: imageManifest(record), imageOwner: clean(field(record,'飞书OpenID')), imageSubmission: clean(field(record,'请求ID')),
     weekId: clean(field(record, '周次', 'WeekID')),
     weekNumber: field(record, '周序号') || '',
     submittedAt: formatRecordDate(field(record, '提交时间')),
@@ -813,6 +816,7 @@ async function buildStudent(session, week, reports, projects, courses, tasks, li
     report: {
       revision: await weeklyRevision(currentReport),
       recordId: currentReport?.record_id || '',
+      images: currentReport ? imageManifest(currentReport) : [],
       status: currentReport ? 'submitted' : 'pending',
       label: currentReport ? (clean(field(currentReport, '提交类型')) === '逾期提交' ? '逾期已提交' : '已提交') : '未提交',
       values: currentReport ? reportValues(currentReport) : {},
@@ -1153,9 +1157,9 @@ export async function weeklyBackfillReadiness(env) {
     for (const member of roster) selectWeeklyTarget(member, env, null);
     const binding = resolveTableBinding(env, 'WEEKLY_TABLE_ID');
     const schema = await weeklySchema(await resolveBitableAppToken(binding, token), binding.tableId, token);
-    const compatible = ['首次提交时间','最近修改时间','提交类型'].every(name => {
+    const compatible = ['首次提交时间','最近修改时间','提交类型',...(draftsEnabled(env)?[WEEKLY_IMAGE_FIELD]:[])].every(name => {
       const matches = schema.filter(f => f.field_name === name);
-      return matches.length === 1 && (name === '提交类型' ? [1] : [1,5]).includes(matches[0].type);
+      return matches.length === 1 && (name === '提交类型'||name===WEEKLY_IMAGE_FIELD ? [1] : [1,5]).includes(matches[0].type);
     });
     return {enabled:true,ready:compatible,previousWeeks:1,soleReviewer:true,independentPermissions:true,temporaryParticipantsVerified:temporaryIds.length};
   } catch (_) { return {enabled:true,ready:false}; }
@@ -1201,7 +1205,7 @@ async function weeklyPage(request, env, session) {
       if (prior.length > 1) throw httpError(409, '上周存在重复周报，请先核对');
       const record = prior[0];
       backfill = { week: previous, allowed: !record || !isWeeklySubmitted(record),
-        submitted: Boolean(record && isWeeklySubmitted(record)), values: record ? reportValues(record) : {},
+        submitted: Boolean(record && isWeeklySubmitted(record)), values: record ? reportValues(record) : {}, images: record?imageManifest(record):[],
         revision: await weeklyRevision(record) };
     } catch (error) { backfill = { week: previous, allowed: false, reason: error.message }; }
   }
@@ -1280,8 +1284,8 @@ export async function executeWeeklyStatus(request, env, storage, busy = false) {
     if (record && isWeeklySubmitted(record)) {
       const current = await accessForRecords(env,session,[record]); requireResource(current,record);
       const requestMatches = clean(field(record,'请求ID')) === id;
-      const hash = await weeklyHash(reportValues(record));
-      if (requestMatches && (!receipt || receipt.hash === hash) && (!pending || pending.requestId !== id || pending.hash === hash))
+      const hash = await weeklyHash(reportValues(record)),imageHash=await weeklyHash(imageManifest(record));
+      if (requestMatches && (!receipt || receipt.hash === hash && (!receipt.imageHash||receipt.imageHash===imageHash)) && (!pending || pending.requestId !== id || pending.hash === hash && (!pending.imageHash||pending.imageHash===imageHash)))
         return json(request,env,{status:'saved',ok:true,weekId,readBackVerified:true,report:{...normalizeReport(record),revision:await weeklyRevision(record)}});
       return json(request,env,{status:'different_submission',weekId,message:'该周已有另一份提交，请先查看历史记录，不要覆盖。'});
     }
@@ -1352,7 +1356,6 @@ async function saveReport(request, env, session, storage) {
     throw httpError(400, '周报版本信息无效，请刷新页面');
   const values = { progress: clean(body.progress), learning: clean(body.learning), evidence: clean(body.evidence),
     blockers: clean(body.blockers), nextPlan: clean(body.nextPlan) };
-  const payloadHash = await weeklyHash(values);
   const receiptKey = 'receipt:' + await weeklyHash(businessRequestId);
   const tenantToken = await getTenantToken(env);
   const records = await filteredRecords(env, tenantToken, 'WEEKLY_TABLE_ID', personalWeeklyFilter(session.sub,currentWeek.id));
@@ -1360,26 +1363,32 @@ async function saveReport(request, env, session, storage) {
     String(field(record, '周次', 'WeekID')) === currentWeek.id);
   if (sameWeek.length > 1) throw httpError(409, '本周存在重复周报，请管理员先合并记录');
   const existing = sameWeek[0];
+  const images = await validateWeeklyImages(env,session,body.images === undefined ? imageManifest(existing) : body.images);
+  if(images.some(i=>i.section==='notes'))throw httpError(400,'请将日常图片明确选入成果或问题栏目后再提交');
+  const payloadHash=await weeklyHash(values),imageHash=await weeklyHash(images);
   session = await accessForRecords(env, session, existing ? [existing] : []);
   if (existing) requireResource(session, existing, 'edit');
-  const success = async (record, updated, deduplicated = false) => json(request, env, {
+  const success = async (record, updated, deduplicated = false) => {
+    await publishWeeklySnapshot(env,session,record.record_id,currentWeek.id,clean(field(record,'请求ID')),reportValues(record),imageManifest(record),clean(field(record,'提交类型')));
+    return json(request, env, {
     ok: true, weekId: currentWeek.id, updated, deduplicated, readBackVerified: true,
     report: { ...normalizeReport(record), revision: await weeklyRevision(record) }
-  });
+    });
+  };
   const pending = await storage.get('pending');
   if (pending) {
     // An upstream timeout is not proof that a create failed. Never issue a
     // second create until the first request has been found and verified.
     if (!existing || clean(field(existing, '请求ID')) !== pending.requestId ||
-        await weeklyHash(reportValues(existing)) !== pending.hash || !isWeeklySubmitted(existing))
+        await weeklyHash(reportValues(existing)) !== pending.hash || (pending.imageHash&&await weeklyHash(imageManifest(existing))!==pending.imageHash) || !isWeeklySubmitted(existing))
       throw Object.assign(httpError(503, '上次保存结果未确认'), { code: 'WEEKLY_WRITE_UNCERTAIN' });
-    await storage.put('receipt:' + await weeklyHash(pending.requestId), { hash: pending.hash, recordId: existing.record_id });
+    await storage.put('receipt:' + await weeklyHash(pending.requestId), { hash: pending.hash, ...(pending.imageHash?{imageHash:pending.imageHash}:{}), recordId: existing.record_id });
     await storage.delete('pending');
   }
   const receipt = await storage.get(receiptKey);
-  if (receipt && receipt.hash !== payloadHash) throw httpError(409, '这次提交内容已变化，请重新打开本周记录后提交');
-  if (existing && isWeeklySubmitted(existing) && weeklyMatches(reportValues(existing), values)) {
-    await storage.put(receiptKey, { hash: payloadHash, recordId: existing.record_id });
+  if (receipt && (receipt.hash !== payloadHash || receipt.imageHash&&receipt.imageHash!==imageHash)) throw httpError(409, '这次提交内容已变化，请重新打开本周记录后提交');
+  if (existing && isWeeklySubmitted(existing) && weeklyMatches(reportValues(existing), values) && JSON.stringify(imageManifest(existing))===JSON.stringify(images)) {
+    await storage.put(receiptKey, { hash: payloadHash, imageHash, recordId: existing.record_id });
     return success(existing, true, true);
   }
   if (weeklyPolicyEnabled(env) && currentWeek.submissionType === '历史补交' && existing && isWeeklySubmitted(existing))
@@ -1408,6 +1417,11 @@ async function saveReport(request, env, session, storage) {
   const appToken = await resolveBitableAppToken(binding, tenantToken);
   const schema = await weeklySchema(appToken, binding.tableId, tenantToken, env);
   const payload = serializeWeekly(schema, fields);
+  if(draftsEnabled(env)){
+    const richFields=schema.filter(f=>f.field_name===WEEKLY_IMAGE_FIELD);
+    if(richFields.length!==1||richFields[0].type!==1)throw Object.assign(httpError(503,'周报图文字段尚未配置'),{code:'WEEKLY_SCHEMA_MISMATCH'});
+    payload[WEEKLY_IMAGE_FIELD]=JSON.stringify({version:1,images});
+  }
   if (weeklyPolicyEnabled(env)) {
     const first = existing && isWeeklySubmitted(existing)
       ? field(existing, '首次提交时间') : new Date().toISOString();
@@ -1428,7 +1442,7 @@ async function saveReport(request, env, session, storage) {
   if (existing) requireResource(current, existing, 'edit');
   if (Date.now() + 3000 >= env.__er2WriteDeadline) throw Object.assign(httpError(504,'核验耗时过长，尚未开始写入，请保留草稿后重试'),{code:'WEEKLY_PREWRITE_TIMEOUT'});
   // Journal before the non-transactional remote write; survives worker restarts.
-  await storage.put('pending', { requestId: businessRequestId, hash: payloadHash, recordId: existing?.record_id || '', at: Date.now() });
+  await storage.put('pending', { requestId: businessRequestId, hash: payloadHash, imageHash, recordId: existing?.record_id || '', at: Date.now() });
   try {
     if (existing) await updateRecord(env, tenantToken, 'WEEKLY_TABLE_ID', existing.record_id, payload, true);
     else await createRecord(env, tenantToken, 'WEEKLY_TABLE_ID', payload, true);
@@ -1439,9 +1453,9 @@ async function saveReport(request, env, session, storage) {
   const confirmed = (await filteredRecords(env, tenantToken, 'WEEKLY_TABLE_ID', personalWeeklyFilter(session.sub,currentWeek.id))).filter(record =>
     String(field(record, '飞书OpenID')) === session.sub && String(field(record, '周次', 'WeekID')) === currentWeek.id);
   if (confirmed.length !== 1 || clean(field(confirmed[0], '请求ID')) !== businessRequestId ||
-      !weeklyMatches(reportValues(confirmed[0]), values))
+      !weeklyMatches(reportValues(confirmed[0]), values) || JSON.stringify(imageManifest(confirmed[0]))!==JSON.stringify(images))
     throw Object.assign(httpError(503, '周报读回未确认'), { code: 'WEEKLY_READBACK_FAILED' });
-  await storage.put(receiptKey, { hash: payloadHash, recordId: confirmed[0].record_id });
+  await storage.put(receiptKey, { hash: payloadHash, imageHash, recordId: confirmed[0].record_id });
   await storage.delete('pending');
   return success(confirmed[0], Boolean(existing));
 }
@@ -1916,7 +1930,7 @@ async function requireActiveMember(env, session) {
   return current;
 }
 
-async function requireMemberIdentity(env, session) {
+export async function requireMemberIdentity(env, session) {
   strictBinding(env, 'MEMBERS_TABLE_ID');
   const people = await listRecords(env, await getTenantToken(env), 'MEMBERS_TABLE_ID');
   const current = { ...session, ...checkedIdentity(people, [], [], session.sub) };

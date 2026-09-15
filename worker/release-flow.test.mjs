@@ -52,7 +52,7 @@ globalThis.fetch = async (url, opts = {}) => {
       securityPatch: 'p0-20260907-2', weeklyPatch: 'weekly-stability-v3',
       authorization: { enforced: true, mode: 'authoritative-fail-closed', bindings: { MEMBERS_TABLE_ID: true, AUTH_PROJECTS_TABLE_ID: true, PROJECT_MEMBERS_TABLE_ID: true } },
       ai: { enabled: false }, weeklyAutomation: { remindersConfigured: true, digestConfigured: true }, courseConfigured: false,
-      capabilities: { learning: { version: 'learning-text-v1', storageReady: true, recipientsReady: true }, weekly: { version: 'weekly-save-history-v1', coordinatedWrites: true, historyPagination: true, backfill: {ready: true} } },
+      capabilities: { learning: { version: 'learning-text-v1', storageReady: true, recipientsReady: true }, weekly: { version: 'weekly-save-history-v1', coordinatedWrites: true, historyPagination: true, backfill: {ready: true}, drafts:{ready:true} } },
       release: { commit: state === 'new' ? 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' : 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' } };
     if (state === 'new' && ['failed', 'external', 'bootstrap-failed', 'learning-failed'].includes(process.env.MOCK_MODE)) h.weeklySchemaOk = false;
     if (state === 'new' && process.env.MOCK_MODE === 'backfill-failed') h.capabilities.weekly.backfill.ready = false;

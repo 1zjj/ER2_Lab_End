@@ -1,4 +1,5 @@
 import { weeklyText, weeklyValues } from './weekly-write.js';
+import {imageManifest} from './weekly-images.js';
 
 export async function weeklyHash(value) {
   const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(value)));
@@ -6,8 +7,8 @@ export async function weeklyHash(value) {
 }
 
 export function weeklyRevision(record) {
-  return record ? weeklyHash([record.record_id, weeklyText(record.fields?.['请求ID']),
-    weeklyText(record.fields?.['提交状态']), weeklyValues(record)]) : Promise.resolve('');
+  if(!record)return Promise.resolve('');const values=weeklyValues(record),images=imageManifest(record);
+  return weeklyHash([record.record_id,weeklyText(record.fields?.['请求ID']),weeklyText(record.fields?.['提交状态']),images.length?{...values,images}:values]);
 }
 
 export function weeklyDates(record) {

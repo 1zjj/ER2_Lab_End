@@ -17,6 +17,7 @@ import { enrichStudentDashboard } from './v2/student-home.js';
 import { AUTH_BINDINGS, strictBinding } from './authorization.js';
 import { BUILD_INFO } from './build-info.js';
 import { courseCapabilities } from './capabilities.js';
+import {routeDrafts,draftReadiness} from './weekly-drafts.js';
 import { READ_VERSION, readScope, readHeaders } from './read-performance.js';
 
 export const AI_STATUS = Object.freeze({ enabled: false, status: 'paused', configurationRetained: true });
@@ -63,6 +64,7 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
+    if(/^\/api\/weekly-drafts(?:\/|$)/.test(path))return routeDrafts(request,env);
     if (request.method !== 'OPTIONS' && path === '/api/admin/project-source-sync') return routeProjectSourceSync(request,env);
     if (request.method !== 'OPTIONS' && path === '/api/admin/permission-sync') return routePermissionSync(request,env);
     if (request.method !== 'OPTIONS' && path === '/api/admin/native-permissions') { const scoped=readScope(env,request); return readHeaders(scoped,await routePermissionAudit(request,scoped)); }
@@ -129,7 +131,7 @@ export default {
       release: BUILD_INFO,
       capabilities: { finance: { version: 'finance-v1', configured: env.FINANCE_ENABLED === 'true' && Boolean(env.FINANCE_RECORDS), independentPermissions: true }, learning: { version: LEARNING_VERSION, storageReady: learningReady, recipientsReady, independentPermissions: true }, courses: courseCapabilities(env), weekly: {
         version: 'weekly-save-history-v1', coordinatedWrites, historyPagination: true,
-        backfill: await weeklyBackfillReadiness(env)
+        backfill: await weeklyBackfillReadiness(env), drafts: await draftReadiness(env)
       } },
       coreReady: body.authConfigured === true && body.dataConfigured === true && deep.ok === true &&
         AUTH_BINDINGS.every(key => { try { strictBinding(env, key); return true; } catch (_) { return false; } }),

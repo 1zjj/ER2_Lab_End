@@ -1,6 +1,7 @@
 import { executeWeeklyRequest, executeLiteratureRequest, executeWeeklyStatus } from './index.js';
 import { executePermissionSync, permissionAlarm } from './permission-sync.js';
 import { executeProjectSourceSync, ProjectSourceSync, projectSourceAdapter } from './project-source-sync.js';
+import {executeDraft} from './weekly-drafts.js';
 
 // One globally unique object per table/person (journals are partitioned by week). The promise queue is needed
 // because outgoing Feishu fetches yield; Durable Object requests can interleave.
@@ -18,6 +19,11 @@ export class WeeklyWriteCoordinator {
       return this.state.storage.get('health').then(() => Response.json({ ok: true }));
     }
     const path = new URL(request.url).pathname;
+    if(path.startsWith('/api/weekly-drafts')||path.startsWith('/_draft/')){
+      const operation=()=>executeDraft(request,this.env,this.state.storage);
+      if(request.method==='GET'||path==='/_draft/validate')return operation();
+      const result=this.queue.then(operation);this.queue=result.catch(()=>{});return result;
+    }
     if (path === '/api/reports/status' && request.method === 'GET') return executeWeeklyStatus(request,this.env,this.state.storage,this.activeRequests > 0);
     // Read progress while an alarm scans Feishu. This is a fresh authenticated
     // storage read and never enters the mutation queue or shares report data.
