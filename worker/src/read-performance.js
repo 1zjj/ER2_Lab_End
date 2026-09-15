@@ -11,6 +11,7 @@ export function readScope(env, request) {
 }
 export function readOptions(env, budgetMs = 16000) {
   const scope = scopes.get(env);
+  if (Number.isFinite(env.__er2WriteDeadline)) return {readDeadline: Math.min(env.__er2WriteDeadline, Date.now() + budgetMs)};
   return scope?.readOnly ? { readDeadline: Math.min(scope.start + 20000, Date.now() + budgetMs) } : {};
 }
 export async function measureRead(env, binding, operation) {

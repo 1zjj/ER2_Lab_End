@@ -91,7 +91,7 @@ function reopenReport(rawDraft, saved = savedReport) {
   const form = { reset: () => Object.values(fields).forEach(field => { field.value = ''; }),
     elements: { namedItem: name => fields[name] } };
   const context = vm.createContext({ privateDrafts: { get: () => rawDraft }, draftScope: () => '2026-W37', draftKeys: { report: 'report' },
-    elements: { reportForm: form, reportWeekLabel: {}, reportError: {}, reportReload: {}, reportDialog: {} },
+    elements: { reportForm: form, reportWeekLabel: {}, reportError: {}, reportReload: {}, reportDialog: {}, reportSubmit:{} },
     state: { dashboard: { profile: { sub: 'test' }, week: { label: '当前周' }, student: { report: { values: saved } } } }, showDialog() {} });
   vm.runInContext(extract('  function restoreDraft(', '  function clearDraft('), context);
   vm.runInContext(extract('  function openReportDialog(', '  function openReportHistory('), context);

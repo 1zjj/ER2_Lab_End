@@ -3,6 +3,7 @@ import service, { weeklyBackfillReadiness } from './src/index.js';
 import { mockWeeklyCoordinator } from './test-weekly-coordinator.mjs';
 import { WEEKLY_FIELDS } from './src/weekly-write.js';
 import { shanghaiWeek } from './src/weekly-access.js';
+import { weeklyHash } from './src/weekly-history.js';
 const now = Date.now(), week = shanghaiWeek(now), previous = shanghaiWeek(week.startsAt - 1);
 const env = { SESSION_SECRET:'mock-weekly-policy-secret', FEISHU_APP_ID:'mock', FEISHU_APP_SECRET:'mock',
   FRONTEND_URL:'https://example.test', WEEKLY_BACKFILL_ENABLED:'true', WEEKLY_REVIEWER_OPEN_ID:'ou_1', PROFESSOR_OPEN_ID:'ou_1',
@@ -17,6 +18,7 @@ const people = [person(1,'PI','团队内'),person(2,'RA','团队内',['管理员
   person(5,'PI','团队外'),person(6,'联合培养','团队外')];
 const rows = [];
 let writes = 0;
+let readbackGate = null, afterWrite = null;
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async (input, options={}) => {
   const url = new URL(input); assert.equal(url.hostname,'open.feishu.cn');
@@ -27,11 +29,15 @@ globalThis.fetch = async (input, options={}) => {
   const match = /\/tables\/([^/]+)\/records(?:\/([^/]+))?$/.exec(url.pathname);
   assert.ok(match, 'Unexpected network action '+url.pathname);
   const [,table,id] = match;
-  if (options.method === 'GET') return Response.json({code:0,data:{items:table==='members'?people:table==='weekly'?rows:[],has_more:false}});
+  if (options.method === 'GET') {
+    if(table==='weekly' && readbackGate){const gate=readbackGate;readbackGate=null;await gate;}
+    return Response.json({code:0,data:{items:table==='members'?people:table==='weekly'?rows:[],has_more:false}});
+  }
   assert.equal(table,'weekly','No non-weekly writes permitted');
   const fields = JSON.parse(options.body).fields; writes++;
   const record = id ? rows.find(r=>r.record_id===id) : {record_id:'r'+writes,fields:{}};
   Object.assign(record.fields, fields); if (!id) rows.push(record);
+  if(afterWrite){const hook=afterWrite;afterWrite=null;hook();}
   return Response.json({code:0,data:{record}});
 };
 async function call(id,path,body) {
@@ -71,5 +77,27 @@ try {
   assert.equal((await call(1,'/api/reports/history?person=ou_6')).data.reports.length,1);
   assert.equal((await call(2,'/api/teacher/review',{recordId:rows[0].record_id,comment:'越权',requestId:'review-denied'})).status,403);
   assert.equal((await call(1,'/api/teacher/review',{recordId:rows[0].record_id,comment:'已阅',requestId:'review-ok'})).status,200);
+  const savedStatus = await call(2,'/api/reports/status?weekId='+previous.id+'&requestId=backfill');
+  assert.equal(savedStatus.status,200); assert.equal(savedStatus.data.status,'saved');
+  const stranger = await call(6,'/api/reports/status?weekId='+previous.id+'&requestId=backfill');
+  assert.equal(stranger.data.status,'not_found'); assert.equal(stranger.data.report,undefined);
+  const objectKey = await weeklyHash([env.WEEKLY_BASE_APP_TOKEN,env.WEEKLY_TABLE_ID,'P-002']);
+  const store = env.WEEKLY_WRITES.stores.get(objectKey);
+  const pendingKey = week.id+':pending'; store.set(pendingKey,{requestId:'uncertain',hash:'unknown'});
+  const writesBefore = writes;
+  assert.equal((await call(2,'/api/reports/status?weekId='+week.id+'&requestId=uncertain')).data.status,'needs_verification');
+  assert.ok(store.has(pendingKey)); assert.equal(writes,writesBefore,'Recovery reads never replay or delete');
+  people.push(person(3,'博士','团队内'));
+  env.WEEKLY_START_DATES=JSON.stringify({...JSON.parse(env.WEEKLY_START_DATES),'P-003':week.start});
+  let entered,releaseReadback;
+  const enteredWrite=new Promise(resolve=>entered=resolve);
+  afterWrite=()=>{readbackGate=new Promise(resolve=>releaseReadback=resolve);entered();};
+  const slowSave=call(3,'/api/reports',form(week.id,'slow-readback'));
+  await enteredWrite;
+  const beforeStatusWrites=writes;
+  let timer;
+  const quickStatus=await Promise.race([call(3,'/api/reports/status?weekId='+week.id+'&requestId=slow-readback'),new Promise((_,reject)=>timer=setTimeout(()=>reject(Error('Status queued behind save')),2000))]).finally(()=>clearTimeout(timer));
+  assert.equal(quickStatus.data.status,'saved');assert.equal(writes,beforeStatusWrites);
+  releaseReadback();assert.equal((await slowSave).status,200);
   console.log('PASS enabled weekly API: external current-only start, previous-week backfill, idempotency, no overwrite, private admin view, sole reviewer; all network mocked');
 } finally { globalThis.fetch = originalFetch; }

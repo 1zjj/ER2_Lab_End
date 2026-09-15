@@ -111,7 +111,8 @@ try {
 
   calls = []; const start = await (await call('/api/dashboard/start')).json();
   assert.equal(start.progressive, true); assert.equal(calls.length, 1);
-  assert.deepEqual(Object.keys(start.moduleLoading).sort(), ['extras','literature','projects','weekly']);
+  assert.deepEqual(Object.keys(start.moduleLoading).sort(), ['literature','projects','weekly']);
+  assert.equal(start.moduleDeferred.extras,true);
   failed = 'project_members';
   assert.equal((await call('/api/dashboard/start')).status, 200, 'Unrelated grant outage cannot block the identity shell');
   failed = 'weekly'; calls = [];

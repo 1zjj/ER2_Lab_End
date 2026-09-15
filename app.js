@@ -44,6 +44,7 @@
     reportSubmit: document.getElementById('report-submit'),
     reportError: document.getElementById('report-error'),
     reportReload: document.getElementById('report-reload'),
+    reportCheck: document.getElementById('report-check-result'),
     reportWeekLabel: document.getElementById('report-week-label'),
     reportHistoryDialog: document.getElementById('report-history-dialog'),
     reportHistoryBody: document.getElementById('report-history-body'),
@@ -379,7 +380,9 @@
 
   async function authenticatedFetch(url, options) {
     const response = await fetch(url, options);
-    if (response.status === 401 || response.status === 403) {
+    let moduleDenied = false;
+    if (response.status === 403) { try { moduleDenied = (await response.clone().json()).code === 'MODULE_FORBIDDEN'; } catch (_) {} }
+    if (response.status === 401 || response.status === 403 && !moduleDenied) {
       window.dispatchEvent(new CustomEvent('er2-session-denied', { detail: { status: response.status } }));
     }
     return response;
@@ -428,7 +431,7 @@
     const generation = state.loadGeneration = (state.loadGeneration || 0) + 1;
     const session = state.session;
     const current = function () { return generation === state.loadGeneration && session === state.session; };
-    const deadline = Date.now() + 25000;
+    const deadline = Date.now() + 20000;
     const loadRead = function (path) { return request(path, { readTimeoutMs: deadline - Date.now() }); };
     setBusy(true);
     try {
@@ -455,19 +458,7 @@
           location.href = API_BASE + '/auth/launch?returnTo=' + encodeURIComponent(location.href);
           return;
         }
-        if (new URLSearchParams(location.search).get('page') === 'weekly') data = await loadRead('/api/weekly');
-        else {
-          try {
-            const query = new URLSearchParams();
-            if (role) query.set('role', role);
-            const queryText = query.toString();
-            data = await loadRead('/api/bootstrap' + (queryText ? '?' + queryText : ''));
-          } catch (error) {
-            if (!error.status || error.status < 500 || error.binding === 'MEMBERS_TABLE_ID' || error.code === 'REQUEST_TIMEOUT') throw error;
-            data = await loadRead('/api/weekly');
-            data.dashboardUnavailable = true;
-          }
-        }
+        data = await loadRead('/api/dashboard/start');
       }
       if (!current()) return;
       privateDrafts.bind(DEMO_MODE ? 'demo' : data.profile.sub);
@@ -476,6 +467,7 @@
       state.readContext = typeof data.readContext === 'string' ? data.readContext : '';
       state.dashboard = data;
       state.moduleGeneration = {};
+      state.moduleFlights = {};
       state.catalog = mergeCatalog(data.collaborator ? [] : state.baseCatalog, data.catalog || []);
       const roles = Array.isArray(data.profile.roles) ? data.profile.roles.filter(function (item) { return roleMeta[item]; }) : ['student'];
       roles.sort(function (left, right) { return roleOrder.indexOf(left) - roleOrder.indexOf(right); });
@@ -490,7 +482,7 @@
       elements.error.hidden = true;
       elements.loading.hidden = true;
       elements.app.hidden = false;
-      if (new URLSearchParams(location.search).get('page') === 'weekly' && roles.includes('student')) openReportDialog();
+      state.openWeeklyAfterLoad = new URLSearchParams(location.search).get('page') === 'weekly' && (roles.includes('student') || data.capabilities?.features?.weeklySubmit === true);
       if (data.progressive) {
         const pendingModules = Object.keys(data.moduleLoading || {});
         pendingModules.forEach(function (name) { reloadModule(name); });
@@ -502,14 +494,6 @@
       if (!current()) return;
       elements.accountName.textContent = '身份或数据读取未完成';
       showError('工作台暂时无法载入', error.message || '请稍后重试');
-      if (state.session && error.status !== 401 && error.status !== 403 && error.binding !== 'MEMBERS_TABLE_ID' && error.code !== 'REQUEST_TIMEOUT') {
-        try { const me = await loadRead('/api/me');
-          if (!current()) return;
-          elements.accountName.textContent = me.profile.name;
-          elements.accountRole.textContent = '已确认身份';
-          elements.logoutButton.hidden = false;
-        } catch (_) { /* Keep the original failure and do not assume an identity. */ }
-      }
     } finally {
       state.dashboardLoading = false;
     }
@@ -522,11 +506,14 @@
       (loading ? '' : '<button type="button" class="button button-secondary" data-reload-module="' + name + '">重新读取</button>') + '</section>';
   }
 
-  async function reloadModule(name) {
+  async function reloadModule(name, refreshAfterFlight = false) {
     const paths = { weekly: '/api/weekly', projects: '/api/projects', literature: '/api/literature', extras: '/api/dashboard?section=extras' };
     const featureAccess = state.dashboard?.capabilities?.features || {};
     if (!paths[name] || !state.dashboard || state.dashboard.collaborator &&
       !(name === 'projects' || name === 'weekly' && featureAccess.weeklySubmit === true || name === 'literature' && featureAccess.literatureRead === true)) return;
+    state.moduleFlights ||= {};
+    if (state.moduleFlights[name]) { if (refreshAfterFlight) state.moduleFlights[name].refresh = true; return; }
+    const flight = state.moduleFlights[name] = {};
     const dashboard = state.dashboard, session = state.session, generation = state.loadGeneration;
     const revision = state.moduleGeneration[name] = (state.moduleGeneration[name] || 0) + 1;
     const current = () => state.dashboard === dashboard && state.session === session && generation === state.loadGeneration && revision === state.moduleGeneration[name];
@@ -567,7 +554,12 @@
     } catch (error) {
       if (current()) dashboard.moduleErrors[name] = error.message || '暂时无法读取';
     } finally {
-      if (current()) { delete dashboard.moduleLoading[name]; renderActiveView(true); }
+      if (state.moduleFlights?.[name] === flight) delete state.moduleFlights[name];
+      if (current()) {
+        delete dashboard.moduleLoading[name]; renderActiveView(true);
+        if (name === 'weekly' && !dashboard.moduleErrors.weekly && state.openWeeklyAfterLoad) { state.openWeeklyAfterLoad = false; openReportDialog(); }
+      }
+      if (flight.refresh && state.dashboard === dashboard && state.session === session && state.loadGeneration === generation) reloadModule(name);
     }
   }
 
@@ -1236,10 +1228,49 @@
       '<div class="form-body"><p class="form-hint">保留真实提交时间，不抵扣本周任务。提交后不能再次补交覆盖。</p>' + fields.map(([key,label,max,required,rows,placeholder]) =>
         '<label>' + label + '<textarea name="' + key + '" maxlength="' + max + '" rows="' + rows + '" placeholder="' + escapeHtml(placeholder) + '"' + (required?' required':'') + '>' +
         escapeHtml(values[key] || '') + '</textarea></label>').join('') +
-      '<p class="form-error" role="alert" hidden></p></div><div class="modal-actions"><button class="button button-secondary" type="button" data-cancel>取消</button>' +
+      '<p class="form-hint" role="status" aria-live="polite" hidden></p><p class="form-error" role="alert" hidden></p><button class="button button-secondary" type="button" data-check-result hidden>核对提交结果（不重复提交）</button></div><div class="modal-actions"><button class="button button-secondary" type="button" data-cancel>取消</button>' +
       '<button class="button button-primary" type="submit">提交补交周报</button></div></form>';
     const form = dialog.querySelector('form'), submit = form.querySelector('[type="submit"]'), error = form.querySelector('[role="alert"]');
-    const current = () => state.session === session && state.dashboard === dashboard;
+    const owner = dashboard.profile?.sub;
+    const current = () => state.session === session && Boolean(state.dashboard) && state.dashboard.profile?.sub === owner;
+    const check = form.querySelector('[data-check-result]'), progress = form.querySelector('[role="status"]');
+    let pendingFields = null, unresolved = false;
+    const setSubmitting = (busy, message = '') => {
+      submit.disabled = busy || unresolved; check.disabled = busy;
+      submit.textContent = busy ? '正在处理…' : unresolved ? '等待结果核对' : '提交补交周报';
+      progress.hidden = !busy; progress.textContent = message;
+      for (const field of form.querySelectorAll('textarea')) field.readOnly = busy || unresolved;
+    };
+    const finishSaved = async saved => {
+      if (!current()) { dialog.close(); return; }
+      if (saved.readBackVerified !== true || saved.weekId !== weekId) throw Object.assign(new Error('补交结果尚未确认，内容已保留'),{status:503,code:'WEEKLY_READBACK_FAILED'});
+      privateDrafts.remove(draftKey, scope); privateDrafts.remove(requestKey, scope);
+      unresolved = false; dialog.close(); showToast('上周周报已补交，本周任务不受影响');
+      await reloadModule('weekly',true);
+    };
+    const checkResult = async () => {
+      if (!pendingFields || !current()) return;
+      setSubmitting(true,'正在核对原请求的保存结果，不会重复提交。');
+      try {
+        const result = await request('/api/reports/status?weekId=' + encodeURIComponent(weekId) + '&requestId=' + encodeURIComponent(pendingFields.requestId), {readTimeoutMs:10000});
+        if (!current()) return dialog.close();
+        if (result.status === 'saved') { await finishSaved(result); return; }
+        unresolved = result.status !== 'not_found';
+        error.textContent = result.message || '结果尚未确认，请稍后再次核对，不要重复提交。'; error.hidden = false; check.hidden = false;
+      } catch (failure) {
+        if (!current()) return;
+        unresolved = true; error.textContent = '暂时无法核对保存结果，内容已保留。请稍后点击“核对提交结果”，不要重复新建。'; error.hidden = false; check.hidden = false;
+      } finally { setSubmitting(false); }
+    };
+    check.addEventListener('click', checkResult);
+    try {
+      const previous = JSON.parse(privateDrafts.get(requestKey, scope) || 'null');
+      if (previous?.id && previous.intent) {
+        pendingFields = {...JSON.parse(previous.intent),weekId,requestId:previous.id,baseRevision:draft._baseRevision ?? backfill.revision ?? ''};
+        unresolved = true; check.hidden = false; error.hidden = false;
+        error.textContent = '检测到此前提交，请先核对保存结果，不会重复提交。'; setSubmitting(false);
+      }
+    } catch (_) {}
     form.addEventListener('input', () => {
       if (current()) privateDrafts.set(draftKey, scope, JSON.stringify({ ...Object.fromEntries(new FormData(form)), _baseRevision: draft._baseRevision ?? backfill.revision ?? '' }));
     });
@@ -1247,30 +1278,34 @@
     dialog.addEventListener('close', () => dialog.remove());
     form.addEventListener('submit', async event => {
       event.preventDefault();
-      if (submit.disabled || !current() || !form.reportValidity()) return;
+      if (!current()) { error.textContent = '登录账号已变化，请重新打开补交表单。'; error.hidden = false; return; }
+      if (submit.disabled || !form.reportValidity()) return;
       const content = Object.fromEntries(new FormData(form));
       const intent = JSON.stringify(content);
       let receipt;
       try { receipt = JSON.parse(privateDrafts.get(requestKey, scope) || 'null'); } catch (_) {}
       if (!receipt || receipt.intent !== intent) receipt = { intent, id: 'weekly-backfill-' + crypto.randomUUID() };
       privateDrafts.set(requestKey, scope, JSON.stringify(receipt));
-      submit.disabled = true; error.textContent = ''; error.hidden = true;
-      for (const field of form.querySelectorAll('textarea')) field.readOnly = true;
+      pendingFields = { ...content, weekId, requestId:receipt.id, baseRevision:draft._baseRevision ?? backfill.revision ?? '' };
+      privateDrafts.set(draftKey, scope, JSON.stringify({...content,_baseRevision:pendingFields.baseRevision}));
+      error.textContent = ''; error.hidden = true; check.hidden = true;
+      setSubmitting(true,'正在保存并等待飞书读回确认。请勿重复点击；关闭窗口不会取消已经发出的提交。');
       try {
-        const saved = await request('/api/reports', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ ...content, weekId,
-          requestId:receipt.id, baseRevision:draft._baseRevision ?? backfill.revision ?? '' }) });
+        const saved = await request('/api/reports', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(pendingFields) });
         if (!current()) return dialog.close();
-        if (saved.readBackVerified !== true || saved.weekId !== weekId) throw new Error('补交结果尚未确认，内容已保留');
-        privateDrafts.remove(draftKey, scope); privateDrafts.remove(requestKey, scope);
-        dialog.close(); showToast('上周周报已补交，本周任务不受影响');
-        await reloadModule('weekly');
-      } catch (failure) { if (current()) { error.textContent = failure.message || '补交失败，请保留内容后重试'; error.hidden = false; } }
-      finally { submit.disabled = false; for (const field of form.querySelectorAll('textarea')) field.readOnly = false; }
+        await finishSaved(saved);
+      } catch (failure) {
+        if (current()) {
+          error.textContent = failure.message || '补交失败，请保留内容后重试'; error.hidden = false;
+          if (failure.status >= 500 || ['REQUEST_TIMEOUT','WEEKLY_WRITE_UNCERTAIN','WEEKLY_READBACK_FAILED'].includes(failure.code)) { unresolved = true; await checkResult(); }
+        }
+      } finally { setSubmitting(false); }
     });
     document.body.appendChild(dialog); dialog.showModal();
   }
 
   function openReportDialog() {
+    if (state.dashboard?.moduleLoading?.weekly || state.dashboard?.moduleErrors?.weekly) return showToast('周报尚未读取成功，请先重试周报模块；草稿不会清空。');
     elements.reportWeekLabel.textContent = state.dashboard.week.label;
     elements.reportError.hidden = true;
     elements.reportReload.hidden = true;
@@ -1282,6 +1317,19 @@
     try { draft = JSON.parse(privateDrafts.get(draftKeys.report, draftScope()) || '{}'); } catch (_) {}
     // A draft must retain the version it started from; never silently rebase it.
     state.reportBaseRevision = hasDraft ? (typeof draft?._baseRevision === 'string' ? draft._baseRevision : '') : (report.revision || '');
+    state.reportNeedsVerification = false;
+    if (elements.reportCheck) elements.reportCheck.hidden = true;
+    elements.reportSubmit.disabled = false;
+    try {
+      const id = privateDrafts.get('er2-request-report',draftScope());
+      const intent = privateDrafts.get('er2-report-intent',draftScope());
+      if (id && intent) {
+        state.reportPending = {...JSON.parse(intent),weekId:state.dashboard.week.id,requestId:id};
+        state.reportNeedsVerification = true; elements.reportSubmit.disabled = true;
+        if (elements.reportCheck) elements.reportCheck.hidden = false;
+        elements.reportError.textContent = '检测到此前提交，请先核对保存结果，不要重复新建。'; elements.reportError.hidden = false;
+      }
+    } catch (_) {}
     showDialog(elements.reportDialog);
   }
 
@@ -1494,32 +1542,39 @@
     showDialog(elements.studentDetailDialog);
   }
 
-  async function submitReport(event) {
+  async function submitReport(event, verifyOnly = false) {
     event.preventDefault();
-    if (elements.reportSubmit.disabled) return;
-    if (!elements.reportForm.reportValidity() || !state.dashboard) return;
+    if (state.reportChecking || elements.reportSubmit.disabled && !verifyOnly) return;
+    if (!state.dashboard || (verifyOnly ? !state.reportPending : !elements.reportForm.reportValidity())) return;
     const dashboard = state.dashboard, session = state.session, generation = state.loadGeneration;
     const current = () => state.dashboard === dashboard && state.session === session && state.loadGeneration === generation;
     const originalForm = JSON.stringify(Object.fromEntries(new FormData(elements.reportForm).entries()));
     state.moduleGeneration ||= {};
     state.moduleGeneration.weekly = (state.moduleGeneration.weekly || 0) + 1;
-    const fields = Object.fromEntries(new FormData(elements.reportForm).entries());
-    fields.baseRevision = state.reportBaseRevision || '';
+    const fields = verifyOnly ? {...state.reportPending} : Object.fromEntries(new FormData(elements.reportForm).entries());
+    if (!verifyOnly) { fields.baseRevision = state.reportBaseRevision || ''; fields.weekId = dashboard.week.id; }
     const intent = JSON.stringify(fields);
-    if (privateDrafts.get('er2-report-intent', draftScope()) !== intent) {
+    if (!verifyOnly && privateDrafts.get('er2-report-intent', draftScope()) !== intent) {
       privateDrafts.remove('er2-request-report', draftScope());
       privateDrafts.set('er2-report-intent', draftScope(), intent);
     }
-    fields.requestId = pendingRequestId('er2-request-report', 'weekly');
+    if (!verifyOnly) fields.requestId = pendingRequestId('er2-request-report', 'weekly');
+    state.reportChecking = true;
     elements.reportSubmit.disabled = true;
-    elements.reportSubmit.textContent = '正在提交…';
+    elements.reportSubmit.textContent = verifyOnly ? '正在核对结果…' : '正在提交并确认…';
+    if (elements.reportCheck) elements.reportCheck.disabled = true;
     elements.reportError.hidden = true;
     try {
       let saved;
+      const querySaved = async () => {
+        const result = await request('/api/reports/status?weekId='+encodeURIComponent(fields.weekId)+'&requestId='+encodeURIComponent(fields.requestId),{readTimeoutMs:10000});
+        if (result.status === 'saved' && result.weekId === fields.weekId) return result;
+        throw Object.assign(new Error(result.message || '结果尚未确认，请稍后再次核对。'),{needsVerification:result.status !== 'not_found'});
+      };
       if (DEMO_MODE) {
         await new Promise(function (resolve) { setTimeout(resolve, 500); });
       } else {
-        saved = await request('/api/reports', {
+        try { saved = verifyOnly ? await querySaved() : await request('/api/reports', {
           method: 'POST',
           headers: {
             'Accept': 'application/json',
@@ -1528,11 +1583,32 @@
             'Authorization': 'Bearer ' + state.session
           },
           body: JSON.stringify(Object.assign({ weekId: state.dashboard.week.id }, fields))
-        });
-        if (saved.readBackVerified !== true || !saved.report) throw new Error('后端未返回保存读回确认，草稿已保留；请管理员核对部署版本。');
+        }); } catch (failure) {
+          if (!verifyOnly && (failure.status >= 500 || failure.code === 'REQUEST_TIMEOUT')) {
+            state.reportPending = {...fields}; state.reportNeedsVerification = true;
+            elements.reportSubmit.textContent = '正在核对保存结果…'; saved = await querySaved();
+          } else throw failure;
+        }
+        if (saved.readBackVerified !== true || !saved.report) throw Object.assign(new Error('后端未返回保存读回确认，草稿已保留；请核对提交结果。'),{needsVerification:true});
       }
-      if (!current()) return;
-      const editedDuringSave = originalForm !== JSON.stringify(Object.fromEntries(new FormData(elements.reportForm).entries()));
+      if (!current()) {
+        if (state.session === session && state.dashboard?.profile?.sub === dashboard.profile?.sub) {
+          state.reportPending = {...fields}; state.reportNeedsVerification = true;
+          elements.reportError.textContent = '页面已更新，请核对刚才的提交结果，不要重复提交。'; elements.reportError.hidden = false;
+          if (elements.reportCheck) elements.reportCheck.hidden = false;
+        }
+        return;
+      }
+      state.reportNeedsVerification = false; state.reportPending = null;
+      if (elements.reportCheck) elements.reportCheck.hidden = true;
+      if (fields.weekId && fields.weekId !== dashboard.week.id) {
+        privateDrafts.remove(draftKeys.report,fields.weekId); privateDrafts.remove('er2-request-report',fields.weekId); privateDrafts.remove('er2-report-intent',fields.weekId);
+        closeDialog(elements.reportDialog); showToast('该周周报已确认保存，本周任务不受影响'); return;
+      }
+      const currentForm = Object.fromEntries(new FormData(elements.reportForm).entries());
+      const editedDuringSave = originalForm !== JSON.stringify(currentForm) || verifyOnly && ['progress','learning','evidence','blockers','nextPlan'].some(key=>String(currentForm[key]||'')!==String(fields[key]||''));
+      if (state.dashboard.moduleLoading) delete state.dashboard.moduleLoading.weekly;
+      if (state.dashboard.moduleErrors) delete state.dashboard.moduleErrors.weekly;
       state.dashboard.student.report = {
         status: 'submitted',
         label: '已提交',
@@ -1589,12 +1665,17 @@
       }
     } catch (error) {
       if (!current()) return;
+      if (error.needsVerification !== undefined) state.reportNeedsVerification = error.needsVerification;
+      if (state.reportNeedsVerification) state.reportPending = {...fields};
+      if (elements.reportCheck) elements.reportCheck.hidden = !state.reportNeedsVerification;
       elements.reportError.textContent = error.message || '提交失败，请稍后重试';
       elements.reportError.hidden = false;
       elements.reportReload.hidden = error.status !== 409;
     } finally {
-      elements.reportSubmit.disabled = false;
-      elements.reportSubmit.textContent = '提交本周记录';
+      state.reportChecking = false;
+      if (elements.reportCheck) elements.reportCheck.disabled = false;
+      elements.reportSubmit.disabled = Boolean(state.reportNeedsVerification);
+      elements.reportSubmit.textContent = state.reportNeedsVerification ? '等待结果核对' : '提交本周记录';
     }
   }
 
@@ -1958,6 +2039,7 @@
   }
   document.getElementById('retry-button').addEventListener('click', function () { loadDashboard(state.activeRole); });
   elements.reportForm.addEventListener('submit', submitReport);
+  elements.reportCheck.addEventListener('click', event => submitReport(event,true));
   elements.reportReload.addEventListener('click', reloadSavedReport);
   elements.literatureForm.addEventListener('submit', submitLiterature);
   elements.courseForm.addEventListener('submit', submitCourse);

@@ -1,4 +1,4 @@
-import { executeWeeklyRequest, executeLiteratureRequest } from './index.js';
+import { executeWeeklyRequest, executeLiteratureRequest, executeWeeklyStatus } from './index.js';
 import { executePermissionSync, permissionAlarm } from './permission-sync.js';
 import { executeProjectSourceSync, ProjectSourceSync, projectSourceAdapter } from './project-source-sync.js';
 
@@ -10,6 +10,7 @@ export class WeeklyWriteCoordinator {
     this.state = state;
     this.env = env;
     this.queue = Promise.resolve();
+    this.activeRequests = 0;
   }
 
   fetch(request) {
@@ -17,12 +18,14 @@ export class WeeklyWriteCoordinator {
       return this.state.storage.get('health').then(() => Response.json({ ok: true }));
     }
     const path = new URL(request.url).pathname;
+    if (path === '/api/reports/status' && request.method === 'GET') return executeWeeklyStatus(request,this.env,this.state.storage,this.activeRequests > 0);
     // Read progress while an alarm scans Feishu. This is a fresh authenticated
     // storage read and never enters the mutation queue or shares report data.
     if(path==='/api/admin/permission-sync'&&request.method==='GET')return executePermissionSync(request,this.env,this.state.storage);
     if(path==='/api/admin/project-source-sync'&&request.method==='GET')return executeProjectSourceSync(request,this.env,this.state.storage);
     const execute = path === '/api/admin/project-source-sync' ? executeProjectSourceSync : path === '/api/admin/permission-sync' ? executePermissionSync : path === '/api/literature' ? executeLiteratureRequest : executeWeeklyRequest;
-    const result = this.queue.then(() => execute(request, this.env, this.state.storage));
+    this.activeRequests++;
+    const result = this.queue.then(() => execute(request, this.env, this.state.storage)).finally(()=>{this.activeRequests--;});
     this.queue = result.catch(() => {});
     return result;
   }

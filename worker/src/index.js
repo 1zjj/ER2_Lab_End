@@ -49,7 +49,7 @@ function externalRouteAllowed(session, path, method, env = {}) {
   const features = memberFeatures(session);
   if (path === '/api/literature') return method === 'GET' ? features.literatureRead : method === 'POST' && features.literatureSubmit;
   const weekly = weeklyPolicyEnabled(env) ? owesWeekly(session) : features.weeklySubmit;
-  if (path === '/api/weekly' || path === '/api/reports/history') return method === 'GET' && weekly;
+  if (path === '/api/weekly' || path === '/api/reports/history' || path === '/api/reports/status') return method === 'GET' && weekly;
   if (path === '/api/reports') return method === 'POST' && weekly;
   return false;
 }
@@ -60,6 +60,7 @@ export default {
     env.__er2ReadOnly = request.method === 'GET';
     if (ctx?.waitUntil) env.__er2WaitUntil = promise => ctx.waitUntil(promise);
     const url = new URL(request.url);
+    if (url.pathname === '/api/reports' && request.method === 'POST') env.__er2WriteDeadline = Date.now() + 32000;
     requestIds.set(request, request.headers.get('X-Request-ID') || crypto.randomUUID());
     if (request.method === 'OPTIONS') return corsResponse(request, env, null, 204);
 
@@ -99,9 +100,10 @@ export default {
       if (url.pathname === '/api/bootstrap' && request.method === 'GET') return await dashboardBootstrap(request, env, session);
       const readContext = request.method === 'GET' ? await readContextSession(request, env, session) : null;
       if (readContext) session = readContext;
-      const personalRoutes = ['/api/me', '/api/dashboard/start', '/api/weekly', '/api/reports/history', '/api/reports', '/api/literature', '/api/admin/weekly-source', '/api/admin/literature-source'];
+      const personalRoutes = ['/api/me', '/api/dashboard/start', '/api/weekly', '/api/reports/history', '/api/reports/status', '/api/reports', '/api/literature', '/api/admin/weekly-source', '/api/admin/literature-source'];
       if (url.pathname.startsWith('/api/') && !readContext) session = (personalRoutes.includes(url.pathname)||url.pathname==='/api/dashboard')
         ? await requireMemberIdentity(env, session) : await requireActiveMember(env, session);
+      env.__er2IdentityVerified = true;
       if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(request.method) && url.pathname.startsWith('/api/')) enforceWriteRateLimit(session.sub);
       if (url.pathname === '/api/me' && request.method === 'GET') return json(request, env, { profile: { sub: session.sub, personId: session.personId, name: session.name, roles: session.roles } });
       if (!isInternalMember(session) && !externalRouteAllowed(session, url.pathname, request.method, env))
@@ -112,6 +114,7 @@ export default {
       if (url.pathname === '/api/admin/weekly-source' && request.method === 'GET') return await weeklySource(request, env, session);
       if (/^\/api\/projects(?:\/|$)/.test(url.pathname)) return await projectApi(request, env, session);
       if (url.pathname === '/api/reports/history' && request.method === 'GET') return await reportHistory(request, env, session);
+      if (url.pathname === '/api/reports/status' && request.method === 'GET') return await coordinateWeeklySave(request, env, session);
       if (url.pathname === '/api/weekly' && request.method === 'GET') return await weeklyPage(request, env, session);
       if (url.pathname === '/api/dashboard/start' && request.method === 'GET') return await dashboardStart(request, env, session);
       if (url.pathname === '/api/dashboard' && request.method === 'GET') return await dashboard(request, env, session,
@@ -129,7 +132,7 @@ export default {
       const messages = { LITERATURE_SCHEMA_MISMATCH: '文献表字段配置不兼容，请联系管理员检查文献数据源；填写内容已保留', LITERATURE_WRITE_FAILED: '文献保存失败，请联系管理员检查文献表字段和应用写入权限；填写内容已保留', LITERATURE_READBACK_FAILED: '尚未确认文献保存结果，填写内容已保留；请稍后重试核对', WEEKLY_COORDINATOR_MISSING: '周报保存保护尚未就绪，请稍后重试', WEEKLY_WRITE_UNCERTAIN: '上次保存结果仍在核对，草稿已保留；请稍后重试，若持续出现请联系管理员', WEEKLY_SCHEMA_MISMATCH: '周报存储字段尚未统一，请联系管理员完成配置', WEEKLY_EVIDENCE_COLUMN_TYPE: '产出字段仍是旧的单链接类型，暂不能保存说明和多个链接', WEEKLY_BINDING_MISSING: '周报存储尚未配置', WEEKLY_READBACK_FAILED: '保存请求已处理，但尚未确认读回结果；请保留草稿后重试' };
       const message = status >= 500 ? (messages[error.code] || (error.binding ? '数据读取失败（' + error.binding.replace('_TABLE_ID', '') + '），请将下方诊断编号提供给管理员' : '服务暂时不可用，请稍后重试')) : error.message;
       if (status >= 500) console.error(error);
-      return json(request, env, { message, code: error.code || (error.binding ? 'TABLE_READ_FAILED' : 'REQUEST_FAILED'),
+      return json(request, env, { message, code: error.code || (status === 403 && env.__er2IdentityVerified ? 'MODULE_FORBIDDEN' : error.binding ? 'TABLE_READ_FAILED' : 'REQUEST_FAILED'),
         ...(error.binding ? { binding: error.binding } : {}), requestId: requestIds.get(request) || '' }, status);
     }
   },
@@ -218,9 +221,9 @@ async function dashboardStart(request, env, session) {
   const teacher = buildTeacher(session, week, [], [], [], env);
   return json(request, env, {
     progressive: true,
-    profile: { sub: session.sub, personId: session.personId, name: session.name, track: session.track || '', roles: session.roles },
+    profile: { sub: session.sub, personId: session.personId, name: session.name, track: session.track || '', roles: session.roles, memberCategory: session.memberRecord?.fields?.['成员类别'] },
     week, student, teacher, manager, literature: null, catalog: [], moduleErrors: {},
-    moduleLoading: { weekly: true, projects: true, literature: true, extras: true },
+    moduleLoading: { weekly: true, projects: true, literature: true }, moduleDeferred: { extras: true },
     capabilities: { courses: courseCapabilities(env), features: memberFeatures(session) }
   });
 }
@@ -1120,11 +1123,11 @@ async function completeTrackAIfReady(env, tenantToken, records, target) {
   }
 }
 
-async function weeklySchema(app, table, token) {
+async function weeklySchema(app, table, token, env = {}) {
   const fields = [], seen = new Set(); let page = '';
   do {
     const data = (await feishuRequest('/bitable/v1/apps/' + app + '/tables/' + table +
-      '/fields?page_size=100' + (page ? '&page_token=' + encodeURIComponent(page) : ''), { bearer: token })).data;
+      '/fields?page_size=100' + (page ? '&page_token=' + encodeURIComponent(page) : ''), { bearer: token, ...readOptions(env) })).data;
     if (!Array.isArray(data?.items)) throw httpError(502, '周报字段读取异常');
     fields.push(...data.items);
     if (data.has_more === false) return fields;
@@ -1159,24 +1162,28 @@ async function weeklyPage(request, env, session) {
     throw Object.assign(httpError(503, '周报尚未配置'), { code: 'WEEKLY_BINDING_MISSING' });
   const token = await getTenantToken(env);
   const week = weekInfo(new Date());
-  const [people, records] = await Promise.all([
+  const optionalCatalog = weeklyPolicyEnabled(env) && reviewsWeekly(session,env)
+    ? Promise.all(['PROJECTS_TABLE_ID','AUTH_PROJECTS_TABLE_ID','PROJECT_MEMBERS_TABLE_ID'].map(key=>listRecords(env,token,key,{budgetMs:2500})))
+      .then(([master,mirrors,relations])=>canonicalProjectData(master,mirrors,relations)).catch(()=>null) : Promise.resolve(null);
+  const [people, records, displayCatalog] = await Promise.all([
     memberSnapshots.get(session) || listRecords(env, token, 'MEMBERS_TABLE_ID'),
     filteredRecords(env, token, 'WEEKLY_TABLE_ID', weekFilter(weeklyPolicyEnabled(env)
-      ? [week.id, shanghaiWeek(Date.now() - 7 * 86400000).id] : [week.id]))
+      ? [week.id, shanghaiWeek(Date.now() - 7 * 86400000).id] : [week.id])), optionalCatalog
   ]);
   session = await accessForRecords(env, session, records);
-  if (!projectCatalogSnapshots.has(session) &&
+  if (!weeklyPolicyEnabled(env) && !projectCatalogSnapshots.has(session) &&
       session.roles.some(role => role === 'teacher' || role === 'manager') &&
       authorizationBindingsConfigured(env)) {
     session = await requireActiveMember(env, session);
   }
   const reports = records.filter(record => (!hasProjectScope(record) || canProject(session, businessProjectId(record))) &&
     (!weeklyPolicyEnabled(env) || canReadWeekly(session, record, env)));
-  const projectCatalog = projectCatalogSnapshots.get(session) || { projects: [], relations: [] };
+  const projectCatalog = projectCatalogSnapshots.get(session) || displayCatalog || { projects: [], relations: [] };
   const members = people.flatMap(record => { try {
     const member = authority(people, projectCatalog.projects, projectCatalog.relations, identity(record));
     return [{ ...member, openId: member.sub,
-      projectCode: Object.keys(member.grants || {}).sort().join('、') }];
+      projectCode: weeklyPolicyEnabled(env) && reviewsWeekly(session,env) && !displayCatalog && !projectCatalogSnapshots.has(session)
+        ? '项目归属暂时无法读取' : Object.keys(member.grants || {}).sort().join('、') }];
   } catch (_) { return []; } });
   const student = await buildStudent(session, week, reports, [], [], [], []);
   const teacher = buildTeacher(session, week, members, reports, [], env);
@@ -1242,12 +1249,47 @@ async function coordinateWeeklySave(request, env, session) {
     throw Object.assign(httpError(503, '周报保存保护尚未就绪'), { code: 'WEEKLY_COORDINATOR_MISSING' });
   const binding = resolveTableBinding(env, 'WEEKLY_TABLE_ID');
   const key = await weeklyHash([binding.appToken || binding.wikiToken, binding.tableId, session.personId]);
-  return env.WEEKLY_WRITES.get(env.WEEKLY_WRITES.idFromName(key)).fetch(request);
+  const headers = new Headers(request.headers);
+  headers.delete('X-ER2-Write-Deadline');
+  if (request.method === 'POST') headers.set('X-ER2-Write-Deadline', String(env.__er2WriteDeadline || Date.now()+32000));
+  return env.WEEKLY_WRITES.get(env.WEEKLY_WRITES.idFromName(key)).fetch(new Request(request,{headers}));
+}
+
+function personalWeeklyFilter(sub, weekId) {
+  return {conjunction:'and',conditions:[{field_name:'飞书OpenID',operator:'is',value:[sub]}, {field_name:'周次',operator:'is',value:[weekId]}]};
+}
+
+// Read-only recovery path. Never deletes a pending journal or issues a write.
+export async function executeWeeklyStatus(request, env, storage, busy = false) {
+  env = readScope(env,request); env.__er2ReadOnly = true;
+  try {
+    const session = await requireMemberIdentity(env, await requireSession(request,env));
+    const params = new URL(request.url).searchParams, weekId = params.get('weekId') || '', id = params.get('requestId') || '';
+    if (!/^\d{4}-W(?:0[1-9]|[1-4]\d|5[0-3])$/.test(weekId) || !id || id.length > 200) throw httpError(400,'提交查询参数无效');
+    const pending = await storage.get(weekId+':pending');
+    const receipt = await storage.get(weekId+':receipt:'+await weeklyHash(id));
+    const records = await filteredRecords(env, await getTenantToken(env), 'WEEKLY_TABLE_ID', personalWeeklyFilter(session.sub,weekId), {budgetMs:8000});
+    const own = records.filter(r=>String(field(r,'飞书OpenID'))===session.sub && String(field(r,'周次'))===weekId);
+    if (own.length > 1) return json(request,env,{status:'needs_verification',weekId,message:'发现重复周报，请管理员核对；不要重复提交。'});
+    const record = own[0];
+    if (record && isWeeklySubmitted(record)) {
+      const current = await accessForRecords(env,session,[record]); requireResource(current,record);
+      const requestMatches = clean(field(record,'请求ID')) === id;
+      const hash = await weeklyHash(reportValues(record));
+      if (requestMatches && (!receipt || receipt.hash === hash) && (!pending || pending.requestId !== id || pending.hash === hash))
+        return json(request,env,{status:'saved',ok:true,weekId,readBackVerified:true,report:{...normalizeReport(record),revision:await weeklyRevision(record)}});
+      return json(request,env,{status:'different_submission',weekId,message:'该周已有另一份提交，请先查看历史记录，不要覆盖。'});
+    }
+    const status = busy ? 'processing' : pending || receipt ? 'needs_verification' : 'not_found';
+    return json(request,env,{status,weekId,message:status==='processing'?'原请求仍在处理，请稍后再次核对，不要重复提交。':status==='needs_verification'?'保存结果仍未确认，草稿和保护记录已保留，请联系管理员核对。':'尚未找到本次提交，可以保留原内容和请求标识重试。'});
+  } catch(error) {return json(request,env,{code:error.code||'REQUEST_FAILED',message:Number(error.status||500)>=500?'暂时无法核对保存结果，请稍后再查，不要重复提交。':error.message},Number(error.status||500));}
 }
 
 // This function is called only by the bound coordinator, not by an HTTP route.
 export async function executeWeeklyRequest(request, env, storage) {
   env = readScope(env, request);
+  const suppliedDeadline = Number(request.headers.get('X-ER2-Write-Deadline'));
+  env.__er2WriteDeadline = suppliedDeadline > 0 ? Math.min(suppliedDeadline,Date.now()+32000) : Date.now()+32000;
   try {
     if (request.method !== 'POST' || new URL(request.url).pathname !== '/api/reports') throw httpError(404, '接口不存在');
     const session = await requireMemberIdentity(env, await requireSession(request, env));
@@ -1308,7 +1350,7 @@ async function saveReport(request, env, session, storage) {
   const payloadHash = await weeklyHash(values);
   const receiptKey = 'receipt:' + await weeklyHash(businessRequestId);
   const tenantToken = await getTenantToken(env);
-  const records = await listRecords(env, tenantToken, 'WEEKLY_TABLE_ID');
+  const records = await filteredRecords(env, tenantToken, 'WEEKLY_TABLE_ID', personalWeeklyFilter(session.sub,currentWeek.id));
   const sameWeek = records.filter(record => String(field(record, '飞书OpenID', '人员OpenID', 'OpenID')) === session.sub &&
     String(field(record, '周次', 'WeekID')) === currentWeek.id);
   if (sameWeek.length > 1) throw httpError(409, '本周存在重复周报，请管理员先合并记录');
@@ -1359,7 +1401,7 @@ async function saveReport(request, env, session, storage) {
   };
   const binding = resolveTableBinding(env, 'WEEKLY_TABLE_ID');
   const appToken = await resolveBitableAppToken(binding, tenantToken);
-  const schema = await weeklySchema(appToken, binding.tableId, tenantToken);
+  const schema = await weeklySchema(appToken, binding.tableId, tenantToken, env);
   const payload = serializeWeekly(schema, fields);
   if (weeklyPolicyEnabled(env)) {
     const first = existing && isWeeklySubmitted(existing)
@@ -1379,6 +1421,7 @@ async function saveReport(request, env, session, storage) {
   if (!(weeklyPolicyEnabled(env) ? owesWeekly(current) : current.roles.includes('student'))) throw httpError(403, '周报提交资格已撤销');
   if (weeklyPolicyEnabled(env)) selectWeeklyTarget(current, env, currentWeek.id);
   if (existing) requireResource(current, existing, 'edit');
+  if (Date.now() + 3000 >= env.__er2WriteDeadline) throw Object.assign(httpError(504,'核验耗时过长，尚未开始写入，请保留草稿后重试'),{code:'WEEKLY_PREWRITE_TIMEOUT'});
   // Journal before the non-transactional remote write; survives worker restarts.
   await storage.put('pending', { requestId: businessRequestId, hash: payloadHash, recordId: existing?.record_id || '', at: Date.now() });
   try {
@@ -1388,7 +1431,7 @@ async function saveReport(request, env, session, storage) {
     if (error.weeklyWriteRejected) await storage.delete('pending');
     throw Object.assign(error, { code: error.weeklyWriteRejected ? error.code : 'WEEKLY_WRITE_UNCERTAIN' });
   }
-  const confirmed = (await listRecords(env, tenantToken, 'WEEKLY_TABLE_ID')).filter(record =>
+  const confirmed = (await filteredRecords(env, tenantToken, 'WEEKLY_TABLE_ID', personalWeeklyFilter(session.sub,currentWeek.id))).filter(record =>
     String(field(record, '飞书OpenID')) === session.sub && String(field(record, '周次', 'WeekID')) === currentWeek.id);
   if (confirmed.length !== 1 || clean(field(confirmed[0], '请求ID')) !== businessRequestId ||
       !weeklyMatches(reportValues(confirmed[0]), values))
@@ -1615,7 +1658,7 @@ async function createRecord(env, token, tableBinding, fields, strictWeeklyWrite 
     method: 'POST',
     bearer: token,
     body: { fields },
-    strictWeeklyWrite
+    strictWeeklyWrite, ...(strictWeeklyWrite ? readOptions(env) : {})
   });
   await invalidateSnapshot(env, tableBinding, binding);
   return result;
@@ -1630,7 +1673,7 @@ async function updateRecord(env, token, tableBinding, recordId, fields, strictWe
     method: 'PUT',
     bearer: token,
     body: { fields },
-    strictWeeklyWrite
+    strictWeeklyWrite, ...(strictWeeklyWrite ? readOptions(env) : {})
   });
   await invalidateSnapshot(env, tableBinding, binding);
   return result;
@@ -1677,7 +1720,7 @@ export async function feishuRequest(path, options = {}) {
   const maxAttempts = options.strictWeeklyWrite || options.singleAttempt ? 1 : (['GET', 'PUT'].includes(method) || options.retryPost === true ? 3 : 1);
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const remaining = options.readDeadline == null ? 10000 : Math.min(7000, options.readDeadline - Date.now());
-    if (remaining <= 0) throw Object.assign(httpError(504, '数据读取超时，请稍后重试'), { code: 'READ_TIMEOUT' });
+    if (remaining <= 0) throw Object.assign(httpError(504, '数据读取超时，请稍后重试'), { code: 'READ_TIMEOUT', ...(options.strictWeeklyWrite ? {weeklyWriteRejected:true} : {}) });
     let response;
     let result;
     try {
@@ -1861,7 +1904,7 @@ async function requireActiveMember(env, session) {
   const tenantToken = await getTenantToken(env);
   const [people, master, mirrors, relations] = await Promise.all(AUTH_BINDINGS.map(key => listRecords(env, tenantToken, key)));
   const catalog = canonicalProjectData(master, mirrors, relations);
-  const current = { ...session, ...authority(people, catalog.projects, catalog.relations, session.sub) };
+  const current = { ...session, ...checkedIdentity(people, catalog.projects, catalog.relations, session.sub) };
   memberSnapshots.set(current, people);
   projectSnapshots.set(current, master);
   projectCatalogSnapshots.set(current, catalog);
@@ -1871,9 +1914,14 @@ async function requireActiveMember(env, session) {
 async function requireMemberIdentity(env, session) {
   strictBinding(env, 'MEMBERS_TABLE_ID');
   const people = await listRecords(env, await getTenantToken(env), 'MEMBERS_TABLE_ID');
-  const current = { ...session, ...authority(people, [], [], session.sub) };
+  const current = { ...session, ...checkedIdentity(people, [], [], session.sub) };
   memberSnapshots.set(current, people);
   return current;
+}
+
+function checkedIdentity(people, projects, relations, sub) {
+  try { return authority(people, projects, relations, sub); }
+  catch(error) { if (error.status === 403) error.code = 'IDENTITY_REVOKED'; throw error; }
 }
 
 async function accessForRecords(env, session, records, knownMaster, knownMirrors, knownRelations) {

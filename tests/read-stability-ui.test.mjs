@@ -45,18 +45,18 @@ function dashboardContext(request) {
 const calls = [];
 const requiredFailure = dashboardContext(async path => { calls.push(path); throw Object.assign(Error('人员读取失败'), { status: 502, binding: 'MEMBERS_TABLE_ID' }); });
 await requiredFailure.context.loadDashboard();
-assert.deepEqual(calls, ['/api/bootstrap'], 'Do not repeat a known failed MEMBERS read through fallback and /api/me');
+assert.deepEqual(calls, ['/api/dashboard/start'], 'Identity-only entry; never repeat a failed identity read through fallback');
 assert.deepEqual(requiredFailure.effects, ['人员读取失败']);
 
 let clock = 0; const budgets = [];
 const fallback = dashboardContext(async (path, options) => {
   budgets.push(options.readTimeoutMs);
-  if (path === '/api/bootstrap') { clock = 24000; throw Object.assign(Error('project read failed'), { status: 502, binding: 'AUTH_PROJECTS_TABLE_ID' }); }
+  if (path === '/api/dashboard/start') { clock = 20000; throw Object.assign(Error('identity timed out'), { status: 504, code: 'REQUEST_TIMEOUT' }); }
   return { profile: { sub: 'same-user', roles: ['student'] }, weeklyOnly: true };
 });
 fallback.context.Date = { now: () => clock };
 await fallback.context.loadDashboard();
-assert.deepEqual(budgets, [25000, 1000], 'The fallback must share the original page deadline');
+assert.deepEqual(budgets, [20000], 'Only bounded identity verification can block the shell, with no repeated fallback');
 
 const pending = [];
 const stale = dashboardContext(() => new Promise(resolve => pending.push(resolve)));
@@ -81,3 +81,29 @@ const html = literature.renderLiteratureSection();
 assert.ok(html.includes('尚未确认')); assert.equal(html.includes('0 / 3'), false);
 assert.equal(html.includes('data-open-literature'), false);
 console.log('PASS read UI: shared deadlines, no blind retries, stale/account isolation, independent catalog load and unavailable counts');
+
+let releaseProjects, projectCalls=0;
+const isolated=dashboardContext(async path=>{
+  if(path==='/api/dashboard/start') return {progressive:true,profile:{sub:'same-user',roles:['student']},week:{id:'2026-W38'},student:{report:{status:'pending'},projects:[]},teacher:{},moduleLoading:{weekly:true,projects:true,literature:true},moduleErrors:{}};
+  if(path==='/api/projects'){projectCalls++;return new Promise(resolve=>releaseProjects=resolve);}
+  if(path==='/api/weekly') throw Object.assign(Error('weekly unavailable'),{status:503});
+  if(path==='/api/literature') return {literature:{items:[]}};
+  throw Error('Unexpected route '+path);
+});
+isolated.context.updateModuleNotice=()=>{};
+await isolated.context.loadDashboard();await new Promise(r=>setImmediate(r));
+assert.equal(isolated.context.elements.app.hidden,false,'Shell stays visible while project request is pending');
+assert.equal(isolated.context.state.dashboard.moduleErrors.weekly,'weekly unavailable');
+assert.deepEqual(Array.from(isolated.context.state.dashboard.literature.items),[]);
+await isolated.context.reloadModule('projects');assert.equal(projectCalls,1,'No duplicate module request');
+vm.runInContext(extract('  function renderWeeklyCard(', '  function renderStudent('),isolated.context);
+assert.doesNotMatch(isolated.context.renderWeeklyCard(),/填写本周|未提交|data-open-report/,'Failed weekly read is not a pending report');
+releaseProjects({projects:[]});await new Promise(r=>setImmediate(r));
+assert.equal(isolated.context.elements.app.hidden,false);
+const events=[];
+const auth=vm.createContext({fetch:async()=>Response.json({code:'MODULE_FORBIDDEN'},{status:403}),window:{dispatchEvent:e=>events.push(e)},CustomEvent:class{constructor(type,detail){this.type=type;this.detail=detail;}}});
+vm.runInContext(extract('  async function authenticatedFetch(', '  async function request('),auth);
+await auth.authenticatedFetch('https://mock');assert.equal(events.length,0,'Module denial does not log out');
+auth.fetch=async()=>Response.json({code:'IDENTITY_REVOKED'},{status:403});
+await auth.authenticatedFetch('https://mock');assert.equal(events.length,1,'Identity revocation still clears private UI');
+console.log('PASS identity-first shell, independent module failure, bounded duplicate retries and precise 403 handling');
