@@ -755,14 +755,15 @@
     const literature = state.dashboard.literature || { mineCount: 0, minimum: 3, completed: false, items: [] };
     const items = Array.isArray(literature.items) ? literature.items : [];
     const canSubmit = literature.canSubmit !== false && (state.dashboard?.capabilities?.features?.literatureSubmit !== false);
+    const targetRequired = canSubmit && literature.targetRequired !== false && state.dashboard?.capabilities?.features?.literatureTargetRequired !== false;
     const progress = Math.min(100, Math.round((Number(literature.mineCount || 0) / Math.max(Number(literature.minimum || 3), 1)) * 100));
     return [
       '<section class="panel literature-panel"><div class="literature-head"><div><p class="kicker">SHARED READING</p><h2>文献阅读</h2>',
-      '<p>' + (canSubmit ? '每人每周至少 3 篇，按本人提交独立计数，不限制上限。' : '可查看课题组成员分享的论文与阅读记录，无提交要求。') + '阅读记录在课题组内共享。</p></div>',
-      canSubmit ? '<div class="literature-actions"><div class="literature-count"><strong>' + Number(literature.mineCount || 0) + ' / ' + Number(literature.minimum || 3) + '</strong><span>' + escapeHtml(state.dashboard.profile.name || '我') + ' · 我的本周提交</span></div><button class="button button-primary" type="button" data-open-literature>＋ 提交文献阅读</button></div>' : '<div class="literature-actions"><span class="status-ok">只读参与 · 无提交要求</span></div>',
+      '<p>' + (targetRequired ? '每人每周至少 3 篇，按本人提交独立计数，不限制上限。' : canSubmit ? '可阅读并自愿分享文献，无每周篇数要求，不纳入欠交或完成率考核。' : '可查看课题组成员分享的论文与阅读记录，无提交要求。') + '阅读记录在课题组内共享。</p></div>',
+      canSubmit ? '<div class="literature-actions">' + (targetRequired ? '<div class="literature-count"><strong>' + Number(literature.mineCount || 0) + ' / ' + Number(literature.minimum || 3) + '</strong><span>' + escapeHtml(state.dashboard.profile.name || '我') + ' · 我的本周提交</span></div>' : '<span class="status-ok">自愿分享 · 无提交要求</span>') + '<button class="button button-primary" type="button" data-open-literature>' + (targetRequired ? '＋ 提交文献阅读' : '＋ 分享文献') + '</button></div>' : '<div class="literature-actions"><span class="status-ok">只读参与 · 无提交要求</span></div>',
       '</div>',
-      canSubmit ? '<div class="progress-track literature-progress" role="progressbar" aria-label="我的本周文献阅读进度" aria-valuenow="' + progress + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + progress + '%"></span></div>' : '',
-      canSubmit ? '<div class="literature-status">' + (literature.completed ? '<span class="status-ok">已达到本周最低篇数，可继续提交</span>' : '<span class="status-wait">还需 ' + Math.max(0, Number(literature.minimum || 3) - Number(literature.mineCount || 0)) + ' 篇达到本周最低要求</span>') + '</div>' : '',
+      targetRequired ? '<div class="progress-track literature-progress" role="progressbar" aria-label="我的本周文献阅读进度" aria-valuenow="' + progress + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + progress + '%"></span></div>' : '',
+      targetRequired ? '<div class="literature-status">' + (literature.completed ? '<span class="status-ok">已达到本周最低篇数，可继续提交</span>' : '<span class="status-wait">还需 ' + Math.max(0, Number(literature.minimum || 3) - Number(literature.mineCount || 0)) + ' 篇达到本周最低要求</span>') + '</div>' : '',
       '<div class="panel-title literature-list-title"><h3>最近7天阅读</h3><span>课题组共同可见 · ' + items.length + ' 条</span></div>',
       items.length ? '<div class="literature-list">' + items.map(function (item) {
         const meta = [item.authors, item.venue, item.year].filter(Boolean).join(' · ');
@@ -1394,6 +1395,10 @@
   }
 
   function openLiteratureDialog() {
+    const hint = elements.literatureForm.querySelector('.form-hint');
+    if (hint) hint.textContent = state.dashboard?.capabilities?.features?.literatureTargetRequired === false || state.dashboard?.literature?.targetRequired === false
+      ? '自愿分享，无每周篇数要求，不纳入欠交或完成率考核；阅读记录在课题组内共享。'
+      : '每人每周至少提交 3 篇，按本人提交独立计数，不限制上限；阅读记录在课题组内共享。';
     elements.literatureWeekLabel.textContent = state.dashboard.week.label + ' · 已提交 ' + Number((state.dashboard.literature || {}).mineCount || 0) + ' 篇';
     elements.literatureError.hidden = true;
     restoreDraft(elements.literatureForm, draftKeys.literature);

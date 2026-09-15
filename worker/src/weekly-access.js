@@ -1,15 +1,16 @@
 // Weekly-only policy. Never mutate global roles, grants, or feature permissions.
 // Callers must obtain the context through a fresh authority() check.
+import { temporaryWeeklyReader } from './temporary-participation.js';
 const DAY = 86400000;
 const OFFSET = 8 * 3600000;
 const STUDENTS = new Set(['RA', '博士', '硕士', '本科生', '联合培养']);
 const fail = (status, message) => Object.assign(new Error(message), { status });
 export const weeklyPolicyEnabled = env => env.WEEKLY_BACKFILL_ENABLED === 'true';
 
-export function owesWeekly(context) {
+export function owesWeekly(context, env = {}) {
   const f = context?.memberRecord?.fields || {};
   if (!context?.sub || f['人员状态'] !== '在组' || f['是否启用'] === false || f['离组时间']) return false;
-  if (!['团队内', '团队外'].includes(f['人员边界']) || !STUDENTS.has(f['成员类别'])) return false;
+  if (!['团队内', '团队外'].includes(f['人员边界']) || (!STUDENTS.has(f['成员类别']) && !temporaryWeeklyReader(context, env))) return false;
   return f['是否要求周报'] !== false;
 }
 
@@ -58,7 +59,7 @@ export function weeklyStart(context, env) {
 }
 
 export function selectWeeklyTarget(context, env, requestedWeek, now = Date.now()) {
-  if (!owesWeekly(context)) throw fail(403, '当前账号不具备周报提交资格');
+  if (!owesWeekly(context, env)) throw fail(403, '当前账号不具备周报提交资格');
   const current = shanghaiWeek(now), previous = shanghaiWeek(current.startsAt - 1);
   const target = !requestedWeek || requestedWeek === current.id ? current :
     requestedWeek === previous.id ? previous : null;

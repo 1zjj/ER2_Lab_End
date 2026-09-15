@@ -3,6 +3,7 @@ import { literatureMemberCategory, literatureIdentityLookup, literatureByline } 
 import { weeklyHash, weeklyRevision, weeklyDates, historyPage } from './weekly-history.js';
 import { evidenceText, serializeWeekly, weeklyValues, weeklyMatches, weeklyCompatibility, WEEKLY_VERSION } from './weekly-write.js';
 import { weeklyRoster, isWeeklySubmitted, hasWeeklyIssue, weeklyAutomationConfiguration } from './weekly-policy.js';
+import { temporaryWeeklyReader } from './temporary-participation.js';
 import { owesWeekly, reviewsWeekly, canReadWeekly, selectWeeklyTarget, shanghaiWeek, weeklyPolicyEnabled } from './weekly-access.js';
 import { recordPage } from './feishu-record-page.js';
 import { authority, AUTH_BINDINGS, strictBinding, identity, canProject, requireProject, businessProjectId, visibleProjects, hasProjectScope, isInternalMember, isAdministrator, memberFeatures } from './authorization.js';
@@ -46,9 +47,9 @@ const TRACK_A_LESSONS = [
 
 function externalRouteAllowed(session, path, method, env = {}) {
   if (['/api/dashboard', '/api/dashboard/start', '/api/projects'].includes(path) || path.startsWith('/api/projects/')) return true;
-  const features = memberFeatures(session);
+  const features = memberFeatures(session, env);
   if (path === '/api/literature') return method === 'GET' ? features.literatureRead : method === 'POST' && features.literatureSubmit;
-  const weekly = weeklyPolicyEnabled(env) ? owesWeekly(session) : features.weeklySubmit;
+  const weekly = weeklyPolicyEnabled(env) ? owesWeekly(session, env) : features.weeklySubmit;
   if (path === '/api/weekly' || path === '/api/reports/history' || path === '/api/reports/status') return method === 'GET' && weekly;
   if (path === '/api/reports') return method === 'POST' && weekly;
   return false;
@@ -200,8 +201,8 @@ async function authCallback(request, env) {
 // still performs its own fresh authorization before returning any records.
 async function dashboardStart(request, env, session) {
   if (!isInternalMember(session)) {
-    const features = memberFeatures(session);
-    const weekly = weeklyPolicyEnabled(env) && owesWeekly(session);
+    const features = memberFeatures(session, env);
+    const weekly = weeklyPolicyEnabled(env) && owesWeekly(session, env);
     return json(request, env, { progressive: true, collaborator: true,
       profile: {sub:session.sub,personId:session.personId,name:session.name,roles:session.roles},
       student:{projects:[],...(weekly?{report:{status:'pending'}}:{})},
@@ -224,7 +225,7 @@ async function dashboardStart(request, env, session) {
     profile: { sub: session.sub, personId: session.personId, name: session.name, track: session.track || '', roles: session.roles, memberCategory: session.memberRecord?.fields?.['成员类别'] },
     week, student, teacher, manager, literature: null, catalog: [], moduleErrors: {},
     moduleLoading: { weekly: true, projects: true, literature: true }, moduleDeferred: { extras: true },
-    capabilities: { courses: courseCapabilities(env), features: memberFeatures(session) }
+    capabilities: { courses: courseCapabilities(env), features: memberFeatures(session, env) }
   });
 }
 
@@ -265,8 +266,8 @@ async function dashboardBootstrap(request, env, session) {
 async function dashboard(request, env, session, options = {}) {
   if (!isInternalMember(session)) {
     if (!options.authorizationReady) session=await requireActiveMember(env,session);
-    const features=memberFeatures(session);
-    const weekly = weeklyPolicyEnabled(env) && owesWeekly(session);
+    const features=memberFeatures(session, env);
+    const weekly = weeklyPolicyEnabled(env) && owesWeekly(session, env);
     const records=options.projectRecords || projectSnapshots.get(session)||await listRecords(env,await getTenantToken(env),'PROJECTS_TABLE_ID');
     const projects=visibleProjects(session,records).map(r=>projectView(r,session));
     return json(request,env,{collaborator:true,progressive:Boolean(options.coreOnly),
@@ -367,7 +368,7 @@ async function dashboard(request, env, session, options = {}) {
     ? buildManager(members, permittedProjects, permittedCourses, env)
     : { stats: {}, automations: [] };
   if (session.roles.includes('manager')) manager.projects = permittedProjects.map(record => projectView(record, session));
-  const literature = coreOnly || extrasOnly || moduleErrors.literature ? null : buildLiterature(session, currentWeek, literatureRecords);
+  const literature = coreOnly || extrasOnly || moduleErrors.literature ? null : buildLiterature(session, currentWeek, literatureRecords, env);
   const catalog = buildCatalog(session, permittedLinks);
   const coursesCapability = courseCapabilities(env);
   if (!coursesCapability.enabled) teacher.courseReview = { visible: false, canConfirm: false, pending: 0, submissions: [] };
@@ -375,11 +376,12 @@ async function dashboard(request, env, session, options = {}) {
   return json(request, env, { profile, week: currentWeek, student, teacher, manager, literature, catalog, moduleErrors, moduleDiagnostics,
     ...(options.readContext ? { readContext: options.readContext } : {}),
     ...(coreOnly ? { progressive: true, moduleLoading: { literature: true, ...(weeklyPolicyEnabled(env)?{weekly:true}:{}) }, moduleDeferred: { extras: true } } : {}),
-    capabilities: { courses: coursesCapability, features: memberFeatures(session) } });
+    capabilities: { courses: coursesCapability, features: memberFeatures(session, env) } });
 }
 
-function buildLiterature(session, week, records) {
-  const access = memberFeatures(session);
+function buildLiterature(session, week, records, env = {}) {
+  const access = memberFeatures(session, env);
+  const targetRequired = access.literatureSubmit && access.literatureTargetRequired !== false;
   const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
   const labels = literatureIdentityLookup(memberSnapshots.get(session) || [session.memberRecord].filter(Boolean));
   const items = records.map((record) => {
@@ -420,10 +422,10 @@ function buildLiterature(session, week, records) {
   return {
     weekId: week.id,
     mineCount,
-    minimum: access.literatureSubmit ? 3 : 0,
-    completed: !access.literatureSubmit || mineCount >= 3,
+    minimum: targetRequired ? 3 : 0,
+    completed: access.literatureTargetRequired === false ? null : !access.literatureSubmit || mineCount >= 3,
     canSubmit: access.literatureSubmit,
-    targetRequired: access.literatureSubmit,
+    targetRequired,
     items
   };
 }
@@ -446,16 +448,16 @@ function formatRecordDate(value) {
 }
 
 async function getLiterature(request, env, session) {
-  if (!memberFeatures(session).literatureRead) throw httpError(403,'当前账号没有文献阅读权限');
+  if (!memberFeatures(session, env).literatureRead) throw httpError(403,'当前账号没有文献阅读权限');
   const tenantToken = await getTenantToken(env);
   const currentWeek = weekInfo(new Date());
   const previousWeek = weekInfo(new Date(Date.now() - 7 * 86400000));
   const records = await filteredRecords(env, tenantToken, 'LITERATURE_TABLE_ID', weekFilter([currentWeek.id, previousWeek.id]));
-  return json(request, env, { literature: buildLiterature(session, currentWeek, records) });
+  return json(request, env, { literature: buildLiterature(session, currentWeek, records, env) });
 }
 
 async function coordinateLiteratureSave(request, env, session) {
-  if (!memberFeatures(session).literatureSubmit) throw httpError(403,'当前账号没有文献提交权限');
+  if (!memberFeatures(session, env).literatureSubmit) throw httpError(403,'当前账号没有文献提交权限');
   if (!env.WEEKLY_WRITES) throw Object.assign(httpError(503, '文献保存保护尚未就绪，请稍后重试'), { code: 'LITERATURE_WRITE_FAILED' });
   const binding = resolveTableBinding(env, 'LITERATURE_TABLE_ID');
   const app = await resolveBitableAppToken(binding, await getTenantToken(env));
@@ -469,7 +471,7 @@ export async function executeLiteratureRequest(request, env, storage) {
   try {
     if (request.method !== 'POST' || new URL(request.url).pathname !== '/api/literature') throw httpError(404, '接口不存在');
     const session = await requireMemberIdentity(env, await requireSession(request, env));
-    if (!memberFeatures(session).literatureSubmit) throw httpError(403,'当前账号没有文献提交权限');
+    if (!memberFeatures(session, env).literatureSubmit) throw httpError(403,'当前账号没有文献提交权限');
     return await saveLiterature(request, env, session, storage);
   } catch (error) {
     const status = Number(error.status || 500);
@@ -551,13 +553,14 @@ async function saveLiterature(request, env, session, storage) {
       deduplicated: true,
       readBackVerified: true,
       recordId: duplicate.record_id,
-      literature: buildLiterature(session, currentWeek, existingRecords)
+      literature: buildLiterature(session, currentWeek, existingRecords, env)
     });
   }
   // An ambiguous create must be reconciled before another create is allowed,
   // including after an object restart. Never retry an uncertain POST blindly.
   if (await storage.get('literature:pending')) throw Object.assign(httpError(503, '上次文献保存结果仍在核对'), { code: 'LITERATURE_READBACK_FAILED' });
-  if(!isInternalMember(await requireMemberIdentity(env,session)))throw httpError(403,'组内文献仅向正式团队内成员开放');
+  const literatureWriter = await requireMemberIdentity(env,session);
+  if (!isInternalMember(literatureWriter) && !temporaryWeeklyReader(literatureWriter, env)) throw httpError(403,'组内文献仅向正式团队内成员开放');
   await storage.put('literature:pending', { requestId: businessRequestId });
   let created;
   try { created = await createRecord(env, tenantToken, 'LITERATURE_TABLE_ID', serialized, true); }
@@ -577,7 +580,7 @@ async function saveLiterature(request, env, session, storage) {
   await storage.delete('literature:pending');
   return json(request, env, {
     ok: true, readBackVerified: true, recordId: record.record_id,
-    literature: buildLiterature(session, currentWeek, confirmedRecords)
+    literature: buildLiterature(session, currentWeek, confirmedRecords, env)
   }, 201);
 }
 
@@ -1145,6 +1148,8 @@ export async function weeklyBackfillReadiness(env) {
     const reviewer = authority(people, [], [], env.WEEKLY_REVIEWER_OPEN_ID || env.PROFESSOR_OPEN_ID);
     if (!reviewsWeekly(reviewer, env) || reviewer.sub !== env.PROFESSOR_OPEN_ID) return {enabled:true,ready:false};
     const roster = weeklyRoster(people, env);
+    const temporaryIds = String(env.TEMPORARY_WEEKLY_VOLUNTARY_READING_PERSON_IDS || '').split(',').map(id=>id.trim()).filter(Boolean);
+    if (!temporaryIds.every(id=>roster.some(member=>member.personId===id && temporaryWeeklyReader(member,env)))) return {enabled:true,ready:false};
     for (const member of roster) selectWeeklyTarget(member, env, null);
     const binding = resolveTableBinding(env, 'WEEKLY_TABLE_ID');
     const schema = await weeklySchema(await resolveBitableAppToken(binding, token), binding.tableId, token);
@@ -1152,7 +1157,7 @@ export async function weeklyBackfillReadiness(env) {
       const matches = schema.filter(f => f.field_name === name);
       return matches.length === 1 && (name === '提交类型' ? [1] : [1,5]).includes(matches[0].type);
     });
-    return {enabled:true,ready:compatible,previousWeeks:1,soleReviewer:true,independentPermissions:true};
+    return {enabled:true,ready:compatible,previousWeeks:1,soleReviewer:true,independentPermissions:true,temporaryParticipantsVerified:temporaryIds.length};
   } catch (_) { return {enabled:true,ready:false}; }
 }
 
@@ -1188,7 +1193,7 @@ async function weeklyPage(request, env, session) {
   const student = await buildStudent(session, week, reports, [], [], [], []);
   const teacher = buildTeacher(session, week, members, reports, [], env);
   let backfill = null;
-  if (weeklyPolicyEnabled(env) && owesWeekly(session)) {
+  if (weeklyPolicyEnabled(env) && owesWeekly(session, env)) {
     const previous = shanghaiWeek(Date.now() - 7 * 86400000);
     try {
       selectWeeklyTarget(session, env, previous.id);
@@ -1324,7 +1329,7 @@ async function reportHistory(request, env, session) {
 }
 
 async function saveReport(request, env, session, storage) {
-  if (!(weeklyPolicyEnabled(env) ? owesWeekly(session) : session.roles.includes('student'))) throw httpError(403, '只有学生账号可以提交本人周报');
+  if (!(weeklyPolicyEnabled(env) ? owesWeekly(session, env) : session.roles.includes('student'))) throw httpError(403, '只有学生账号可以提交本人周报');
   const body = await readJson(request);
   const businessRequestId = requestBusinessId(request, body, 'weekly');
   for (const key of ['progress', 'learning', 'blockers', 'nextPlan']) {
@@ -1418,7 +1423,7 @@ async function saveReport(request, env, session, storage) {
   }
   let current = await requireMemberIdentity(env, session);
   current = await accessForRecords(env, current, existing ? [existing] : []);
-  if (!(weeklyPolicyEnabled(env) ? owesWeekly(current) : current.roles.includes('student'))) throw httpError(403, '周报提交资格已撤销');
+  if (!(weeklyPolicyEnabled(env) ? owesWeekly(current, env) : current.roles.includes('student'))) throw httpError(403, '周报提交资格已撤销');
   if (weeklyPolicyEnabled(env)) selectWeeklyTarget(current, env, currentWeek.id);
   if (existing) requireResource(current, existing, 'edit');
   if (Date.now() + 3000 >= env.__er2WriteDeadline) throw Object.assign(httpError(504,'核验耗时过长，尚未开始写入，请保留草稿后重试'),{code:'WEEKLY_PREWRITE_TIMEOUT'});
@@ -1508,7 +1513,7 @@ async function runScheduledTask(scheduledTime, env) {
     const recipientKey = runKey + '-' + await stableMessageUuid(member.sub);
     if (succeeded(recipientKey)) return;
     const current = await requireMemberIdentity(env, { sub: member.sub });
-    if (!(weeklyPolicyEnabled(env) ? owesWeekly(current) : current.roles.includes('student'))) return;
+    if (!(weeklyPolicyEnabled(env) ? owesWeekly(current, env) : current.roles.includes('student'))) return;
     if (weeklyPolicyEnabled(env)) selectWeeklyTarget(current, env, null, scheduledTime);
     await sendText(env, tenantToken, member.sub,
       'ER² Lab提醒：你本周的工作记录尚未提交，请在今天18:00前进入工作台完成。',

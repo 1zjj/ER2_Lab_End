@@ -98,6 +98,7 @@ function normalizeTraining(course = {}, onboardingCompleted = false) {
 }
 
 function normalizeLiterature(value = {}) {
+  if (value.targetRequired === false) return {mineCount:positiveInt(value.mineCount,0),minimum:0,completed:null,remaining:0,targetRequired:false,items:Array.isArray(value.items)?value.items:[]};
   const minimum = positiveInt(value.minimum, 3);
   const count = positiveInt(value.mineCount, 0);
   return {

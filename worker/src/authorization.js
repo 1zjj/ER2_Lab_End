@@ -1,4 +1,5 @@
 // Authoritative ER2 authorization. No legacy role, name or project-code fallback.
+import { temporaryWeeklyReader } from './temporary-participation.js';
 export const AUTH_BINDINGS = ['MEMBERS_TABLE_ID', 'PROJECTS_TABLE_ID', 'AUTH_PROJECTS_TABLE_ID', 'PROJECT_MEMBERS_TABLE_ID'];
 export const text = value => Array.isArray(value) ? value.map(text).join('') : String(value && typeof value === 'object' ? value.text ?? value.name ?? value.value ?? '' : value ?? '').trim();
 const values = value => (Array.isArray(value) ? value : value ? [value] : []).map(text).filter(Boolean);
@@ -13,7 +14,8 @@ export const FEATURE_GRANTS = Object.freeze({
   WEEKLY_SUBMIT: '周报提交'
 });
 
-export function memberFeatures(context) {
+export function memberFeatures(context, env = {}) {
+  const temporary = temporaryWeeklyReader(context, env);
   const internal = isInternalMember(context);
   const roles = Array.isArray(context?.roles) ? context.roles : [];
   const explicit = new Set(values(context?.memberRecord?.fields?.['功能授权']));
@@ -24,9 +26,10 @@ export function memberFeatures(context) {
     learningSubmit: internal ? roles.includes('student') : granted('LEARNING_SUBMIT'),
     meetingRead: internal || granted('MEETING_READ') || granted('MEETING_EDIT'),
     meetingEdit: internal || granted('MEETING_EDIT'),
-    literatureRead: internal || granted('LITERATURE_READ') || granted('LITERATURE_SUBMIT'),
-    literatureSubmit: internal || granted('LITERATURE_SUBMIT'),
-    weeklySubmit: internal ? roles.includes('student') : granted('WEEKLY_SUBMIT')
+    literatureRead: temporary || internal || granted('LITERATURE_READ') || granted('LITERATURE_SUBMIT'),
+    literatureSubmit: temporary || internal || granted('LITERATURE_SUBMIT'),
+    ...(temporary ? { literatureTargetRequired: false } : {}),
+    weeklySubmit: temporary || (internal ? roles.includes('student') : granted('WEEKLY_SUBMIT'))
   };
 }
 // Explicit user-approved matrix; personnel labels are not an ordinal scale.

@@ -20,7 +20,7 @@ export function weeklyRoster(people, env = {}) {
   return people.flatMap(record => {
     try {
       const member = authority(people, [], [], identity(record));
-      return (weeklyPolicyEnabled(env) ? owesWeekly(member) : member.roles.includes('student')) ? [{ ...member, openId: member.sub }] : [];
+      return (weeklyPolicyEnabled(env) ? owesWeekly(member, env) : member.roles.includes('student')) ? [{ ...member, openId: member.sub }] : [];
     } catch (_) { return []; }
   });
 }

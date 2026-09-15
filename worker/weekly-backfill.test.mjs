@@ -2,13 +2,15 @@ import assert from 'node:assert/strict';
 import service, { weeklyBackfillReadiness } from './src/index.js';
 import { mockWeeklyCoordinator } from './test-weekly-coordinator.mjs';
 import { WEEKLY_FIELDS } from './src/weekly-write.js';
+import { LITERATURE_FIELDS } from './src/literature-write.js';
+import { authority, memberFeatures } from './src/authorization.js';
 import { shanghaiWeek } from './src/weekly-access.js';
 import { weeklyHash } from './src/weekly-history.js';
 const now = Date.now(), week = shanghaiWeek(now), previous = shanghaiWeek(week.startsAt - 1);
 const env = { SESSION_SECRET:'mock-weekly-policy-secret', FEISHU_APP_ID:'mock', FEISHU_APP_SECRET:'mock',
   FRONTEND_URL:'https://example.test', WEEKLY_BACKFILL_ENABLED:'true', WEEKLY_REVIEWER_OPEN_ID:'ou_1', PROFESSOR_OPEN_ID:'ou_1',
   WEEKLY_START_DATES: JSON.stringify({'P-002':previous.start,'P-006':week.start}) };
-for (const key of ['MEMBERS','PROJECTS','AUTH_PROJECTS','PROJECT_MEMBERS','WEEKLY','AUTOMATION_LOGS']) {
+for (const key of ['MEMBERS','PROJECTS','AUTH_PROJECTS','PROJECT_MEMBERS','WEEKLY','AUTOMATION_LOGS','LITERATURE']) {
   env[key+'_TABLE_ID'] = key.toLowerCase(); env[key+'_BASE_APP_TOKEN'] = 'mock-base';
 }
 env.WEEKLY_WRITES = mockWeeklyCoordinator(env);
@@ -17,6 +19,7 @@ const person = (i, type, boundary, duties=[]) => ({record_id:'p'+i,fields:{'人�
 const people = [person(1,'PI','团队内'),person(2,'RA','团队内',['管理员','课程审核']),
   person(5,'PI','团队外'),person(6,'联合培养','团队外')];
 const rows = [];
+const literatureRows = [];
 let writes = 0;
 let readbackGate = null, afterWrite = null;
 const originalFetch = globalThis.fetch;
@@ -24,19 +27,20 @@ globalThis.fetch = async (input, options={}) => {
   const url = new URL(input); assert.equal(url.hostname,'open.feishu.cn');
   if (url.pathname.endsWith('/tenant_access_token/internal')) return Response.json({code:0,tenant_access_token:'mock-token'});
   if (url.pathname.endsWith('/fields')) return Response.json({code:0,data:{items:[
-    ...Object.entries(WEEKLY_FIELDS).map(([field_name,types])=>({field_name,type:types[0]})),
+    ...Object.entries(url.pathname.includes('/literature/') ? LITERATURE_FIELDS : WEEKLY_FIELDS).map(([field_name,types])=>({field_name,type:types[0]})),
     ...['首次提交时间','最近修改时间','提交类型'].map(field_name=>({field_name,type:1}))],has_more:false}});
   const match = /\/tables\/([^/]+)\/records(?:\/([^/]+))?$/.exec(url.pathname);
   assert.ok(match, 'Unexpected network action '+url.pathname);
   const [,table,id] = match;
   if (options.method === 'GET') {
     if(table==='weekly' && readbackGate){const gate=readbackGate;readbackGate=null;await gate;}
-    return Response.json({code:0,data:{items:table==='members'?people:table==='weekly'?rows:[],has_more:false}});
+    return Response.json({code:0,data:{items:table==='members'?people:table==='weekly'?rows:table==='literature'?literatureRows:[],has_more:false}});
   }
-  assert.equal(table,'weekly','No non-weekly writes permitted');
+  assert.ok(['weekly','literature'].includes(table),'No personnel or permission writes permitted');
+  const target = table === 'weekly' ? rows : literatureRows;
   const fields = JSON.parse(options.body).fields; writes++;
-  const record = id ? rows.find(r=>r.record_id===id) : {record_id:'r'+writes,fields:{}};
-  Object.assign(record.fields, fields); if (!id) rows.push(record);
+  const record = id ? target.find(r=>r.record_id===id) : {record_id:'r'+writes,fields:{}};
+  Object.assign(record.fields, fields); if (!id) target.push(record);
   if(afterWrite){const hook=afterWrite;afterWrite=null;hook();}
   return Response.json({code:0,data:{record}});
 };
@@ -99,5 +103,35 @@ try {
   const quickStatus=await Promise.race([call(3,'/api/reports/status?weekId='+week.id+'&requestId=slow-readback'),new Promise((_,reject)=>timer=setTimeout(()=>reject(Error('Status queued behind save')),2000))]).finally(()=>clearTimeout(timer));
   assert.equal(quickStatus.data.status,'saved');assert.equal(writes,beforeStatusWrites);
   releaseReadback();assert.equal((await slowSave).status,200);
+  const baseline = people.map(record => memberFeatures(authority(people,[],[],record.fields['飞书成员'][0].id),env));
+  const personnelBefore = JSON.stringify(people);
+  env.TEMPORARY_WEEKLY_VOLUNTARY_READING_PERSON_IDS = 'P-007,P-008';
+  assert.deepEqual(people.map(record => memberFeatures(authority(people,[],[],record.fields['飞书成员'][0].id),env)),baseline,'Existing people capabilities unchanged');
+  assert.equal(JSON.stringify(people),personnelBefore);
+  people.push(person(7,'临时','团队内'),person(8,'临时','团队内'),person(9,'临时','团队内'));
+  env.WEEKLY_START_DATES = JSON.stringify({...JSON.parse(env.WEEKLY_START_DATES),'P-007':week.start,'P-008':week.start});
+  for (const id of [7,8]) {
+    const start = await call(id,'/api/dashboard/start');
+    assert.equal(start.status,200);
+    assert.deepEqual(start.data.profile.roles,['collaborator']);
+    const features = start.data.capabilities.features;
+    assert.equal(features.weeklySubmit,true); assert.equal(features.literatureRead,true); assert.equal(features.literatureSubmit,true);
+    assert.equal(features.literatureTargetRequired,false); assert.equal(features.learningSubmit,false); assert.equal(features.meetingEdit,false);
+    assert.deepEqual((await call(id,'/api/projects')).data.projects,[]);
+    assert.equal((await call(id,'/api/reports',form(previous.id,'old-'+id))).status,400);
+    assert.equal((await call(id,'/api/reports',form(week.id,'new-'+id))).status,200);
+    const reading = await call(id,'/api/literature');
+    assert.equal(reading.status,200); assert.equal(reading.data.literature.targetRequired,false);
+    assert.equal(reading.data.literature.minimum,0); assert.equal(reading.data.literature.completed,null);
+    const shared = await call(id,'/api/literature',{requestId:'voluntary-'+id,title:'自愿分享测试',contribution:'模拟内容，不发送真实请求'});
+    assert.equal(shared.status,201,JSON.stringify(shared)); assert.equal(shared.data.literature.targetRequired,false);
+    assert.equal((await call(id,'/api/reports/history?person=ou_2')).status,403);
+    assert.equal((await call(id,'/api/teacher/review',{recordId:rows[0].record_id,comment:'不允许',requestId:'denied-'+id})).status,403);
+  }
+  assert.equal((await call(9,'/api/literature')).status,403,'Other temporary member not widened');
+  assert.equal((await call(5,'/api/literature')).status,403,'External teacher unchanged');
+  assert.equal((await weeklyBackfillReadiness(env)).ready,true);
+  const temp = people.find(record=>record.record_id==='p7'); temp.fields['人员状态']='离组';
+  assert.equal((await call(7,'/api/literature')).status,403); assert.equal((await call(7,'/api/reports',form(week.id,'revoked'))).status,403);
   console.log('PASS enabled weekly API: external current-only start, previous-week backfill, idempotency, no overwrite, private admin view, sole reviewer; all network mocked');
 } finally { globalThis.fetch = originalFetch; }
