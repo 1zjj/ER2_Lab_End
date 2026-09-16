@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
+    "test:read-isolation": "node weekly-read-isolation.test.mjs",
     "test:member-intake": "node member-intake.test.mjs",
     "dev": "wrangler dev",
     "deploy": "node release.mjs --apply",

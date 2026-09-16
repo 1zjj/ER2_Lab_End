@@ -34,6 +34,7 @@ await bodyReading; abortBody(); await assert.rejects(waitingForBody, e => e.code
 function dashboardContext(request) {
   const effects = [];
   const context = vm.createContext({ DEMO_MODE: false, URLSearchParams, location: { search: '', href: 'https://test.invalid' }, window: {},
+    escapeHtml: value => String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'),
     state: { session: 'fixture', activeRole: 'student', readContext: '', dashboardLoading: false }, roleMeta: { student: {} }, request,
     tabStorage: { persistent: true }, privateDrafts: { bind() {} }, memberGuide: { bind() {} },
     elements: { accountName: {}, accountRole: {}, logoutButton: {}, notice: {}, error: {}, loading: {}, app: {} },
@@ -101,6 +102,9 @@ assert.doesNotMatch(isolated.context.renderWeeklyCard(),/填写本周|未提交|
 releaseProjects({projects:[]});await new Promise(r=>setImmediate(r));
 assert.equal(isolated.context.elements.app.hidden,false);
 const events=[];
+isolated.context.state.dashboard.moduleErrors.weekly='<img src=x onerror=alert(1)>；诊断编号：test';
+const diagnosticHtml=isolated.context.modulePlaceholder('weekly','周报','panel');
+assert.ok(diagnosticHtml.includes('&lt;img'));assert.ok(diagnosticHtml.includes('诊断编号：test'));assert.ok(!diagnosticHtml.includes('<img'));
 const auth=vm.createContext({fetch:async()=>Response.json({code:'MODULE_FORBIDDEN'},{status:403}),window:{dispatchEvent:e=>events.push(e)},CustomEvent:class{constructor(type,detail){this.type=type;this.detail=detail;}}});
 vm.runInContext(extract('  async function authenticatedFetch(', '  async function request('),auth);
 await auth.authenticatedFetch('https://mock');assert.equal(events.length,0,'Module denial does not log out');

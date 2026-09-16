@@ -503,7 +503,7 @@
   function modulePlaceholder(name, title, className) {
     const loading = state.dashboard?.moduleLoading?.[name];
     return '<section class="' + className + '" aria-busy="' + Boolean(loading) + '"><h2>' + title + '</h2><p role="status">' +
-      (loading ? '正在读取…' : '暂时无法读取，请重试。') + '</p>' +
+      (loading ? '正在读取…' : escapeHtml(state.dashboard?.moduleErrors?.[name] || '暂时无法读取，请重试。')) + '</p>' +
       (loading ? '' : '<button type="button" class="button button-secondary" data-reload-module="' + name + '">重新读取</button>') + (name==='weekly'&&state.dashboard?.capabilities?.weeklyDrafts?.enabled?'<button type="button" class="button button-secondary" data-open-draft>本周草稿本</button>':'') + '</section>';
   }
 
@@ -970,7 +970,7 @@
     if (dashboard.moduleLoading?.projects) return modulePlaceholder('projects', '我的项目', 'panel project-home-card');
     if (dashboard.moduleErrors?.projects) {
       const diagnosis = dashboard.moduleDiagnostics?.projects?.requestId;
-      return heading + '</div><p role="status" data-project-read-status>项目暂时无法读取。' +
+      return heading + '</div><p role="status" data-project-read-status>项目暂时无法读取。' + escapeHtml(dashboard.moduleErrors.projects) +
         (diagnosis ? '诊断编号：' + escapeHtml(diagnosis) : '') +
         '</p><button class="button button-secondary" type="button" data-reload-projects>重新读取项目</button></section>';
     }
@@ -1113,6 +1113,7 @@
       '<div id="weekly-source-result" aria-live="polite"></div>' +
       '<h3>文献数据源核对</h3><button class="button button-secondary" type="button" id="literature-source-button">查看当前连接的文献表</button>' +
       '<div id="literature-source-result" aria-live="polite"></div>' +
+      '<h3>逐表读取诊断</h3><p>只读检查人员、周报、项目主表、权限镜像和成员关系；逐表显示耗时与错误码，不授予权限。</p><button class="button button-secondary" type="button" data-permission-read="read-diagnostics">检查逐表错误与耗时</button>' +
       '<h3>权限与项目核对</h3><p>核对当前配置；启用主数据同步前请先预览并核对变更。</p><button class="button button-secondary" type="button" data-permission-read="projects">核对项目关系与数据源</button>' +
       '<button class="button button-secondary" type="button" data-permission-read="source-inspect">预览主数据同步</button><button class="button button-secondary" type="button" data-permission-read="source-enable">启用已核对的主数据同步</button><button class="button button-secondary" type="button" data-permission-read="source-status">读取主数据同步结果</button><button class="button button-secondary" type="button" data-permission-read="source-disable">暂停主数据同步</button>'+
       '<label>ER2 页面链接<input type="url" id="permission-node-url" value="'+escapeHtml(wikiUrl())+'"></label><button class="button button-secondary" type="button" data-permission-read="native">核对页面原生权限</button><button class="button button-secondary" type="button" data-permission-read="sync-inspect">检查项目权限对账条件</button><button class="button button-secondary" type="button" data-permission-read="sync-status">读取对账结果</button><pre id="permission-read-result" style="white-space:pre-wrap;overflow-wrap:anywhere" aria-live="polite"></pre></div></details>';
@@ -2098,6 +2099,7 @@
     const output=document.getElementById('permission-read-result'), owner=state.dashboard.profile.sub, generation=state.loadGeneration;
     const current=()=>state.dashboard?.profile?.sub===owner && state.activeRole==='manager' && state.dashboard.profile.roles?.includes('manager') && state.loadGeneration===generation && output.isConnected;
     let path='/api/admin/project-consistency';
+    if(button.dataset.permissionRead==='read-diagnostics')path='/api/admin/read-diagnostics';
     let options;
     if(button.dataset.permissionRead.startsWith('source-')){
       path='/api/admin/project-source-sync';

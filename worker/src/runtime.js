@@ -1,5 +1,6 @@
 import { routePermissionAudit } from './permission-audit.js';
 import { routeProjectConsistency } from './project-consistency.js';
+import { routeReadDiagnostics } from './read-diagnostics.js';
 import { routeProjectSourceSync } from './project-source-sync.js';
 import { routePermissionSync } from './permission-sync.js';
 export { FinanceRecords } from './finance.js';
@@ -64,6 +65,10 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
+    if (request.method !== 'OPTIONS' && path === '/api/admin/read-diagnostics') {
+      const scoped = readScope(env,request);
+      return readHeaders(scoped,await routeReadDiagnostics(request,scoped));
+    }
     if(/^\/api\/weekly-drafts(?:\/|$)/.test(path))return routeDrafts(request,env);
     if (request.method !== 'OPTIONS' && path === '/api/admin/project-source-sync') return routeProjectSourceSync(request,env);
     if (request.method !== 'OPTIONS' && path === '/api/admin/permission-sync') return routePermissionSync(request,env);

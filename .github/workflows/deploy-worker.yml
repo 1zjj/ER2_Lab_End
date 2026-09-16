@@ -43,7 +43,7 @@ jobs:
 
       - name: Run Worker smoke tests
         working-directory: worker
-        run: npm run test:member-intake && npm test
+        run: npm run test:read-isolation && npm run test:member-intake && npm test
 
       - name: Verify frontend contracts
         run: |

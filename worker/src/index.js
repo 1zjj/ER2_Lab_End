@@ -1183,21 +1183,31 @@ async function weeklyPage(request, env, session) {
     throw Object.assign(httpError(503, '周报尚未配置'), { code: 'WEEKLY_BINDING_MISSING' });
   const token = await getTenantToken(env);
   const week = weekInfo(new Date());
+  const weeklyPolicy = weeklyPolicyEnabled(env);
+  const weekIds = weeklyPolicy ? [week.id, shanghaiWeek(Date.now() - 7 * 86400000).id] : [week.id];
+  // Filter by ownership BEFORE project-scoped access checks. Even a fallback
+  // full-table read must not let another person's record create dependencies.
+  const ownOnly = weeklyPolicy && !reviewsWeekly(session, env);
+  const reportRead = ownOnly
+    ? Promise.all(weekIds.map(id => filteredRecords(env, token, 'WEEKLY_TABLE_ID', personalWeeklyFilter(session.sub, id))))
+      .then(pages => [...new Map(pages.flat().map(record => [record.record_id, record])).values()])
+    : filteredRecords(env, token, 'WEEKLY_TABLE_ID', weekFilter(weekIds));
   const optionalCatalog = weeklyPolicyEnabled(env) && reviewsWeekly(session,env)
     ? Promise.all(['PROJECTS_TABLE_ID','AUTH_PROJECTS_TABLE_ID','PROJECT_MEMBERS_TABLE_ID'].map(key=>listRecords(env,token,key,{budgetMs:2500})))
       .then(([master,mirrors,relations])=>canonicalProjectData(master,mirrors,relations)).catch(()=>null) : Promise.resolve(null);
   const [people, records, displayCatalog] = await Promise.all([
     memberSnapshots.get(session) || listRecords(env, token, 'MEMBERS_TABLE_ID'),
-    filteredRecords(env, token, 'WEEKLY_TABLE_ID', weekFilter(weeklyPolicyEnabled(env)
-      ? [week.id, shanghaiWeek(Date.now() - 7 * 86400000).id] : [week.id])), optionalCatalog
+    reportRead, optionalCatalog
   ]);
-  session = await accessForRecords(env, session, records);
+  const visibleRecords = records.filter(record => weekIds.includes(String(field(record, '周次'))) &&
+    (!weeklyPolicy || canReadWeekly(session, record, env)));
+  session = await accessForRecords(env, session, visibleRecords);
   if (!weeklyPolicyEnabled(env) && !projectCatalogSnapshots.has(session) &&
       session.roles.some(role => role === 'teacher' || role === 'manager') &&
       authorizationBindingsConfigured(env)) {
     session = await requireActiveMember(env, session);
   }
-  const reports = records.filter(record => (!hasProjectScope(record) || canProject(session, businessProjectId(record))) &&
+  const reports = visibleRecords.filter(record => (!hasProjectScope(record) || canProject(session, businessProjectId(record))) &&
     (!weeklyPolicyEnabled(env) || canReadWeekly(session, record, env)));
   const projectCatalog = projectCatalogSnapshots.get(session) || displayCatalog || { projects: [], relations: [] };
   const members = people.flatMap(record => { try {
