@@ -8,8 +8,6 @@
   "triggers": {
     "crons": [
       "* * * * *",
-      "0 3 * * 5",
-      "0 10 * * 5",
       "0 2 1,20,27 * *"
     ]
   },
@@ -34,48 +32,3 @@
     "FINANCE_ENABLED": "true",
     "FINANCE_REVIEWER_PERSON_ID": "P-004",
     "FINANCE_DELEGATE_PERSON_IDS": "P-002",
-    "FINANCE_PROFESSOR_PERSON_ID": "P-001",
-    "FILTERED_READS": "true",
-    "SERVER_SNAPSHOT_CACHE": "true",
-    "SNAPSHOT_IDENTITY_FRESH_MS": "12000",
-    "SNAPSHOT_IDENTITY_MAX_MS": "20000",
-    "SNAPSHOT_PROJECT_FRESH_MS": "30000",
-    "SNAPSHOT_PROJECT_MAX_MS": "45000"
-  },
-  "durable_objects": {
-    "bindings": [
-      {
-        "name": "WEEKLY_WRITES",
-        "class_name": "WeeklyWriteCoordinator"
-      },
-      {
-        "name": "LEARNING_RECORDS",
-        "class_name": "LearningRecords"
-      },
-      {
-        "name": "FINANCE_RECORDS",
-        "class_name": "FinanceRecords"
-      }
-    ]
-  },
-  "migrations": [
-    {
-      "tag": "weekly-save-v1",
-      "new_sqlite_classes": [
-        "WeeklyWriteCoordinator"
-      ]
-    },
-    {
-      "tag": "learning-text-v1",
-      "new_sqlite_classes": [
-        "LearningRecords"
-      ]
-    },
-    {
-      "tag": "finance-v1",
-      "new_sqlite_classes": [
-        "FinanceRecords"
-      ]
-    }
-  ]
-}
